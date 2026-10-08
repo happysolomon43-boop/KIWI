@@ -25,6 +25,12 @@ async function act(path,body){
   catch(error){state.host?.querySelector('.tc-message')?.replaceChildren($('span','',error.message||'That action could not be completed.'));}
   finally{state.busy=false;}
 }
+async function controllerAction(path,body={}){
+  if(state.busy)return;state.busy=true;
+  try{await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(state.classId)}/controller/${path}`,{method:'POST',body});await fetchAfterAction();}
+  catch(error){state.host?.querySelector('.tc-message')?.replaceChildren($('span','',error.message||'The Class could not continue.'));}
+  finally{state.busy=false;}
+}
 async function fetchAfterAction(){const data=await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(state.classId)}/classroom`);data._receivedAt=Date.now();state.snapshot=data;render();}
 async function open(classId){
   const opener=document.activeElement;close({restore:false});state.returnFocus=opener;state.classId=classId;state.host=$('div','tc-overlay');state.host.setAttribute('role','dialog');state.host.setAttribute('aria-modal','true');state.host.setAttribute('aria-label','KIWI Classroom');
@@ -48,7 +54,7 @@ function renderHeader(s){
   clocks.querySelector('span').dataset.clock='class';
   if(s.modeKey==='BREAK'||s.modeKey==='INDEPENDENT_PRACTICE'){const activity=add($('div','tc-clock tc-clock--activity'),$('small','',s.modeKey==='BREAK'?'BREAK':'ACTIVITY'),$('strong','',s.modeKey==='BREAK'?'Teaching paused':'Work independently'),$('span','',''));activity.querySelector('span').dataset.clock='activity';clocks.append(activity);}
   if(s.modeKey==='ASSESSMENT')clocks.prepend(add($('div','tc-clock tc-clock--assessment'),$('small','','ASSESSMENT TIME'),$('strong','','Controlled assessment'),$('span','','The assessment owner controls this timer')));
-  const leave=button('Leave Class',async()=>{if(window.confirm('Leave the Classroom? The Class continues according to its scheduled time.')){try{await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(state.classId)}/interactions`,{method:'POST',body:{kind:'LEAVE',idempotencyKey:crypto.randomUUID()}});}catch{}close();}},'tc-button tc-button--quiet');
+  const leave=button('Leave Class',async()=>{if(!window.confirm('Leave the Classroom? The Class continues according to its scheduled time. Your attendance will be recorded up to this moment.'))return;leave.disabled=true;try{const result=await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(state.classId)}/interactions`,{method:'POST',body:{kind:'LEAVE',idempotencyKey:crypto.randomUUID()}});const outcome=result?.attendance?.outcome||result?.attendance?.record?.outcome;if(outcome)sessionStorage.setItem('kiwi_last_class_attendance',outcome);close();}catch(error){leave.disabled=false;state.host?.querySelector('.tc-message')?.replaceChildren($('span','',error.message||'KIWI could not record your departure. Please try again.'));}},'tc-button tc-button--quiet');
   add(header,brand,identity,mode,clocks,leave);return header;
 }
 function renderTeacher(s){
@@ -112,11 +118,11 @@ function renderNotebook(s){
 }
 function renderWorkspace(s){
   const panel=$('section','tc-workspace');add(panel,add($('div','tc-panel-head'),add($('div',''),$('div','tc-eyebrow','YOUR SPACE'),$('h2','',s.modeKey==='INDEPENDENT_PRACTICE'?'Work independently':'Student Workspace'))));
-  if(!s.controller){panel.append(notice('Before Class',`Scheduled ${date(s.class.scheduledStartAt)} · ${Math.round((new Date(s.class.scheduledEndAt)-new Date(s.class.scheduledStartAt))/60000)} minutes. ${s.requiredMaterials?.length?'Bring: '+s.requiredMaterials.join(', '):'No materials have been specified.'}`));return panel;}
+  if(!s.controller){panel.append(notice('Ready when you are',`Scheduled ${date(s.class.scheduledStartAt)} · ${Math.round((new Date(s.class.scheduledEndAt)-new Date(s.class.scheduledStartAt))/60000)} minutes. ${s.requiredMaterials?.length?'Bring: '+s.requiredMaterials.join(', '):'No materials have been specified.'}`));const start=button('Start Class',()=>controllerAction('start'),'tc-button tc-button--solid');panel.append(start);return panel;}
   if(s.modeKey==='BREAK'){panel.append(notice('A proper pause','Teaching is paused. You can step away and return when the break ends.','tc-break'));return panel;}
   if(s.modeKey==='ASSESSMENT'){panel.append(notice('Assessment in progress','Assessment rules and responses are controlled by the formal assessment interface. Classroom resources are restricted.','tc-assessment'));return panel;}
   if(s.modeKey==='CLOSURE'){panel.append(notice('Class is complete','Review the Summary, your Notebook and permitted Board scenes below.'));return panel;}
-  if(s.modeKey==='INTERRUPTED'){panel.append(notice('Class interrupted','Your session state is preserved. If KIWI caused the interruption, it will not become negative academic evidence.','tc-error'));return panel;}
+  if(s.modeKey==='INTERRUPTED'){panel.append(notice('Class paused safely','Your work is preserved. Continue from the saved teaching state when you are ready; a KIWI-caused interruption is never negative academic evidence.','tc-error'));if(s.interruption?.canResume)panel.append(button('Resume Class',()=>controllerAction('transition',{toState:s.interruption.resumeState,expectedVersion:s.controller.stateVersion}),'tc-button tc-button--solid'));return panel;}
   if(s.modeKey==='INDEPENDENT_PRACTICE')panel.append(notice('Productive silence','Take the time you need within the activity. Your teacher does not need a message from you to continue.'));
   if(s.objective)panel.append(add($('div','tc-objective'),$('small','','CURRENT OBJECTIVE'),$('p','',s.objective)));
   if(s.entry?.veryLate)panel.append(notice('A shorter Class today',`${s.entry.lateMinutes} minutes after the scheduled start · ${s.entry.minutesRemaining} minutes remain. The core objective needs a safe replanning decision; completion is not assumed.`, 'tc-error'));
@@ -153,6 +159,7 @@ function render(){
   if(s.modeKey==='INTERRUPTED')left.append(notice('Your place is saved',s.interruption?.cause==='SYSTEM'?'KIWI interrupted the Class. This will not count as negative academic evidence.':'Return to this Class when the session resumes. The Controller will reassess the remaining time.','tc-error'));
   const selectTab=(tab)=>{state.tab=tab;render();state.host?.querySelector(`[data-classroom-tab="${tab}"]`)?.focus();};const tabs=['board','workspace','notebook'].map((tab)=>{const b=button(tab[0].toUpperCase()+tab.slice(1),()=>selectTab(tab),state.tab===tab?'is-active':'');b.dataset.classroomTab=tab;b.setAttribute('role','tab');b.setAttribute('aria-selected',state.tab===tab?'true':'false');b.setAttribute('aria-controls',`tc-panel-${tab}`);b.tabIndex=state.tab===tab?0:-1;return b;});
   const mobileNav=add($('div','tc-mobile-tabs'),...tabs);mobileNav.setAttribute('role','tablist');mobileNav.setAttribute('aria-label','Classroom areas');left.append(mobileNav);
+  const quickNote=button('✎ Notebook',()=>selectTab('notebook'),'tc-notebook-shortcut');quickNote.setAttribute('aria-label','Open Notebook at any time');left.append(quickNote);
   const board=renderBoard(s);board.id='tc-panel-board';board.setAttribute('role','tabpanel');board.classList.toggle('tc-mobile-hidden',state.tab!=='board');left.append(board);
   const work=renderWorkspace(s);work.id='tc-panel-workspace';work.setAttribute('role','tabpanel');work.classList.toggle('tc-mobile-hidden',state.tab!=='workspace');
   const note=renderNotebook(s);note.id='tc-panel-notebook';note.setAttribute('role','tabpanel');note.classList.toggle('tc-mobile-hidden',state.tab!=='notebook');
@@ -163,8 +170,9 @@ function render(){
 async function renderCourse({course,container}){
   const page=$('section','tc-course');add(page,$('div','tc-eyebrow','COURSE / CLASSROOM'),$('h2','','Enter the classroom'),$('p','','A focused place for the lesson, your work and the record you take away.'));
   container.append(page);
-  try{const data=await kiwiApiRequest(`/teaching/courses/${encodeURIComponent(course.course_id)}/classes`);if(!data.classes.length){page.append(notice('No scheduled Classes','The Course schedule will place future sessions here.'));return;}
-    const list=$('div','tc-class-list');data.classes.forEach((item)=>{const card=add($('article','tc-class-card'),add($('div',''),$('small','',date(item.scheduled_start_at)),$('h3','',data.course.course_title),$('p','',`${data.course.teacher_name||'KIWI Teacher'} · ${Math.round((new Date(item.scheduled_end_at)-new Date(item.scheduled_start_at))/60000)} minutes`)),button('Open Classroom ↗',()=>open(item.class_id),'tc-button tc-button--solid'));list.append(card);});page.append(list);
+  try{const data=await kiwiApiRequest(`/teaching/courses/${encodeURIComponent(course.course_id)}/classes`);const upcoming=data.upcoming||data.classes||[],history=data.history||[];if(!upcoming.length&&!history.length){page.append(notice('No scheduled Classes','The Course schedule will place future sessions here.'));return;}
+    if(upcoming.length){page.append($('h3','tc-list-heading','Upcoming Classes'));const list=$('div','tc-class-list');upcoming.forEach((item)=>{const card=add($('article','tc-class-card'),add($('div',''),$('small','',date(item.scheduled_start_at)),$('h3','',data.course.course_title),$('p','',`${data.course.teacher_name||'KIWI Teacher'} · ${Math.round((new Date(item.scheduled_end_at)-new Date(item.scheduled_start_at))/60000)} minutes`)),button('Enter Classroom ↗',()=>open(item.class_id),'tc-button tc-button--solid'));list.append(card);});page.append(list);}
+    if(history.length){page.append($('h3','tc-list-heading','Class history'));const past=$('div','tc-class-history');history.forEach((item)=>{const outcome=String(item.attendance_outcome||'PENDING').replaceAll('_',' ').toLowerCase().replace(/(^|\s)\S/g,(m)=>m.toUpperCase());const detail=item.attendance_outcome?`${outcome}${Number(item.missed_minutes)>0?` · ${item.missed_minutes} min missed`:''}`:'Attendance pending';past.append(add($('article','tc-history-card'),add($('div',''),$('small','',date(item.scheduled_start_at)),$('strong','',data.course.course_title),$('p','',detail)),button('Review Class',()=>open(item.class_id),'tc-button tc-button--quiet')));});page.append(past);}
   }catch(error){page.append(notice('Classes unavailable',error.message||'Please try again.','tc-error'));}
 }
 courses.registerSection({id:'classroom',label:'Classroom',order:45,render:renderCourse,renderSummary:async({course,container})=>{
