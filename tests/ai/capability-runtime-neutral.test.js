@@ -71,3 +71,16 @@ test('speech synthesis uses the configured teacher voice through the shared prov
   assert.equal(result.degraded, false);
   assert.ok(result.audio.segments.length > 0);
 });
+
+test('direct visual capabilities fence cached responses and each provider attempt against revocation', async()=>{
+  let calls=0,checks=0;
+  const providerRegistry=createProviderRegistry([{provider:AI_PROVIDERS.CLOUDFLARE,async generateImage(){calls++;return {imageBase64:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl7lT8AAAAASUVORK5CYII='};}}]);
+  const runtime=createCapabilityRuntime({catalog:createModelCatalog(),providerRegistry,credentialRegistry:createCredentialRegistry({env:{CLOUDFLARE_WORKERS_AI_API_TOKEN:'fixture'}}),env:{},logger:null});
+  const input={prompt:'A conceptual illustration',altText:'Illustration'};
+  await runtime.generateImage({...input,beforeAttempt:async()=>{checks++;}});
+  assert.equal(checks,2);assert.equal(calls,1);
+  await assert.rejects(runtime.generateImage({...input,beforeAttempt:async()=>{throw new Error('parent revoked');}}),/parent revoked/);
+  const abort=new AbortController();abort.abort(new Error('cancelled'));
+  await assert.rejects(runtime.generateImage({...input,signal:abort.signal}),/cancelled/);
+  assert.equal(calls,1);
+});

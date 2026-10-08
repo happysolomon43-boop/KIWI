@@ -3,7 +3,7 @@
 function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repository,outboxStore=null,dueEventStore=null}={}) {
   if (![query,withTransaction,randomUUID].every((f)=>typeof f==='function') || !d11Repository) throw new TypeError('D14 persistence dependencies required.');
   async function assertReady() {
-    const {rows}=await query("select to_regclass('public.teaching_student_notebook_items') notebook,to_regclass('public.teaching_classroom_interactions') interactions,to_regclass('public.teaching_class_study_note_versions') study_notes,to_regclass('public.teaching_teacher_communications') teacher_messages,to_regclass('public.teaching_classroom_help_requests') help_requests");
+    const {rows}=await query("select to_regclass('public.teaching_student_notebook_items') notebook,to_regclass('public.teaching_classroom_interactions') interactions,to_regclass('public.teaching_class_study_note_versions') study_notes,to_regclass('public.teaching_teacher_communications') teacher_messages,to_regclass('public.teaching_classroom_help_requests') help_requests,to_regclass('teaching_runtime.classroom_visual_assets') visual_assets");
     if(Object.values(rows?.[0]||{}).some((v)=>v==null)) throw Object.assign(new Error('D14 persistence missing.'),{code:'TEACHING_D14_SCHEMA_MISSING'});
   }
   async function listClasses(studentId,courseId) {
@@ -131,7 +131,7 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
       const parent=await assertCurrentTeachingAuthority(tx,studentId,classId);
       const locked=await tx.query('select * from public.teaching_class_sessions where student_id=$1 and class_id=$2 for update',[studentId,classId]);const session=locked.rows[0];
       if(!session||session.lifecycle_state!=='ACTIVE'||Number(session.state_version)!==Number(expectedControllerVersion)||['ASSESSMENT','CLASSWORK','BREAK','INTERRUPTED'].includes(session.instructional_substate))throw Object.assign(new Error('Teacher turn targets stale or restricted Class state.'),{code:'TEACHING_D14_TEACHER_TURN_STALE',status:409});
-      if(helpRequestId){
+      if(helpRequestId||expectedScheduleVersion!==null){
         const failHelpStale=()=>{throw Object.assign(new Error('Classroom authority changed before help could publish.'),{code:'TEACHING_D14_HELP_STALE',status:409});};
         if(String(parent.schedule_version)!==String(expectedScheduleVersion)
           ||String(parent.course_state_version)!==String(expectedCourseStateVersion))failHelpStale();
@@ -142,8 +142,15 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
         const {rows:currentBlueprintRows=[]}=await tx.query('select lesson_blueprint_id,version_no from public.teaching_lesson_blueprints where student_id=$1 and class_id=$2 order by version_no desc limit 1 for share',[studentId,classId]);
         const currentBlueprint=currentBlueprintRows[0]||null;
         if(String(currentBlueprint?.lesson_blueprint_id||'')!==String(expectedBlueprintId||'')||String(currentBlueprint?.version_no??'')!==String(expectedBlueprintVersion??''))throw Object.assign(new Error('Lesson blueprint changed before help could publish.'),{code:'TEACHING_D14_HELP_STALE',status:409});
+        if(helpRequestId){
         const {rows:helpRows=[]}=await tx.query("select * from public.teaching_classroom_help_requests where student_id=$1 and help_request_id=$2 and class_id=$3 for update",[studentId,helpRequestId,classId]);
         const help=helpRows[0];if(!help||help.status!=='PROCESSING'||help.class_session_id!==session.class_session_id||Number(help.controller_version)!==Number(session.state_version))throw Object.assign(new Error('Raised hand is stale or is no longer processing.'),{code:'TEACHING_D14_HELP_STALE',status:409});
+        }
+      }
+      for(const visual of safe.filter(b=>['image','diagram'].includes(b.type))){
+        const {rows:assets=[]}=await tx.query("select asset_id from teaching_runtime.classroom_visual_assets where student_id=$1 and class_id=$2 and class_session_id=$3 and asset_id=$4 and state='READY' for share",[studentId,classId,session.class_session_id,visual.content.assetId]);
+        const src='/api/teaching/classes/'+encodeURIComponent(classId)+'/classroom/assets/'+visual.content.assetId;
+        if(!assets[0]||visual.content.src!==src)throw Object.assign(new Error('Visual asset is outside the current Class.'),{code:'TEACHING_D14_VISUAL_CONTRACT_INVALID',status:422});
       }
       const {rows}=await tx.query("insert into public.teaching_teacher_communications(communication_id,student_id,class_id,class_session_id,controller_version,message,visibility,provenance_refs,idempotency_key) values($1,$2,$3,$4,$5,$6,'STUDENT',$7::jsonb,$8) returning *",[randomUUID(),studentId,classId,session.class_session_id,session.state_version,message.trim(),JSON.stringify([`class-session:${session.class_session_id}@${session.state_version}`]),idempotencyKey]);
       if(helpRequestId)await tx.query("update public.teaching_classroom_help_requests set status='ANSWERED',response_communication_id=$2,decision_reason=null,lease_expires_at=null,updated_at=now() where help_request_id=$1",[helpRequestId,rows[0].communication_id]);
@@ -153,6 +160,36 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
       }
       return rows[0];
     });
+  }
+  async function queueInstruction(studentId,classId) {
+    return withTransaction(async(tx)=>{
+      const {rows=[]}=await tx.query('select * from public.teaching_class_sessions where student_id=$1 and class_id=$2 for share',[studentId,classId]);
+      return require('../d14/instruction-event').enqueueInstructionUsing(tx,outboxStore,rows[0]);
+    });
+  }
+  async function teacherTurn(studentId,key){const {rows=[]}=await query('select communication_id from public.teaching_teacher_communications where student_id=$1 and idempotency_key=$2',[studentId,key]);return rows[0]||null;}
+  async function claimVisual({studentId,classId,sessionId,key,binding}) {
+    return withTransaction(async(tx)=>{
+      await tx.query('select pg_advisory_xact_lock(hashtextextended($1,0))',[studentId+':visual:'+sessionId]);
+      const {rows:existing=[]}=await tx.query('select asset_id,state,visual_metadata from teaching_runtime.classroom_visual_assets where student_id=$1 and class_id=$2 and request_key=$3',[studentId,classId,key]);
+      if(existing[0])return existing[0].state==='READY'?existing[0]:null;
+      const {rows:counts=[]}=await tx.query('select count(*)::integer n from teaching_runtime.classroom_visual_assets where student_id=$1 and class_session_id=$2',[studentId,sessionId]);
+      if(Number(counts[0]?.n)>=12)return null;
+      const {rows}=await tx.query("insert into teaching_runtime.classroom_visual_assets(asset_id,student_id,class_id,class_session_id,request_key,authority_binding,state,lease_token,lease_expires_at) values($1,$2,$3,$4,$5,$6,'GENERATING',$7,now()+interval '40 seconds') returning asset_id,student_id,class_id,state,lease_token",[randomUUID(),studentId,classId,sessionId,key,binding,randomUUID()]);return rows[0];
+    });
+  }
+  async function finishVisual({job,state,bytes=null,mimeType=null,metadata=null}) {
+    const {rows=[]}=await query("update teaching_runtime.classroom_visual_assets set state=$4,asset_bytes=$5,mime_type=$6,visual_metadata=$7::jsonb where asset_id=$1 and student_id=$2 and lease_token=$3 and state='GENERATING' and lease_expires_at>now() returning asset_id",[job.asset_id,job.student_id,job.lease_token,state,bytes,mimeType,metadata?JSON.stringify(metadata):null]);return rows[0]||null;
+  }
+  async function visualAsset(studentId,classId,assetId) {
+    // Retrieval requires a committed Board reference. Unpublished, stale or
+    // another student's assets are indistinguishable from missing assets.
+    const {rows=[]}=await query(`select a.mime_type,a.asset_bytes from teaching_runtime.classroom_visual_assets a
+      join public.teaching_class_sessions cs on cs.class_session_id=a.class_session_id and cs.student_id=a.student_id and cs.class_id=a.class_id
+      where a.student_id=$1 and a.class_id=$2 and a.asset_id=$3 and a.state='READY'
+      and cs.instructional_substate not in ('ASSESSMENT','CLASSWORK')
+      and exists(select 1 from public.teaching_board_items i join public.teaching_board_scenes s on s.board_scene_id=i.board_scene_id and s.student_id=i.student_id
+        where i.student_id=a.student_id and s.class_session_id=a.class_session_id and i.block_type in ('image','diagram') and i.content->>'assetId'=a.asset_id)`,[studentId,classId,assetId]);return rows[0]||null;
   }
   async function addNotebook({studentId,classId,content,sourceKind,boardItemId=null,idempotencyKey}){
     return withTransaction(async(tx)=>{
@@ -195,6 +232,6 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
       const {rows}=await tx.query('insert into public.teaching_class_study_note_versions(note_version_id,student_id,class_id,version_no,state,stage,binding,note_payload,validation,closure_fact_id,idempotency_key) values($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10,$11) returning *',[randomUUID(),studentId,classId,Number(old?.version_no||0)+1,state,stage,JSON.stringify(binding),JSON.stringify(payload),JSON.stringify(validation),closureFactId,idempotencyKey]);return rows[0];
     });
   }
-  return Object.freeze({assertReady,listClasses,identity,board,notebook,addNotebook,recordInteraction,conversation,helpRequests,retireOutstandingHelp,getHelp,claimHelp,finalizeHelp,latestNote,saveNote,latestTeacherMessage,firstEntry,publishTeacherTurn});
+  return Object.freeze({assertReady,listClasses,identity,board,notebook,addNotebook,recordInteraction,conversation,helpRequests,retireOutstandingHelp,getHelp,claimHelp,finalizeHelp,latestNote,saveNote,latestTeacherMessage,firstEntry,publishTeacherTurn,claimVisual,finishVisual,visualAsset,queueInstruction,teacherTurn});
 }
 module.exports={createD14ClassroomRepository};

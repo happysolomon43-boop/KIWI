@@ -39,6 +39,8 @@ function createTeachingRouter({
   d12PublishedEventRegistry = null,
   d13Intelligence = null,
   d14HelpIntelligence = null,
+  d14LessonIntelligence = null,
+  d14VisualAI = null,
   d13Service = null,
   d13PublishedEventRegistry = null,
   d16Intelligence = null,
@@ -71,6 +73,8 @@ function createTeachingRouter({
     d12PublishedEventRegistry,
     d13Intelligence,
     d14HelpIntelligence,
+    d14LessonIntelligence,
+    d14VisualAI,
     d13PublishedEventRegistry,
     d16Intelligence,
     d17Intelligence,
@@ -681,7 +685,14 @@ function createTeachingRouter({
     router.get('/classes/:id/classroom',requireD14Ready,async(req,res)=>{
       try{res.json(await classroomService.snapshot(req.user,req.params.id));}catch(error){sendError(res,error,'Could not load Classroom.');}
     });
-    router.post('/classes/:id/classroom/enter',requireD14Ready,async(req,res)=>{
+    router.get('/classes/:id/classroom/assets/:assetId',requireD14Ready,async(req,res)=>{
+      try{
+        const asset=await classroomService.visualAsset(req.user,req.params.id,req.params.assetId);
+        res.set({'Content-Type':asset.mime_type,'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; sandbox",'Content-Disposition':'inline'});
+        res.send(asset.asset_bytes);
+      }catch(error){sendError(res,error,'Could not load Classroom visual.');}
+    });
+    router.post('/classes/:id/classroom/enter' ,requireD14Ready,async(req,res)=>{
       try{res.json(await classroomService.enter(req.user,req.params.id));}catch(error){sendError(res,error,'Could not enter Classroom.');}
     });
     router.post('/classes/:id/notebook',requireD14Ready,async(req,res)=>{

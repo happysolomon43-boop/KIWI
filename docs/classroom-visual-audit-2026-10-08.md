@@ -1,6 +1,6 @@
 # Classroom image and diagram audit — 8 October 2026
 
-The production Classroom visual pipeline is **not complete**. Board rendering and validated visual adapters exist, but they are not evidence of Teacher-triggered generation.
+The initial audit found an incomplete production Classroom visual pipeline. The findings below record that baseline; the implementation section records the subsequent correction.
 
 ## Verified connections
 
@@ -23,3 +23,13 @@ The production Classroom visual pipeline is **not complete**. Board rendering an
 A separate implementation must connect validated Teacher visual intent to the centrally governed capabilities, bind generation to exact current lesson authority with revocation/cancellation, enforce bounded budgets and idempotency, persist assets privately, retrieve them with student/Class authorization, publish Board blocks through D14's atomic fence, and give both Teacher and student a truthful fallback when unavailable. Verify actual provider output, asset retrieval, Board display, historical viewing, and protected-activity refusal before claiming production readiness.
 
 This audit does not claim that image or diagram generation works end to end in Classroom.
+
+## General implementation correction
+
+Normal lesson turns and raised-hand answers now share a bounded optional visual-intent contract. Both use the central AI capabilities, current Course/Class/Plan/Blueprint/controller authority, version-scoped revocation checks, cancellation, a 25-second deadline and a durable maximum of 12 requests per Class session. Exact successful requests are reused; failed and in-flight attempts cannot cause repeat provider spend.
+
+Validated image bytes and sanitized SVG are persisted in `teaching_runtime.classroom_visual_assets`, with RLS and no anonymous or authenticated database grants. An authenticated Classroom route returns only assets referenced by a committed Board item for the same student, Class and session. Assessment and Classwork retrieval is refused; published historical representations remain available after closure. Atomic D14 publication verifies both current academic authority and asset ownership before publishing the explanation and Board items together.
+
+The client retrieves visuals through its existing authenticated session client, uses temporary blob URLs, cancels obsolete loads and revokes URLs on rerender/close. Students following the current Board automatically see newly published scenes and can still browse history. Missing capabilities, provider failures, exhausted budgets and deadlines retain readable textual explanations. Teacher provenance includes previously published representations as generation/publication acknowledgements.
+
+Regression coverage uses validated PNG/SVG fixtures across different Courses, stale-parent changes, protected activities, revocation, idempotency and unavailable-provider fallbacks. A real-database integration test exercises leases, publication-gated retrieval, ownership isolation, history and budgets. Fixture tests do not establish that production provider credentials are configured or that an actual live lesson has generated and displayed a visual; those require separate operational observation.

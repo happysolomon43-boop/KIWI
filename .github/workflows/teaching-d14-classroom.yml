@@ -40,4 +40,4 @@ jobs:
         with: {node-version: '22'}
       - run: npm install --no-audit --no-fund
       - run: node scripts/setup-teaching-integration-db.js
-      - run: node --test tests/teaching/integration/d14-classroom-schema.test.js
+      - run: node --test tests/teaching/integration/d14-classroom-schema.test.js tests/teaching/integration/d14-visual-assets.test.js

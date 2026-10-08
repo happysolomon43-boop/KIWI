@@ -87,6 +87,14 @@ function createD31ReleaseReaders({query}={}) {
         if(!rows[0])fail('Raised-hand question not found in this Class.');
         return {kind,value:rows[0]};
       }
+      if(kind==='classroom-board'){
+        if(!boundClass||id!==String(boundClass.class_id))fail('Board context is outside the authenticated Class.');
+        const {rows=[]}=await query(`select i.block_type,i.content->>'alt' alt_text,i.content->>'visualAuthority' visual_authority,i.content->>'text' explanation
+          from public.teaching_board_items i join public.teaching_board_scenes s on s.board_scene_id=i.board_scene_id and s.student_id=i.student_id
+          join public.teaching_class_sessions cs on cs.class_session_id=s.class_session_id and cs.student_id=s.student_id
+          where i.student_id=$1 and cs.class_id=$2 order by s.ordinal desc,i.ordinal limit 12`,[actorId,boundClass.class_id]);
+        return {kind,value:{published_representations:rows,publication_is_generation_acknowledgement:true}};
+      }
       if(kind==='lesson-blueprint'){
         if(!boundClass)fail('Lesson blueprint requires an authenticated Class.');
         const {rows=[]}=await query("select lesson_blueprint_id,version_no,blueprint_state,objective_summary,blueprint_payload,planned_learning_unit_refs from public.teaching_lesson_blueprints where student_id=$1 and class_id=$2 and lesson_blueprint_id=$3 and blueprint_state='VALIDATED'",[actorId,boundClass.class_id,id]);

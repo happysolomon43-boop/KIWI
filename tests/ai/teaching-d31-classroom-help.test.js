@@ -15,7 +15,7 @@ test('a real TPF-08 registered in-Class raised hand traverses D31, D05, D03 and 
   const states=new Map();
   const platform={
     promptControl:createTeachingPromptControlPlane(),
-    aiBoundary:{async execute(input){observed.push(input);return {accepted:true,validatedResult:{output:{decision:'ANSWER_NOW',teacherMessage:'Newton\'s second law relates force, mass and acceleration through F = ma.',reason:'',delayMinutes:0}}};}},
+    aiBoundary:{async execute(input){observed.push(input);return {accepted:true,validatedResult:{output:{decision:'ANSWER_NOW',teacherMessage:'Newton\'s second law relates force, mass and acceleration through F = ma.',reason:'',delayMinutes:0,visualRequest:{kind:'DIAGRAM',diagramType:'graphviz',source:'digraph { mass -> force }',altText:'Force increases with mass at fixed acceleration',fallbackText:'Greater mass needs greater force at fixed acceleration.'}}}};}},
     orchestrationStore:{
       async begin(envelope){states.set(envelope.execution_id,'PENDING');return {inserted:true};},
       async mark(id,status){states.set(id,status);}
@@ -28,13 +28,18 @@ test('a real TPF-08 registered in-Class raised hand traverses D31, D05, D03 and 
     if(sql.includes('from public.teaching_course_plans'))return {rows:[plan]};
     if(sql.includes('state_version,lifecycle_state from public.teaching_class_sessions'))return {rows:[session]};
     if(sql.includes('from public.teaching_lesson_blueprints'))return {rows:[blueprint]};
+    if(sql.includes('from public.teaching_board_items'))return {rows:[{block_type:'text',explanation:'Earlier lesson explanation'}]};
     if(sql.includes('from public.teaching_classroom_interactions'))return {rows:[question]};
     throw new Error('Unexpected in-Class T1 query: '+sql);
   };
   const orchestrator=createD31ReleaseOrchestrator({runtimePlatform:platform,query,randomUUID:()=> 'd14-test-execution1'});
-  const intelligence=createD14HelpIntelligence({orchestrator});
+  const intelligence=createD14HelpIntelligence({orchestrator,visualCapabilities:()=>({imageGeneration:false,diagramRender:true,supportedDiagramTypes:['graphviz']})});
   const result=await intelligence.decide({studentId:'student1',classId:'class1',helpRequest:help,context:{classRow:klass,plan,blueprint,session}});
   assert.equal(result.decision,'ANSWER_NOW');
+  assert.equal(result.visualRequest.kind,'DIAGRAM');
+  assert.match(observed[0].request.content,/visualRequest/);
+  assert.match(observed[0].request.content,/diagramRender/);
+  assert.match(observed[0].request.content,/Earlier lesson explanation/);
   assert.equal(observed.length,1);
   assert.equal(observed[0].intelligenceClass,'DIRECT-AI');
   assert.equal(observed[0].authorityLevel,'T1');

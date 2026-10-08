@@ -25,6 +25,8 @@ const {
   createD26CoordinationRepository,
   createD27IntegrationRepository,
 } = require('./repositories');
+const {createD14VisualService}=require('./d14/visual-service');
+const {createAcademicAuthorityCancellationReader}=require('./authority/revocation-reader');
 const { createD14Service } = require('./d14/service');
 const { registerD14Runtime } = require('./d14/runtime');
 const { createTeachingService } = require('./services/teaching-service');
@@ -68,6 +70,8 @@ function createTeachingFoundation({
   d12PublishedEventRegistry = null,
   d13Intelligence = null,
   d14HelpIntelligence = null,
+  d14LessonIntelligence = null,
+  d14VisualAI = null,
   d13PublishedEventRegistry = null,
   d16Intelligence = null,
   d17Intelligence = null,
@@ -333,6 +337,7 @@ function createTeachingFoundation({
   const d14Repository = d11Repository && persistentDepsReady
     ? createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repository,outboxStore:d10RuntimePlatform?.outboxStore||null,dueEventStore:d10RuntimePlatform?.eventStore||null})
     : null;
+  const d14VisualService=d14Repository&&d14VisualAI?createD14VisualService({ai:d14VisualAI,repository:d14Repository,readContext:(studentId,classId)=>d11Repository.getClassContext(studentId,classId),revocations:createAcademicAuthorityCancellationReader({query})}):null;
   const d14Service = d14Repository && d11Service && d12Service
     ? createD14Service({
         repository:d14Repository,
@@ -341,6 +346,8 @@ function createTeachingFoundation({
         d12Service,
         attendanceService:d15Service,
         helpIntelligence:d14HelpIntelligence,
+        lessonIntelligence:d14LessonIntelligence,
+        visualService:d14VisualService,
         randomUUID,
       })
     : null;

@@ -11,7 +11,7 @@ const RESTRICTED=new Set(['ASSESSMENT','CLASSWORK']);
 const HELP_INSTRUCTIONAL_MODES=new Set(['OPENING','DIAGNOSTIC','INSTRUCTION','GUIDED_PRACTICE','INDEPENDENT_PRACTICE','REMEDIATION']);
 const SIGNALS=new Set(['ASK_TEACHER','NEED_HELP','READY','FINISHED','BREAK_REQUEST','EARLY_DISMISSAL_REQUEST','TECHNICAL_ISSUE','LEAVE']);
 function fail(code,status=409){throw Object.assign(new Error(code),{code,status});}
-function createD14Service({repository,d11Repository,d11Service,d12Service,attendanceService=null,studyIntelligence=null,helpIntelligence=null,cardSetReader=null,sourceReader=null,clock=()=>new Date(),randomUUID}={}){
+function createD14Service({repository,d11Repository,d11Service,d12Service,attendanceService=null,studyIntelligence=null,helpIntelligence=null,lessonIntelligence=null,visualService=null,cardSetReader=null,sourceReader=null,clock=()=>new Date(),randomUUID}={}){
   if(!repository||!d11Repository||!d11Service||!d12Service||!randomUUID)throw new TypeError('D14 requires the existing D11/D12 owners and its artifact repository.');
   async function context(studentId,classId){const value=await d11Repository.getClassContext(studentId,classId);if(!value)fail('TEACHING_D14_CLASS_NOT_FOUND',404);return value;}
   async function listClasses(user,courseId){
@@ -158,6 +158,7 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
     try{
       const published=await repository.publishTeacherTurn({
         studentId,classId,expectedControllerVersion:request.controller_version,
+        blocks:result.visualRequest&&visualService?await visualService.prepare({studentId,classId,context:ctx,visualRequest:result.visualRequest,turnKey:'d14-help-answer:'+helpRequestId}):[],
         message:result.teacherMessage,idempotencyKey:'d14-help-answer:'+helpRequestId,helpRequestId,
         expectedBlueprintId:ctx.blueprint?.lesson_blueprint_id||null,
         expectedBlueprintVersion:ctx.blueprint?.version_no==null?null:Number(ctx.blueprint.version_no),
@@ -175,6 +176,26 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
       return finish('UNAVAILABLE','Your answer could not be safely published. Please ask again.',0,ctx.classRow.schedule_version);
     }
   }
+  async function processLessonTurn({studentId,classId,sessionId,controllerVersion}) {
+    if(!lessonIntelligence)return {accepted:true,noop:true,reason:'TEACHER_ROUTE_HELD'};
+    const ctx=await context(studentId,classId);
+    const {permitted}=require('./visual-service');
+    if(!permitted(ctx)||ctx.session.class_session_id!==sessionId||Number(ctx.session.state_version)!==Number(controllerVersion))return {accepted:true,noop:true,reason:'LESSON_MOVED_ON'};
+    const key='d14-instruction:'+sessionId+':v'+controllerVersion;
+    if(await repository.teacherTurn(studentId,key))return {accepted:true,noop:true};
+    const result=await lessonIntelligence.decide({studentId,classId,context:ctx,turnKey:key});
+    if(result.decision!=='ANSWER_NOW')return {accepted:true,noop:true,reason:'LESSON_EVIDENCE_INSUFFICIENT'};
+    try{
+      const blocks=result.visualRequest&&visualService?await visualService.prepare({studentId,classId,context:ctx,visualRequest:result.visualRequest,turnKey:key}):[];
+      await repository.publishTeacherTurn({studentId,classId,message:result.teacherMessage,blocks,idempotencyKey:key,expectedControllerVersion:controllerVersion,expectedBlueprintId:ctx.blueprint.lesson_blueprint_id,expectedBlueprintVersion:ctx.blueprint.version_no,expectedScheduleVersion:ctx.classRow.schedule_version,expectedCourseStateVersion:ctx.classRow.course_state_version,expectedPlanId:ctx.plan?.course_plan_id||null,expectedPlanVersion:ctx.plan?.version_no||null});
+      return {accepted:true,published:true};
+    }catch(error){if(['TEACHING_D14_HELP_STALE','TEACHING_D14_TEACHER_TURN_STALE','TEACHING_D14_PARENT_AUTHORITY_REVOKED'].includes(error.code))return {accepted:true,noop:true,reason:'LESSON_MOVED_ON'};throw error;}
+  }
+  async function visualAsset(user,classId,assetId){
+    const row=await repository.visualAsset(user.id,classId,assetId);
+    if(!row)fail('TEACHING_D14_VISUAL_NOT_FOUND',404);
+    return row;
+  }
   async function enter(user,classId){
     const ctx=await context(user.id,classId);
     if(ctx.classRow.lifecycle_state==='CANCELLED')fail('TEACHING_D14_CLASS_CANCELLED',409);
@@ -190,6 +211,7 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
     const attendance=attendanceService&&typeof attendanceService.observeJoin==='function'
       ? await attendanceService.observeJoin(user,classId,{interactionId:row.interaction_id,occurredAt:row.created_at})
       : null;
+    if(lessonIntelligence&&repository.queueInstruction)await repository.queueInstruction(user.id,classId);
     return {enteredAt:row.created_at,formalAttendanceDetermined:Boolean(attendance?.record),attendance};
   }
   async function respond(user,classId,input={}){
@@ -232,6 +254,6 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
     const row=await repository.saveNote({studentId,classId,state:stage==='PRE_CLASS'?'PREPARED_NOT_PUBLISHABLE':'VALIDATED_PRIVATE',stage,binding:request.binding,payload:output,validation,closureFactId:closure?.closure_fact_id||null,idempotencyKey:key});
     return {state:row.state,published:false,noteVersionId:row.note_version_id};
   }
-  return Object.freeze({listClasses,snapshot,notebook,signal,retireOutstandingHelp,processHelp,enter,respond,runStudyStage,publishTeacherTurn:repository.publishTeacherTurn});
+  return Object.freeze({listClasses,snapshot,notebook,signal,retireOutstandingHelp,processHelp,processLessonTurn,visualAsset,enter,respond,runStudyStage,publishTeacherTurn:repository.publishTeacherTurn});
 }
 module.exports={createD14Service,MODES};

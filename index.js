@@ -125,11 +125,17 @@ const teachingClassRuntimeRecovery = createD11RuntimeRecovery({
   intervalMs:120000,logger:console,
 });
 const teachingD31Release = createD31ReleaseIntelligence({
+  visualAI: ai,
   runtimePlatform: teachingRuntimePlatform,
   query,
   randomUUID,
   env: process.env,
 });
+const classroomVisualCapabilities = ai.capabilityStatus();
+console.info('[KIWI Classroom visuals] configured capabilities:', JSON.stringify({
+  imageGeneration: Boolean(classroomVisualCapabilities.imageGeneration?.configured),
+  diagramRender: Boolean(classroomVisualCapabilities.diagramRender?.configured),
+}));
 console.info(
   '[KIWI Teaching D31] AI release authorization:',
   teachingD31Release.authorization.releaseAuthorization,

@@ -4,6 +4,7 @@ const TEACHING_EVENTS = Object.freeze({
   COURSE_ACTIVATED: 'teaching.course.activated',
   CLASS_START_DUE: 'teaching.class.start_due',
   CLASS_JOINED: 'teaching.class.joined',
+  CLASSROOM_INSTRUCTION_READY: 'teaching.classroom.instruction_ready',
   CLASS_HELP_REQUESTED: 'teaching.class.help_requested',
   CLASS_HELP_REVIEW_DUE: 'teaching.class.help_review_due',
   CLASS_PREPARATION_RECONCILE: 'teaching.class.preparation_reconcile',

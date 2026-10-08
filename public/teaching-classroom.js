@@ -1,8 +1,10 @@
-const {kiwiApiRequest}=window.KIWI_API_CLIENT||{};
+const {kiwiApiRequest,kiwiApiBlobRequest}=window.KIWI_API_CLIENT||{};
 const courses=window.KIWITeachingCourses;
 if(typeof kiwiApiRequest!=='function'||!courses?.registerSection)throw new Error('Teaching Classroom requires the shared KIWI client and Course shell.');
 
 const $=(tag,className='',text=null)=>{const n=document.createElement(tag);if(className)n.className=className;if(text!==null)n.textContent=String(text);return n;};
+const visualLoads=new Map();
+function clearVisualLoads(){for(const {controller,url} of visualLoads.values()){controller.abort();if(url)URL.revokeObjectURL(url);}visualLoads.clear();}
 const state={classId:null,snapshot:null,host:null,interval:null,refresh:null,scene:0,tab:'board',busy:false,returnFocus:null,leaveRequestId:null,reviewOnly:false,sheet:null,sheetKind:null,sheetFocus:null,sheetKey:null,sheetBusy:false};
 const MODE={PRE_CLASS:'Before Class',START_DELAYED:'Start pending',UNSTARTED_PAST:'Did not start',OPENING:'Teaching',DIAGNOSTIC:'Teaching',INSTRUCTION:'Teaching',GUIDED_PRACTICE:'Guided Practice',INDEPENDENT_PRACTICE:'Independent Practice',CLASSWORK:'Classwork — Graded',ASSESSMENT:'Test / Assessment',BREAK:'Break',REMEDIATION:'Teaching',CLOSURE:'Class Summary',INTERRUPTED:'Interrupted'};
 function when(value){return value?new Date(value).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):'—';}
@@ -13,11 +15,13 @@ function button(label,handler,cls=''){const b=$('button',cls,label);b.type='butt
 function notice(title,body,kind=''){return add($('div',`tc-notice ${kind}`),$('strong','',title),$('p','',body));}
 function serverNow(){const s=state.snapshot;return Date.now()+(s?new Date(s.serverNow).getTime()-s._receivedAt:0);}
 function clearRuntime(){if(state.interval)clearInterval(state.interval);if(state.refresh)clearInterval(state.refresh);state.interval=state.refresh=null;}
-function close({restore=true}={}){closeSheet({restore:false,force:true});clearRuntime();state.host?.remove();document.body.classList.remove('tc-active');state.host=null;state.classId=null;state.snapshot=null;state.leaveRequestId=null;state.reviewOnly=false;if(restore)state.returnFocus?.focus?.();state.returnFocus=null;}
+function close({restore=true}={}){clearVisualLoads();state.scene=0;closeSheet({restore:false,force:true});clearRuntime();state.host?.remove();document.body.classList.remove('tc-active');state.host=null;state.classId=null;state.snapshot=null;state.leaveRequestId=null;state.reviewOnly=false;if(restore)state.returnFocus?.focus?.();state.returnFocus=null;}
 async function fetchSnapshot(){
   if(!state.classId||state.busy)return;
   const data=await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(state.classId)}/classroom`);
-  data._receivedAt=Date.now();const previous=state.snapshot;state.snapshot=data;
+  data._receivedAt=Date.now();const previous=state.snapshot;
+  if(!state.reviewOnly&&(!previous||state.scene>=Math.max(0,(previous.board?.length||0)-1)))state.scene=Math.max(0,(data.board?.length||0)-1);
+  state.snapshot=data;
   // The twelve-second live refresh must not tear down the Board, native
   // Details control or focused inputs when only server clock values changed.
   const comparable=(v)=>JSON.stringify({...v,serverNow:null,_receivedAt:null,entry:v?.entry?{...v.entry,minutesRemaining:null}:null});
@@ -36,7 +40,7 @@ async function controllerAction(path,body={}){
   catch(error){state.host?.querySelector('.tc-message')?.replaceChildren($('span','',error.message||'The Class could not continue.'));}
   finally{state.busy=false;}
 }
-async function fetchAfterAction(){const data=await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(state.classId)}/classroom`);data._receivedAt=Date.now();state.snapshot=data;render();}
+async function fetchAfterAction(){const data=await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(state.classId)}/classroom`);data._receivedAt=Date.now();if(!state.reviewOnly&&state.scene>=Math.max(0,(state.snapshot?.board?.length||0)-1))state.scene=Math.max(0,(data.board?.length||0)-1);state.snapshot=data;render();}
 async function open(classId,{reviewOnly=false}={}){
   const opener=document.activeElement;close({restore:false});state.returnFocus=opener;state.classId=classId;state.reviewOnly=reviewOnly;state.host=$('div','tc-overlay');state.host.setAttribute('role','dialog');state.host.setAttribute('aria-modal','true');state.host.setAttribute('aria-label','KIWI Classroom');
   document.body.append(state.host);document.body.classList.add('tc-active');state.host.append(notice('Opening Classroom','Connecting to the current Class record…'));
@@ -123,7 +127,12 @@ function renderBlock(item){
     case 'code':card.append(add($('pre','tc-code'),$('code','',c.text||'')));break;
     case 'worked_solution':(c.steps||[]).forEach((step,i)=>card.append(add($('div','tc-step'),$('span','',String(i+1).padStart(2,'0')),$('p','',step))));break;
     case 'graph':case 'data':card.append(graphBlock(c));break;
-    case 'image':case 'diagram':{const img=$('img','tc-visual');img.src=c.src;img.alt=c.alt||`${label.toLowerCase()} shown on the Class Board`;img.loading='lazy';img.addEventListener('error',()=>{img.remove();card.append($('p','tc-empty-copy',c.fallback?.text||c.alt||'This visual could not be loaded.'));},{once:true});card.append(img);if(c.visualAuthority==='ILLUSTRATIVE')card.append($('small','tc-empty-copy','Illustration — use the Teacher’s explanation for exact facts.'));break;}
+    case 'image':case 'diagram':{const img=$('img','tc-visual');img.alt=c.alt||`${label.toLowerCase()} shown on the Class Board`;img.loading='lazy';img.addEventListener('error',()=>{img.remove();card.append($('p','tc-empty-copy',c.fallback?.text||c.alt||'This visual could not be loaded.'));},{once:true});card.append(img);
+      const fallback=()=>{if(!card.contains(img))return;img.remove();card.append($('p','tc-empty-copy',c.fallback?.text||c.alt||'This visual could not be loaded.'));};
+      if(typeof kiwiApiBlobRequest!=='function'||!/^\/api\/teaching\/classes\/[^/]+\/classroom\/assets\/[^/]+$/.test(c.src||'')){fallback();break;}
+      const load={controller:new AbortController(),url:null};visualLoads.set(img,load);
+      kiwiApiBlobRequest(c.src.slice(4),{signal:load.controller.signal}).then(blob=>{if(!img.isConnected||load.controller.signal.aborted)return;load.url=URL.createObjectURL(blob);img.src=load.url;}).catch(()=>fallback());
+      if(c.visualAuthority==='ILLUSTRATIVE')card.append($('small','tc-empty-copy','Illustration — use the Teacher’s explanation for exact facts.'));break;}
     case 'comparison':{const pair=$('div','tc-comparison');(c.columns||[]).forEach((col)=>pair.append(add($('div',''),$('strong','',col.title||''),$('p','',col.text))));card.append(pair);break;}
     case 'annotation':card.append($('p','tc-annotation',c.label||''));break;
   }
@@ -335,7 +344,7 @@ function renderSummary(s){const section=$('section','tc-after');add(section,$('d
   if(Array.isArray(s.teacherConversation)&&s.teacherConversation.length)section.append(button('Review raised-hand questions',()=>openSheet('teacher'),'tc-button tc-button--soft'));
   if(s.summary?.payload?.transcript_url){const link=document.createElement('a');link.className='tc-artifact-link';link.href=s.summary.payload.transcript_url;link.textContent='Full transcript · secondary record';link.setAttribute('aria-label','Open full transcript as a secondary class artifact');artifacts.append(link);}
   section.append(artifacts);return section;}
-function render(){
+function render(){clearVisualLoads();
   const s=state.snapshot;if(!s||!state.host)return;
   // A protected activity cannot inherit an already-open Notebook or Teacher sheet.
   // Close it before the refreshed Class DOM is made visible.
