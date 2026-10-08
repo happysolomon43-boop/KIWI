@@ -57,7 +57,7 @@ function trapClassroomFocus(event){
 function updateClocks(){
   const s=state.snapshot;if(!s||!state.host)return;
   const now=serverNow(), end=new Date(s.class.scheduledEndAt).getTime();
-  const overall=state.host.querySelector('[data-clock="class"]');if(overall)overall.textContent=now>end?`+${duration(now-end)} overtime`:`${duration(end-now)} to scheduled end`;
+  const overall=state.host.querySelector('[data-clock="class"]');if(overall)overall.textContent=s.modeKey==='CLOSURE'||s.controller?.lifecycleState==='CLOSED'?'Class ended':now>end?`+${duration(now-end)} overtime`:`${duration(end-now)} to scheduled end`;
   const breakClock=state.host.querySelector('[data-clock="activity"]');if(breakClock){const target=s.controller?.breakEndsAt||s.controller?.progressState?.activity_ends_at;if(target)breakClock.textContent=`${duration(new Date(target).getTime()-now)} remaining`;}
 }
 function renderHeader(s){
@@ -127,7 +127,7 @@ function renderBoard(s){
   const title=add($('div','tc-panel-head'),add($('div',''),$('div','tc-eyebrow','TEACHING SURFACE'),$('h2','','The Board')));
   panel.append(title);
   if(!s.boardHistoryAllowed){panel.append(notice('Board history is unavailable','This activity restricts earlier teaching materials.'));return panel;}
-  if(!s.board.length){panel.append(add($('div','tc-board-empty'),$('div','tc-board-empty__glyph','✧'),$('h3','','A clear space to think'),$('p','','The Board will hold the explanation, examples and comparisons for this Class.')));return panel;}
+  if(!s.board.length){if(s.modeKey==='CLOSURE'||s.controller?.lifecycleState==='CLOSED')panel.append(notice('No Board scenes saved','This Class ended without a published Board scene. Your saved notes and Class Summary remain available.'));else panel.append(add($('div','tc-board-empty'),$('div','tc-board-empty__glyph','✧'),$('h3','','A clear space to think'),$('p','','The Board will hold the explanation, examples and comparisons for this Class.')));return panel;}
   state.scene=Math.min(state.scene,s.board.length-1);const scene=s.board[state.scene];
   const previous=button('←',()=>{state.scene=Math.max(0,state.scene-1);render();},'tc-icon');previous.setAttribute('aria-label','Previous Board scene');const next=button('→',()=>{state.scene=Math.min(s.board.length-1,state.scene+1);render();},'tc-icon');next.setAttribute('aria-label','Next Board scene');title.append(add($('div','tc-scene-nav'),previous,$('span','',`${state.scene+1} / ${s.board.length}`),next));
   title.querySelectorAll('button')[0].disabled=state.scene===0;title.querySelectorAll('button')[1].disabled=state.scene===s.board.length-1;
