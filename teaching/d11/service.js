@@ -438,6 +438,10 @@ function createD11Service({
     if(!workspace||workspace.target_kind!=='next_class')return Object.freeze({accepted:true,noop:true});
     if(['HANDED_OFF','SUPERSEDED','CANCELLED'].includes(workspace.lifecycle_state))
       return Object.freeze({accepted:true,noop:true,reason:'WORKSPACE_TERMINAL'});
+    const current=await repository.getClassContext(workspace.student_id,workspace.target_ref);
+    if(!current?.classRow||current.classRow.lifecycle_state==='CANCELLED'
+      ||clock().getTime()>=Date.parse(current.classRow.scheduled_end_at))
+      return Object.freeze({accepted:true,noop:true,reason:'CLASS_NO_LONGER_PREPARABLE'});
     // Model work is provisional and never mutates the authoritative Controller.
     // A failed model call must not be acknowledged as a successful publication.
     // Let the durable outbox retry it with its bounded backoff and audit trail.
