@@ -28,7 +28,38 @@ const IMMEDIATE_FAILURE_CODES = new Set([
   AI_ERROR_CODES.CONFIG,
   AI_ERROR_CODES.BAD_REQUEST,
   AI_ERROR_CODES.SAFETY,
+  AI_ERROR_CODES.CANCELLED_PARENT_SUPERSEDED,
 ]);
+
+function parentCancellationError(cause = null) {
+  return new AIError('AI work cancelled because its academic parent authority was superseded', {
+    code: AI_ERROR_CODES.CANCELLED_PARENT_SUPERSEDED,
+    status: 499,
+    retryable: false,
+    scope: 'OPERATION',
+    cause,
+  });
+}
+
+function assertNotCancelled(signal) {
+  if (signal?.aborted) throw parentCancellationError(signal.reason instanceof Error ? signal.reason : null);
+}
+
+// A waiting request stops immediately; if the underlying traffic queue cannot
+// revoke a pending admission, release its eventual lease instead of leaking it.
+async function acquireCancellableTrafficLease(promise, signal) {
+  if (!signal) return promise;
+  assertNotCancelled(signal);
+  let abort;
+  const cancelled = new Promise((_, reject) => {
+    abort = () => reject(parentCancellationError(signal.reason instanceof Error ? signal.reason : null));
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+  });
+  try { return await Promise.race([promise, cancelled]); }
+  catch (error) { promise.then(lease => lease?.release?.(), () => {}); throw error; }
+  finally { signal.removeEventListener('abort', abort); }
+}
 
 const FAST_ROUTE_FALLBACK_CODES = new Set([
   AI_ERROR_CODES.PROVIDER_OVERLOADED,
@@ -369,7 +400,9 @@ function createAIOrchestrator({
     operationBudgetId = null,
     preparationRoutePosture = null,
     executionProfile = null,
+    signal = null,
   } = {}) {
+    assertNotCancelled(signal);
     assertReady?.();
     const task = resolvedRouter.getTask(taskId);
     const resolvedExecutionProfile = resolveExecutionProfile(task, executionProfile);
@@ -467,18 +500,20 @@ function createAIOrchestrator({
     }
 
     try {
-      trafficLease = await resolvedTrafficController.acquire({
+      trafficLease = await acquireCancellableTrafficLease(resolvedTrafficController.acquire({
         taskId,
         taskClass: task.class,
         executionLane: resolvedExecutionProfile.executionLane || task.executionLane,
         timeoutMs: operationTimeoutMs,
-      });
+      }), signal);
+      assertNotCancelled(signal);
       queueWaitMs = Number(trafficLease?.queueWaitMs) || 0;
       admissionLimit = trafficLease?.admissionLimit ?? null;
       congestionLevel = trafficLease?.congestionLevel || null;
 
       routeLoop:
       for (let routeIndex = 0; routeIndex < routedCandidates.length; routeIndex++) {
+        assertNotCancelled(signal);
         const candidate = routedCandidates[routeIndex];
         const slots = credentialSlotsFor(candidate, { advance: true });
         if (slots.length) hadEligibleRoute = true;
@@ -503,6 +538,7 @@ function createAIOrchestrator({
 
         try {
           for (const slot of slots) {
+            assertNotCancelled(signal);
             if (attempts.length >= retryPolicy.maxAttempts) break routeLoop;
 
             if (!providerLease.halfOpenProbe && !ownsConfirmationProbe) {
@@ -578,6 +614,7 @@ function createAIOrchestrator({
             });
 
             try {
+              assertNotCancelled(signal);
               const adapter = resolvedProviders.require(candidate.provider, 'generate');
               const result = await adapter.generate({
                 credential: slot,
@@ -585,7 +622,9 @@ function createAIOrchestrator({
                 timeoutMs: attemptTimeoutMs,
                 fallbackDepth: routeIndex,
                 generationGroupId,
+                signal,
               });
+              assertNotCancelled(signal);
               const normalized = result?.normalized || result;
 
               if (normalized?.blocked) {
@@ -675,7 +714,9 @@ function createAIOrchestrator({
                 executionProfile: resolvedExecutionProfile.name,
               });
             } catch (error) {
-              const aiError = error instanceof AIError
+              const aiError = signal?.aborted
+                ? parentCancellationError(error)
+                : error instanceof AIError
                 ? error
                 : new AIError(error?.message || 'Unknown AI failure', {
                     code: AI_ERROR_CODES.UNKNOWN,
@@ -685,7 +726,7 @@ function createAIOrchestrator({
                     cause: error,
                   });
               lastError = aiError;
-              resolvedTrafficController.noteFailure(aiError, {
+              if (aiError.code !== AI_ERROR_CODES.CANCELLED_PARENT_SUPERSEDED) resolvedTrafficController.noteFailure(aiError, {
                 routeKey: candidate.routeKey,
                 credentialSlotId: slot.id,
               });
@@ -713,8 +754,10 @@ function createAIOrchestrator({
                 status: aiError.status,
               }));
 
-              await sideEffect('quota failure', () => quotaManager?.markFailure(slot.id, candidate.routeKey, aiError));
-              await sideEffect('route scheduler failure', () => resolvedRouteScheduler.recordFailure(candidate.routeKey, slot.id, aiError));
+              if (aiError.code !== AI_ERROR_CODES.CANCELLED_PARENT_SUPERSEDED) {
+                await sideEffect('quota failure', () => quotaManager?.markFailure(slot.id, candidate.routeKey, aiError));
+                await sideEffect('route scheduler failure', () => resolvedRouteScheduler.recordFailure(candidate.routeKey, slot.id, aiError));
+              }
               await sideEffect('operation budget failure', () => resolvedOperationBudget.recordOutcome(operationId, aiError));
               await sideEffect('telemetry failed attempt', () => telemetry?.recordAttempt({
                 requestId,
@@ -726,7 +769,7 @@ function createAIOrchestrator({
                 requestedReasoning: candidate.reasoning?.requested || task.reasoning,
                 resolvedReasoning: candidate.reasoning?.resolved || null,
                 fallbackDepth: routeIndex,
-                outcome: aiError.code === AI_ERROR_CODES.SAFETY ? 'BLOCKED' : 'FAILED',
+                outcome: aiError.code === AI_ERROR_CODES.CANCELLED_PARENT_SUPERSEDED ? 'CANCELLED' : aiError.code === AI_ERROR_CODES.SAFETY ? 'BLOCKED' : 'FAILED',
                 errorCode: aiError.code,
                 httpStatus: aiError.status,
                 retryAfterMs: aiError.retryAfterMs,
@@ -753,13 +796,13 @@ function createAIOrchestrator({
                 executionProfile: resolvedExecutionProfile.name,
               });
 
-              const lifecycleResult = await sideEffect('model lifecycle failure', () =>
+              const lifecycleResult = aiError.code === AI_ERROR_CODES.CANCELLED_PARENT_SUPERSEDED ? null : await sideEffect('model lifecycle failure', () =>
                 modelLifecycle?.recordFailure(candidate, aiError)
               );
               if (lifecycleResult?.suspended && aiError.code !== AI_ERROR_CODES.SAFETY) break;
 
               if (IMMEDIATE_FAILURE_CODES.has(aiError.code)) {
-                await finishFailure(aiError, aiError.code === AI_ERROR_CODES.SAFETY ? 'BLOCKED' : 'FAILED');
+                await finishFailure(aiError, aiError.code === AI_ERROR_CODES.CANCELLED_PARENT_SUPERSEDED ? 'CANCELLED' : aiError.code === AI_ERROR_CODES.SAFETY ? 'BLOCKED' : 'FAILED');
                 throw aiError;
               }
 
@@ -855,7 +898,9 @@ function createAIOrchestrator({
       await finishFailure(finalError);
       throw finalError;
     } catch (error) {
-      const failure = error instanceof AIError
+      const failure = signal?.aborted
+        ? parentCancellationError(error)
+        : error instanceof AIError
         ? error
         : new AIError('KIWI AI runtime is temporarily unavailable', {
             code: AI_ERROR_CODES.RUNTIME_UNAVAILABLE,
@@ -865,7 +910,7 @@ function createAIOrchestrator({
             scope: 'ORCHESTRATOR',
             cause: error,
           });
-      await finishFailure(failure);
+      await finishFailure(failure, failure.code === AI_ERROR_CODES.CANCELLED_PARENT_SUPERSEDED ? 'CANCELLED' : 'FAILED');
       throw failure;
     } finally {
       trafficLease?.release?.();

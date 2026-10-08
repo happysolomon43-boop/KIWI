@@ -94,6 +94,7 @@ function createGroqHttpTransport({
       });
       const raw = await readGroqResponseBody(response);
       const latencyMs = Math.max(0, (Number(clock()) || Date.now()) - startedAt);
+      if (externalAbort || signal?.aborted) throw new AIError('Groq request was cancelled', {code:GROQ_ERROR_CODES.CANCELLED,status:499,retryable:false,scope:'ATTEMPT',provider:AI_PROVIDERS.GROQ});
 
       if (!response.ok) {
         throw classifyGroqHttpError({
