@@ -33,8 +33,32 @@ function createD31ReleaseReaders({query}={}) {
     const {rows=[]}=await query("select * from public.teaching_course_plans where student_id=$1 and course_id=$2 and plan_state<>'SUPERSEDED' order by version_no desc limit 1",[actorId,courseId]);
     return rows[0]||null;
   }
+  async function assessmentGraph(actorId,type,id){
+    const table=type==='ASSESSMENT_RESULT'?'teaching_assessment_results':'teaching_assessments';
+    const key=type==='ASSESSMENT_RESULT'?'assessment_result_id':'assessment_id';
+    const row=(await query(`select * from public.${table} where student_id=$1 and ${key}=$2`,[actorId,id])).rows?.[0];
+    if(!row)fail('Assessment authority was not found.');
+    const assessment=type==='ASSESSMENT_RESULT'
+      ?(await query('select * from public.teaching_assessments where student_id=$1 and assessment_id=$2',[actorId,row.assessment_id])).rows?.[0]:row;
+    if(!assessment)fail('Assessment parent was not found.');
+    const course=await courseFor(actorId,assessment.course_id);
+    if(['CANCELLED','INVALIDATED','SUPERSEDED'].includes(assessment.definition_state))fail('Assessment authority has been withdrawn.');
+    return {row,assessment,course};
+  }
   async function stateReader(envelope){
     const type=envelope?.state_reference?.aggregate_type,id=envelope?.state_reference?.aggregate_id,actorId=envelope?.trigger?.actor_id;
+    if(['ASSESSMENT','ASSESSMENT_RESULT'].includes(type)){
+      const {row,assessment}=await assessmentGraph(actorId,type,id);
+      let fields={assessment_owner_required:true,eligibility_t0_precedence:true,gradebook_write_allowed:false,package_lock_t0_only:true,generator_validator_independence:true};
+      if(type==='ASSESSMENT_RESULT'){
+        const attempt=(await query('select * from public.teaching_assessment_attempts where student_id=$1 and assessment_attempt_id=$2 and assessment_id=$3',[actorId,row.assessment_attempt_id,assessment.assessment_id])).rows?.[0];
+        const pack=(await query('select package_state from public.teaching_assessment_packages where student_id=$1 and assessment_package_id=$2',[actorId,row.assessment_package_id])).rows?.[0];
+        fields={gradebook_owner_external:true,locked_rubric_required:pack?.package_state==='LOCKED',authoritative_final_response_required:Boolean(attempt&&['SUBMITTED','EXPIRED'].includes(attempt.attempt_state)&&attempt.final_snapshot_ref&&!attempt.invalidation_reason),deterministic_aggregation_required:true,blind_first_structural_two_stage_required:envelope.capability_prompt_family==='TPF-16'};
+        // Request declarations are assertions, never permission to mark an active attempt.
+        fields.blind_first_structural_two_stage_required=envelope.preconditions?.blind_first_structural_two_stage_required===true;
+      }
+      return {stateReference:{aggregate_type:type,aggregate_id:id,state_version:String(type==='ASSESSMENT_RESULT'?row.result_version:row.state_version)},preconditions:Object.fromEntries(Object.keys(envelope.preconditions||{}).map(key=>[key,fields[key]]))};
+    }
     if(type==='teaching_course'){
       const course=await courseFor(actorId,id);
       const fields={lifecycle_state:course.lifecycle_state,subject_snapshot_ref:course.subject_snapshot_ref||null};
@@ -73,6 +97,21 @@ function createD31ReleaseReaders({query}={}) {
   }
   async function contextAssembler({contextSpec={},accessContext={}}={}){
     const {actorId,aggregateType,classId}=accessContext;
+    if(['ASSESSMENT','ASSESSMENT_RESULT'].includes(aggregateType)){
+      const {assessment}=await assessmentGraph(actorId,aggregateType,accessContext.assessmentOwnerId);
+      if(aggregateType==='ASSESSMENT_RESULT'){
+        // Marking already supplies a strict, blind-safe rubric/response allowlist.
+        // Never append whole result/package rows (which can expose original credit).
+        return buildSeparatedContextLanes({trustedAuthoritativeState:{assessment_owner_verified:true},permissionConstraints:{},provenanceLinkedAcademicContent:[],untrustedContent:[]});
+      }
+      const {rows=[]}=await query(`select lu.learning_unit_id,lu.title,lu.intended_competence,lu.exit_conditions,c.instructional_completion_basis,c.coverage_version,s.content_summary
+        from public.teaching_course_coverage c join public.teaching_learning_units lu on lu.learning_unit_id=c.learning_unit_id and lu.student_id=c.student_id
+        join public.teaching_source_content_items s on s.source_content_item_id=c.source_content_item_id and s.student_id=c.student_id
+        join public.teaching_course_plans p on p.course_plan_id=c.course_plan_id and p.student_id=c.student_id
+        where c.student_id=$1 and c.course_id=$2 and p.plan_state<>'SUPERSEDED' and c.excluded_at is null
+        and (c.taught_at is not null or c.validated_prior_knowledge_at is not null or $3::boolean)`,[actorId,assessment.course_id,!assessment.graded&&assessment.assessment_type==='DIAGNOSTIC']);
+      return buildSeparatedContextLanes({trustedAuthoritativeState:{assessment:{assessment_id:assessment.assessment_id,assessment_type:assessment.assessment_type,purpose:assessment.purpose},[!assessment.graded&&assessment.assessment_type==='DIAGNOSTIC'?'diagnostic_probe_units':'eligible_units']:rows.map(({content_summary,...row})=>row)},permissionConstraints:{},provenanceLinkedAcademicContent:[],untrustedContent:rows.map(row=>asUntrustedData({kind:'uploaded_material',data:{learning_unit_id:row.learning_unit_id,text:row.content_summary},provenance:{course_id:assessment.course_id}}))});
+    }
     const boundClass=aggregateType==='teaching_class_controller'?await classFor(actorId,classId):null;
     const courseId=boundClass?.course_id||accessContext.courseId;
     const course=await courseFor(actorId,courseId);
@@ -188,6 +227,7 @@ function createD31ReleaseOrchestrator({ runtimePlatform, query, randomUUID } = {
           aggregateType:request?.stateReference?.aggregate_type,
           courseId:request?.stateReference?.aggregate_type==='teaching_course'?request.stateReference.aggregate_id:null,
           classId:request?.stateReference?.aggregate_type==='teaching_class_controller'?request.stateReference.aggregate_id:null,
+          assessmentOwnerId:request?.stateReference?.aggregate_id,
         },
       });
     },

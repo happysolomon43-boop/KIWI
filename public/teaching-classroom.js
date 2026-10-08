@@ -15,7 +15,43 @@ function button(label,handler,cls=''){const b=$('button',cls,label);b.type='butt
 function notice(title,body,kind=''){return add($('div',`tc-notice ${kind}`),$('strong','',title),$('p','',body));}
 function serverNow(){const s=state.snapshot;return Date.now()+(s?new Date(s.serverNow).getTime()-s._receivedAt:0);}
 function clearRuntime(){if(state.interval)clearInterval(state.interval);if(state.refresh)clearInterval(state.refresh);state.interval=state.refresh=null;}
-function close({restore=true}={}){collapsePanel({restore:false});clearVisualLoads();state.scene=0;closeSheet({restore:false,force:true});clearRuntime();state.host?.remove();document.body.classList.remove('tc-active');state.host=null;state.classId=null;state.snapshot=null;state.leaveRequestId=null;state.reviewOnly=false;if(restore)state.returnFocus?.focus?.();state.returnFocus=null;}
+let selectionNote=null,selectionFrame=null;
+function clearSelectionNote(){selectionNote?.button.remove();selectionNote=null;}
+function updateSelectionNote(){
+  if(selectionNote?.busy||document.activeElement===selectionNote?.button)return;
+  const selection=window.getSelection();
+  if(!state.host||state.sheet||state.reviewOnly||!state.snapshot?.notebookAllowed||!selection?.rangeCount||selection.isCollapsed){clearSelectionNote();return;}
+  const range=selection.getRangeAt(0),element=node=>node?.nodeType===Node.ELEMENT_NODE?node:node?.parentElement;
+  const start=element(range.startContainer),end=element(range.endContainer);
+  const surface=start?.closest('.tc-board,.tc-workspace');
+  const content=selection.toString().trim();
+  if(!content||!surface||!state.host.contains(surface)||!surface.contains(end)||start.closest('input,textarea,button,[contenteditable]')||end?.closest('input,textarea,button,[contenteditable]')){clearSelectionNote();return;}
+  const classId=state.classId,rect=range.getBoundingClientRect();
+  if(selectionNote?.content===content&&selectionNote.classId===classId)return;
+  clearSelectionNote();
+  const control=button('Add to note',async()=>{
+    const saved=selectionNote;if(!saved||saved.busy||saved.classId!==state.classId||!state.snapshot?.notebookAllowed||state.reviewOnly)return;
+    saved.busy=true;control.disabled=true;control.textContent='Saving…';
+    try{
+      await kiwiApiRequest('/teaching/classes/'+encodeURIComponent(classId)+'/notebook',{method:'POST',body:{content:saved.content,idempotencyKey:saved.key,...(saved.boardItemId?{boardItemId:saved.boardItemId}:{})}});
+      control.textContent='Added to Notebook';control.setAttribute('role','status');
+      window.getSelection()?.removeAllRanges();
+      await fetchSnapshot().catch(()=>{});
+      setTimeout(()=>{if(selectionNote===saved)clearSelectionNote();},1400);
+    }catch(error){saved.busy=false;control.disabled=false;control.textContent='Retry Add to note';control.title=error.message||'Could not confirm saving. Retry safely.';}
+  },'tc-selection-note');
+  control.addEventListener('pointerdown',event=>event.preventDefault());
+  control.setAttribute('aria-label','Add selected classroom text to Notebook');
+  if(content.length>10000){control.disabled=true;control.textContent='Select less text';control.title='Notes can contain up to 10,000 characters.';}
+  selectionNote={button:control,content,classId,key:crypto.randomUUID(),boardItemId:start.closest('[data-board-item-id]')?.dataset.boardItemId||null,busy:false};
+  (state.expanded?.dialog||state.host).append(control);
+  const viewport=window.visualViewport,left=viewport?.offsetLeft||0,top=viewport?.offsetTop||0,width=viewport?.width||window.innerWidth,height=viewport?.height||window.innerHeight;
+  control.style.left=Math.max(left+8,Math.min(rect.left,left+width-control.offsetWidth-8))+'px';
+  control.style.top=Math.max(top+8,Math.min(rect.bottom+8,top+height-control.offsetHeight-8))+'px';
+}
+document.addEventListener('selectionchange',()=>{if(selectionFrame)return;selectionFrame=requestAnimationFrame(()=>{selectionFrame=null;updateSelectionNote();});});
+document.addEventListener('scroll',()=>{if(!selectionNote?.busy)clearSelectionNote();},true);
+function close({restore=true}={}){clearSelectionNote();collapsePanel({restore:false});clearVisualLoads();state.scene=0;closeSheet({restore:false,force:true});clearRuntime();state.host?.remove();document.body.classList.remove('tc-active');state.host=null;state.classId=null;state.snapshot=null;state.leaveRequestId=null;state.reviewOnly=false;if(restore)state.returnFocus?.focus?.();state.returnFocus=null;}
 async function fetchSnapshot(){
   if(!state.classId||state.busy)return;
   const data=await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(state.classId)}/classroom`);
@@ -150,7 +186,7 @@ function graphBlock(c){
   wrap.append(svg);return wrap;
 }
 function renderBlock(item){
-  const c=item.content||{},card=$('article','tc-board-item');card.dataset.type=item.type;
+  const c=item.content||{},card=$('article','tc-board-item');card.dataset.type=item.type;if(item.boardItemId)card.dataset.boardItemId=item.boardItemId;
   const label=({text:'NOTE',equation:'EQUATION',worked_solution:'WORKED EXAMPLE',graph:'GRAPH',data:'DATA',image:'IMAGE',diagram:'DIAGRAM',code:'CODE',source_passage:'SOURCE',comparison:'COMPARE',annotation:'ANNOTATION'})[item.type]||'BOARD';
   card.append($('div','tc-board-item__label',label));
   switch(item.type){

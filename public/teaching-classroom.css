@@ -155,3 +155,5 @@
 .tc-expanded-panel .tc-response textarea{min-height:35dvh}
 @media(max-width:699px){.tc-panel-head{gap:10px;flex-wrap:wrap}.tc-panel-tools{margin-left:auto;gap:8px}.tc-expanded-panel{width:96vw;height:92vh;height:92dvh;border-radius:16px}.tc-expanded-panel>.tc-board,.tc-expanded-panel>.tc-workspace{padding:14px}}
 @media(forced-colors:active){.tc-expanded-panel,.tc-expand-button{border:1px solid CanvasText}}
+
+.tc-selection-note{position:fixed;z-index:1500;min-height:44px;max-width:calc(100vw - 16px);padding:10px 16px;border:1px solid #b0efd2;border-radius:12px;background:#a5eccb;color:#08291b;font:inherit;font-weight:700;box-shadow:0 6px 24px #0006;cursor:pointer}.tc-selection-note:focus-visible{outline:3px solid white;outline-offset:3px}.tc-selection-note:disabled{cursor:default;opacity:.85}

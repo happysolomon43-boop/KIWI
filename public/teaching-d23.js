@@ -281,6 +281,13 @@ async function enhanceCourseOverview() {
         ? dateTime(data.nextAssessment.startsAt)
         : 'Only legitimately visible assessments appear here. Hidden surprise assessments are not previewed.'),
     );
+    if(data.nextAssessment?.assessmentId){
+      const launch=action('Open assessment',async()=>{
+        launch.disabled=true;
+        try{const handoff=await kiwiApiRequest(`/teaching/assessments/${encodeURIComponent(data.nextAssessment.assessmentId)}/launch`);window.location.assign(handoff.targetAppPath);}
+        catch(error){assessment.append($('p','ti-warning',error.message||'Assessment is not available yet.'));launch.disabled=false;}
+      });assessment.append(launch);
+    }
     const work = $('article', 'ti-card');
     work.append(
       $('div', 'ti-kicker', 'Important Work'),

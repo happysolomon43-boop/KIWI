@@ -187,6 +187,13 @@ function createPostgresTeachingEventStore({ query, randomUUID } = {}) {
     return Object.freeze(rows.map((row) => Object.freeze({ ...row })));
   }
 
+  async function renewClaim(event,{now=new Date(),leaseMs=30000}={}){
+    const duration=Math.max(5000,Math.min(Number(leaseMs)||30000,300000));
+    const {rows=[]}=await query(`update teaching_runtime.due_events set claim_expires_at=$3::timestamptz+($4::bigint*interval '1 millisecond'),updated_at=now()
+      where event_id=$1 and status='CLAIMED' and claim_token=$2 returning event_id`,[event.event_id,event.claim_token,now,duration]);
+    if(!rows[0])throw Object.assign(new Error('Teaching due-event lease is no longer owned by this worker.'),{code:'TEACHING_STALE_DUE_EVENT_CLAIM'});
+    return rows[0];
+  }
   async function beginAttempt(event) {
     const { rows } = await query(
       `INSERT INTO teaching_runtime.event_attempts (
@@ -315,6 +322,7 @@ function createPostgresTeachingEventStore({ query, randomUUID } = {}) {
     enqueue,
     releaseExpiredClaims,
     claimDue,
+    renewClaim,
     beginAttempt,
     finishAttempt,
     completeClaim,

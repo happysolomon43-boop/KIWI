@@ -18,13 +18,14 @@ function createD18AssessmentShellService({ repository, clock = () => new Date() 
     return String(user.id);
   }
 
-  async function safePackageProjection(studentId, packageId) {
+  async function safePackageProjection(studentId, packageId, historical=false) {
     const pack = await repository.packageById(studentId, packageId);
     if (!pack) throw fail('Assessment Package not found.', 'TEACHING_D18_PACKAGE_NOT_FOUND', 404);
     if (String(pack.package_state) !== 'LOCKED') {
       throw fail('Assessment Shell only renders a locked Assessment Package.', 'TEACHING_D18_LOCKED_PACKAGE_REQUIRED', 409);
     }
 
+    if(repository.assertExposure)await repository.assertExposure(studentId,pack.assessment_id,{historical});
     const rows = await repository.packageItems(studentId, packageId);
     const items = [];
     for (const row of rows) {
@@ -112,7 +113,7 @@ function createD18AssessmentShellService({ repository, clock = () => new Date() 
   async function getAttemptWorkspace(user, attemptId, { deviceId = null } = {}) {
     const sid = userId(user);
     const attempt = await repository.requireAttempt(sid, String(attemptId));
-    const projection = await safePackageProjection(sid, attempt.assessment_package_id);
+    const projection = await safePackageProjection(sid, attempt.assessment_package_id,true);
     const latest = await repository.latestResponses(sid, attempt.assessment_attempt_id);
     const responses = Object.freeze(latest.map(responseProjection));
     const result = Object.freeze({

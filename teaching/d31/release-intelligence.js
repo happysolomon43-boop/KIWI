@@ -8,6 +8,7 @@ const { createD12Intelligence } = require('../d12/intelligence');
 const { createD13Intelligence } = require('../d13/intelligence');
 const { createD16Intelligence } = require('../d16/intelligence');
 const { createD17Intelligence } = require('../d17/intelligence');
+const { createD20Intelligence } = require('../d20/intelligence');
 const {createD14LessonIntelligence}=require('../d14/lesson-intelligence');
 const { createD14HelpIntelligence } = require('../d14/help-intelligence');
 const { resolveOwnerReleaseAuthorization } = require('./owner-release-override');
@@ -24,6 +25,7 @@ const ADAPTER_KEYS = Object.freeze([
   'd14LessonIntelligence',
   'd16Intelligence',
   'd17Intelligence',
+  'd20Intelligence',
 ]);
 
 function heldIntelligence() {
@@ -64,6 +66,7 @@ function createD31ReleaseIntelligence({ runtimePlatform, query, randomUUID, env 
     d14HelpIntelligence: createD14HelpIntelligence({ orchestrator,visualCapabilities }),
     d16Intelligence: createD16Intelligence({ orchestrator }),
     d17Intelligence: createD17Intelligence({ orchestrator }),
+    d20Intelligence: createD20Intelligence({ orchestrator }),
   });
 
   return Object.freeze({

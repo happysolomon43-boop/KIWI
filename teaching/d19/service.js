@@ -64,6 +64,11 @@ function createD19AssessmentTypeService({d17Service,d17Repository,d08Repository=
   async function createDefinition(user,input={}){
     const normalized=normalizeDefinition(input,{impromptuPolicy,eligibilityPolicy});
     let sourceLineage=normalized.sourceLineage;
+    if(input.startsAt||input.endsAt){
+      const start=new Date(input.startsAt),end=new Date(input.endsAt);
+      if(!Number.isFinite(start.getTime())||!Number.isFinite(end.getTime())||end<=start)fail('Assessment schedule needs a valid start and later end.','TEACHING_D19_SCHEDULE_INVALID',400);
+      sourceLineage={...sourceLineage,assessment_schedule:{starts_at:start.toISOString(),ends_at:end.toISOString()}};
+    }
     if(['CLASSWORK','IMPROMPTU_TEST'].includes(normalized.assessmentType)){
       const ctx=await classContext(sid(user),normalized.measurement.intended_class_id);
       if(String(ctx.classRow.course_id)!==String(normalized.courseId))fail('Assessment Class and Course do not match.','TEACHING_D19_CLASS_COURSE_MISMATCH',409);

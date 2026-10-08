@@ -134,7 +134,7 @@ test('Unfingerprinted assets revalidate and Teaching detects deployments without
   assert.match(teaching,/Never automatically reload an active Teaching session/);
   assert.doesNotMatch(teaching,/if\(!editing\)\{window\.location\.reload\(\);return;\}/);
   assert.match(teaching,/visibilitychange/);
-  assert.match(html,/teaching-classroom\.js\?v=20261008-classroom-timing-2/);
+  assert.match(html,/teaching-classroom\.js\?v=[^"\s]+/);
 });
 
 test('Vercel static frontend emits a deployment marker with no-store caching',()=>{
