@@ -174,7 +174,7 @@ function createD15AttendanceRepository({ query, withTransaction, randomUUID, clo
         from public.teaching_student_responses sr
         join public.teaching_class_sessions cs on cs.class_session_id=sr.class_session_id and cs.student_id=sr.student_id
         where sr.student_id=$1 and cs.class_id=$2 order by sr.submitted_at,sr.response_id`, [studentId,classId]).catch(() => ({rows:[]})),
-      q(runner, `select class_session_id,lifecycle_state,instructional_substate,started_at,closed_at,state_version
+      q(runner, `select class_session_id,lifecycle_state,instructional_substate,started_at,ended_at as closed_at,state_version
         from public.teaching_class_sessions where student_id=$1 and class_id=$2
         order by started_at desc limit 1`, [studentId,classId]),
       q(runner, `select * from public.teaching_attendance_system_interruptions
