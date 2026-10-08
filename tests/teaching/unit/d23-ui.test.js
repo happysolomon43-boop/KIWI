@@ -28,3 +28,10 @@ test('D23 Results visually preserves Gradebook versus progression versus learnin
 test('D23 Create Course enters the existing Subject → Course pipeline rather than duplicating Subject truth',()=>{
   const html=ui.renderCreateCourse(),client=fs.readFileSync(path.resolve(__dirname,'../../../public/teaching-course-intake.js'),'utf8');assert.match(html,/Choose the KIWI Subject/);assert.match(html,/fetch\('\/teaching\/subjects'/);assert.match(client,/fetch\('\/teaching\/courses'/);assert.match(html,/existing cards remain useful/i);
 });
+
+test('bottom dock keeps Courses first and Calendar second', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../../../public/teaching.js'), 'utf8');
+  assert.match(source, /\{ id: 'courses', label: 'Courses'/);
+  assert.match(source, /calendarDestination/);
+  assert.match(source, /\[\s*\{ id: 'courses'[\s\S]*\.\.\.\(calendarDestination \? \[calendarDestination\]/);
+});
