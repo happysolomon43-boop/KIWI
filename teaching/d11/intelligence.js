@@ -7,6 +7,56 @@ const {
   validateLiveReplanProposal,
 } = require('./contracts');
 
+// D11 repository records originate in PostgreSQL. node-postgres materializes
+// timestamptz columns as Date instances; these are trusted data values, but the
+// Teaching prompt serializer deliberately accepts plain JSON only. Convert
+// timestamps at this D11 feature boundary rather than weakening the shared
+// prompt serializer or JSON-stringifying arbitrary object prototypes.
+function normalizeD11AcademicInput(input) {
+  const active=new Set();
+  function invalid(reason) {
+    const error=new TypeError('D11 academic input contains a value that cannot safely enter the model prompt.');
+    error.code='TEACHING_D11_ACADEMIC_INPUT_UNSERIALIZABLE';
+    error.reason=reason;
+    throw error;
+  }
+  function convert(value,depth=0) {
+    if(depth>16) invalid('DEPTH_LIMIT');
+    if(value===null||typeof value==='string'||typeof value==='boolean'||typeof value==='number') return value;
+    if(value instanceof Date) {
+      if(!Number.isFinite(value.getTime())) invalid('INVALID_TIMESTAMP');
+      return value.toISOString();
+    }
+    if(typeof value!=='object') invalid('UNSUPPORTED_VALUE');
+    if(active.has(value)) invalid('CIRCULAR_REFERENCE');
+    if(!Array.isArray(value)&&Object.getPrototypeOf(value)!==Object.prototype&&Object.getPrototypeOf(value)!==null)
+      invalid('NON_JSON_OBJECT');
+    active.add(value);
+    try {
+      if(Array.isArray(value)){
+        const output=[];
+        for(let i=0;i<value.length;i+=1) {
+          if(!Object.hasOwn(value,i)) invalid('SPARSE_ARRAY');
+          output.push(convert(value[i],depth+1));
+        }
+        if(Reflect.ownKeys(value).some(k=>k!=='length'&&(!Number.isInteger(Number(k))||Number(k)<0||Number(k)>=value.length||String(Number(k))!==String(k))))
+          invalid('ARRAY_EXTRA_PROPERTY');
+        return output;
+      }
+      const output={};
+      for(const key of Reflect.ownKeys(value)) {
+        if(typeof key!=='string')invalid('SYMBOL_PROPERTY');
+        const descriptor=Object.getOwnPropertyDescriptor(value,key);
+        if(!descriptor?.enumerable||!Object.hasOwn(descriptor,'value'))invalid('NON_DATA_PROPERTY');
+        if(descriptor.value!==undefined) output[key]=convert(descriptor.value,depth+1);
+      }
+      return output;
+    } finally { active.delete(value); }
+  }
+  if(input===null||typeof input!=='object'||Array.isArray(input))invalid('ROOT_NOT_OBJECT');
+  return convert(input);
+}
+
 function ownerFor(capabilityId) {
   return getCapability(capabilityId).authoritative_owner_boundary;
 }
@@ -86,7 +136,7 @@ function baseRequest({
     },
     contextSpec,
     outputSchema,
-    academicInput,
+    academicInput: normalizeD11AcademicInput(academicInput),
     schemaValidator: validators.schema,
     domainValidator: validators.domain,
     provenanceValidator: validators.provenance,
@@ -402,6 +452,7 @@ function createD11Intelligence({ orchestrator } = {}) {
 }
 
 module.exports = {
+  normalizeD11AcademicInput,
   plannerInput,
   lessonPlanRequest,
   liveReplanRequest,
