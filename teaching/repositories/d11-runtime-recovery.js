@@ -37,6 +37,35 @@ function createD11RuntimeRecoveryRepository({query}={}){
             select 1 from teaching_runtime.due_events d
             where d.event_id='d11-class-end:'||c.class_id||':schedule-v'||c.schedule_version::text
           )
+          -- A previously handed-off Blueprint may have lost its Course Plan /
+          -- Class / timetable authority. Its immutable PPL history is kept,
+          -- but a *new* valid Class workspace needs to be generated.
+          or (
+            exists (
+              select 1 from teaching_preparation.workspaces hw
+              where hw.student_id=c.student_id and hw.target_ref=c.class_id
+                and hw.workspace_type='LESSON_BLUEPRINT' and hw.target_kind='next_class'
+                and hw.lifecycle_state='HANDED_OFF'
+            )
+            and not exists (
+              select 1 from public.teaching_lesson_blueprints b
+              join public.teaching_course_plans p
+                on p.course_plan_id=b.course_plan_id and p.student_id=b.student_id
+              where b.class_id=c.class_id and b.student_id=c.student_id
+                and b.blueprint_state='VALIDATED'
+                and p.plan_state<>'SUPERSEDED'
+                and p.course_id=c.course_id
+                and p.version_no=b.source_course_plan_version
+                and b.source_course_state_version=co.state_version
+                and b.source_class_schedule_version=c.schedule_version
+                and b.source_timetable_version_id=c.source_timetable_version_id
+                and not exists (
+                  select 1 from public.teaching_course_plans newer
+                  where newer.student_id=c.student_id and newer.course_id=c.course_id
+                    and newer.plan_state<>'SUPERSEDED' and newer.version_no>p.version_no
+                )
+            )
+          )
         )
         and not exists (
           select 1 from teaching_runtime.event_outbox e
