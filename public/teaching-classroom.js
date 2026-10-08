@@ -163,11 +163,13 @@ function renderWorkspace(s){
 function closeSheet({restore=true,force=false}={}){
   if(!state.sheet||state.sheetBusy&&!force)return;
   const focus=state.sheetFocus;
+  const kind=state.sheetKind;
   state.sheet.remove();
   state.sheet=null;state.sheetKind=null;state.sheetFocus=null;state.sheetKey=null;state.sheetBusy=false;
   const root=state.host?.querySelector('.tc-shell');
   if(root)root.inert=false;
-  if(restore&&focus?.isConnected)focus.focus({preventScroll:true});
+  const fallback=state.host?.querySelector(kind==='notebook'?'[aria-label="Open Notebook"]':'[aria-label="Message AI Teacher"]');
+  if(restore)(focus?.isConnected?focus:fallback)?.focus({preventScroll:true});
 }
 function syncSheet(){
   if(!state.sheet||!state.snapshot)return;
@@ -326,8 +328,13 @@ function render(){
   }
   root.append(corner);
   const message=$('div','tc-message');message.setAttribute('role','alert');const connection=$('div','tc-connection');connection.setAttribute('role','status');connection.setAttribute('aria-live','polite');root.append(message,connection);
-  state.host.replaceChildren(root);
-  if(state.sheet){root.inert=true;state.host.append(state.sheet);syncSheet();}
+  if(state.sheet){
+    // Replace only the Class subtree. Detaching an active sheet would blur the
+    // student's focused textarea every time the 12-second snapshot refreshes.
+    const previous=state.host.querySelector('.tc-shell');
+    if(previous)previous.replaceWith(root);else state.host.prepend(root);
+    root.inert=true;syncSheet();
+  }else state.host.replaceChildren(root);
   updateClocks();
 }
 async function renderCourse({course,container}){
