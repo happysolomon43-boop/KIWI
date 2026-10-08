@@ -842,7 +842,18 @@ function createD11LessonControllerRepository({
       throw error;
     }
     const plan = await loadCurrentPlan(expected.studentId, classRow.course_id, tx, true);
+    // Take a shared lock on the timetable authority, not just on its Class
+    // projection. A D10 supersession cannot commit between this final
+    // validation and the validated Blueprint insert.
+    const {rows:timetableRows}=await tx.query(
+      'select timetable_state from public.teaching_timetable_versions where student_id=$1 and timetable_version_id=$2 for share',
+      [expected.studentId,classRow.source_timetable_version_id]
+    );
     const mismatches = [];
+    if (classRow.lifecycle_state!=='SCHEDULED') mismatches.push('CLASS_NOT_SCHEDULED');
+    if (classRow.course_lifecycle_state!=='ACTIVE') mismatches.push('COURSE_NOT_ACTIVE');
+    if (classRow.source_timetable_state!=='APPROVED'||timetableRows?.[0]?.timetable_state!=='APPROVED')
+      mismatches.push('TIMETABLE_NOT_APPROVED');
     if (String(classRow.course_lifecycle_state) !== String(expected.courseLifecycleState)) mismatches.push('COURSE_LIFECYCLE');
     if (String(classRow.course_state_version) !== String(expected.courseStateVersion)) mismatches.push('COURSE_VERSION');
     if (String(classRow.schedule_version) !== String(expected.classScheduleVersion)) mismatches.push('CLASS_SCHEDULE_VERSION');
@@ -1014,6 +1025,12 @@ function createD11LessonControllerRepository({
     const existing = await getSession(studentId,classId,tx,true);
     if (existing) return Object.freeze({ session:existing, inserted:false });
     const plan = await loadCurrentPlan(studentId,classRow.course_id,tx,true);
+    // Close the supersession race even when the timetable changed without
+    // touching the Class row's schedule_version.
+    const approvedTimetable=await tx.query(
+      'select timetable_state from public.teaching_timetable_versions where student_id=$1 and timetable_version_id=$2 for share',
+      [studentId,classRow.source_timetable_version_id]
+    );
     let blueprint = await latestBlueprint(studentId,classId,tx,true);
     if (!plan) {
       const error = new Error('Current Course Plan is required before Controller start.');
@@ -1037,6 +1054,7 @@ function createD11LessonControllerRepository({
     if (classRow.course_lifecycle_state !== 'ACTIVE'
       || classRow.lifecycle_state !== 'SCHEDULED'
       || classRow.source_timetable_state !== 'APPROVED'
+      || approvedTimetable.rows?.[0]?.timetable_state !== 'APPROVED'
       || clock().getTime()<Date.parse(classRow.scheduled_start_at)
       || clock().getTime()>=Date.parse(classRow.scheduled_end_at)) {
       const error = new Error('Class/Course/approved timetable is not eligible for new live Controller start.');
