@@ -70,7 +70,7 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
       teacherConversation:conversation,teacherMessagingAllowed:!closed&&source.session?.lifecycle_state==='ACTIVE'&&!RESTRICTED.has(mode)&&!['BREAK','INTERRUPTED'].includes(mode),
       studyNote:studyNote?.state==='VALIDATED_PRIVATE'?{state:'PRIVATE_VALIDATED_AWAITING_D27',published:false}:studyNote?{state:studyNote.state,published:false}:null,
       assessmentTakeover:mode==='ASSESSMENT',assessmentOwner:'D17',classworkOwner:'D16',
-      transcriptSecondary:true,controlsEnabled:!closed,academicStateFromBrowser:false});
+      transcriptSecondary:true,controlsEnabled:source.session?.lifecycle_state==='ACTIVE',academicStateFromBrowser:false});
   }
   async function notebook(user,classId,input={}){
     const ctx=await context(user.id,classId);if(RESTRICTED.has(ctx.session?.instructional_substate))fail('TEACHING_D14_NOTEBOOK_RESTRICTED',403);
