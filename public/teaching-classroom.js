@@ -169,7 +169,6 @@ function renderWorkspace(s){
     add(form,answer,add($('div','tc-response__actions'),button('Submit answer',()=>{},'tc-button tc-button--solid')));form.querySelector('button').type='submit';panel.append(form);
   }
   const actions=$('div','tc-workspace__actions');
-  if(s.teacherMessagingAllowed)actions.append(button('Message AI Teacher',()=>openSheet('teacher'),'tc-button tc-button--soft'));
   if(['INDEPENDENT_PRACTICE','GUIDED_PRACTICE'].includes(s.modeKey))actions.append(button("I've finished",()=>act('interactions',{kind:'FINISHED'}),'tc-button tc-button--quiet'));
   if(['GUIDED_PRACTICE','INDEPENDENT_PRACTICE'].includes(s.modeKey))actions.append(button("I'm ready",()=>act('interactions',{kind:'READY'}),'tc-button tc-button--quiet'));
   panel.append(actions);return panel;
@@ -183,7 +182,7 @@ function closeSheet({restore=true,force=false}={}){
   state.sheet=null;state.sheetKind=null;state.sheetFocus=null;state.sheetKey=null;state.sheetBusy=false;
   const root=state.host?.querySelector('.tc-shell');
   if(root)root.inert=false;
-  const fallback=state.host?.querySelector(kind==='notebook'?'[aria-label="Open Notebook"]':'[aria-label="Message AI Teacher"]');
+  const fallback=state.host?.querySelector(kind==='notebook'?'[aria-label="Open Notebook"]':'[aria-label="Raise your hand to request help"]');
   if(restore)(focus?.isConnected?focus:fallback)?.focus({preventScroll:true});
 }
 function syncSheet(){
@@ -216,7 +215,7 @@ function syncSheet(){
     row.append($('span','tc-turn-meta',who+(stamp?' · '+stamp:'')),$('p','',item.message||''));
     return row;
   });
-  if(!messages.length)log.replaceChildren($('p','tc-sheet-help','Your questions and published Teacher replies will appear here.'));
+  if(!messages.length)log.replaceChildren($('p','tc-sheet-help','Your raised-hand questions and confirmed Teacher replies will appear here.'));
   else log.replaceChildren(...messages);
   if(stick)log.scrollTop=log.scrollHeight;
   const allowed=Boolean(state.snapshot.teacherMessagingAllowed)&&!state.reviewOnly;
@@ -224,8 +223,8 @@ function syncSheet(){
   if(form)form.hidden=!allowed;
   const help=state.sheet.querySelector('.tc-teacher-limits');
   if(help)help.textContent=allowed
-    ?'Messages are recorded for the AI Teacher. Replies appear when the lesson controller publishes them; an immediate answer is not guaranteed.'
-    :'Messaging is read-only while this Class is closed, paused, or in a protected activity.';
+    ?'A raised hand is saved for the Teacher. The current Classroom does not yet guarantee an automatic AI reply.'
+    :'Raising your hand is unavailable while this Class is closed, paused, or in a protected activity.';
 }
 function openSheet(kind){
   if(!state.snapshot||!state.host||!['notebook','teacher'].includes(kind))return;
@@ -236,17 +235,17 @@ function openSheet(kind){
   const dialog=$('section','tc-sheet-dialog');dialog.setAttribute('role','dialog');dialog.setAttribute('aria-modal','true');
   dialog.setAttribute('aria-labelledby','tc-sheet-title');
   const top=$('div','tc-sheet-heading');
-  const title=kind==='notebook'?'Notebook':'Teacher messages';
-  const label=kind==='notebook'?'YOUR PRIVATE NOTES':'CLASS CONVERSATION';
+  const title=kind==='notebook'?'Notebook':'Raise your hand';
+  const label=kind==='notebook'?'YOUR PRIVATE NOTES':'ASK THE TEACHER';
   const headline=$('h2','',title);headline.id='tc-sheet-title';
   const headingText=add($('div','tc-sheet-heading-copy'),$('div','tc-eyebrow',label),headline);
-  const mark=$('span','tc-sheet-emblem',kind==='notebook'?'✎':'✉');mark.setAttribute('aria-hidden','true');
+  const mark=$('span','tc-sheet-emblem',kind==='notebook'?'✎':'✋');mark.setAttribute('aria-hidden','true');
   top.append(mark,headingText,button('×',()=>closeSheet(),'tc-sheet-close'));
   dialog.append($('div','tc-sheet-handle'));
   dialog.append(top);
   dialog.append($('p','tc-sheet-description',kind==='notebook'
     ?state.reviewOnly?'These notes belong to a previous lesson.':'Jot down the ideas worth remembering. Notes are saved privately to this Class.'
-    :state.reviewOnly?'Browse questions and published Teacher replies from this Class.':'Ask questions or request help during an active lesson.'));
+    :state.reviewOnly?'Browse questions and published Teacher replies from this Class.':'Like raising your hand in a real Class: ask one question and return to the lesson. Your request will not interrupt protected activities.'));
   if(kind==='notebook'){
     const list=$('div','tc-sheet-notes');
     const items=state.snapshot.notebook||[];
@@ -280,32 +279,30 @@ function openSheet(kind){
     const log=$('div','tc-conversation');log.setAttribute('role','log');log.setAttribute('aria-label','Teacher message history');
     const limits=$('p','tc-sheet-help tc-teacher-limits');
     const form=$('form','tc-sheet-form tc-teacher-form');
-    const type=$('select');type.setAttribute('aria-label','Message type');
-    type.append(new Option('Ask a question','ASK_TEACHER'),new Option('I need help','NEED_HELP'));
-    const input=$('textarea');input.rows=4;input.maxLength=2000;input.placeholder='Ask about the current lesson…';input.setAttribute('aria-label','Your message to AI Teacher');
+    const input=$('textarea');input.rows=4;input.maxLength=2000;input.placeholder='What part of the lesson do you need help with?';input.setAttribute('aria-label','Your question for the Teacher');
     const status=$('p','tc-sheet-status');status.setAttribute('role','status');
-    const send=button('Send message',()=>{},'tc-button tc-button--solid');send.type='submit';
+    const send=button('Raise hand',()=>{},'tc-button tc-button--solid');send.type='submit';
     const cancel=button('Cancel',()=>closeSheet(),'tc-button tc-button--quiet');
     form.addEventListener('submit',async(event)=>{
       event.preventDefault();
-      const body=input.value.trim(),kind=type.value;
+      const body=input.value.trim(),kind='NEED_HELP';
       if(!body){status.textContent='Write a message before sending.';return;}
       if(!state.snapshot?.teacherMessagingAllowed||state.reviewOnly){status.textContent='Messaging is not permitted in this Class state.';return;}
       if(send.disabled)return;
       const classId=state.classId;state.sheetKey ||= crypto.randomUUID();
       const key=state.sheetKey;
-      state.sheetBusy=true;send.disabled=cancel.disabled=type.disabled=true;input.readOnly=true;status.textContent='Recording message…';
+      state.sheetBusy=true;send.disabled=cancel.disabled=true;input.readOnly=true;status.textContent='Raising hand…';
       try{
         const result=await kiwiApiRequest('/teaching/classes/'+encodeURIComponent(classId)+'/interactions',{method:'POST',body:{kind,body,idempotencyKey:key}});
         if(classId===state.classId){
           input.value='';state.sheetKey=null;
-          status.textContent=result.status==='RECORDED_FOR_TEACHER'?'Delivered to Class record. Replies appear when published.':'Message recorded.';
+          status.textContent=result.status==='RECORDED_FOR_TEACHER'?'Your hand is raised. Question saved, but an AI reply has not yet been generated.':'Your question has been recorded.';
           await fetchSnapshot();
         }
       }catch(error){status.textContent=error.message||'Delivery unconfirmed. Retry to send the same message safely.';}
-      finally{state.sheetBusy=false;send.disabled=cancel.disabled=type.disabled=false;input.readOnly=false;syncSheet();}
+      finally{state.sheetBusy=false;send.disabled=cancel.disabled=false;input.readOnly=false;syncSheet();}
     });
-    form.append(type,input,status,add($('div','tc-sheet-footer'),cancel,send));
+    form.append(input,status,add($('div','tc-sheet-footer'),cancel,send));
     dialog.append(log,limits,form);
     window.queueMicrotask(()=>{if(state.sheet===shade)(form.hidden?dialog.querySelector('.tc-sheet-close'):input).focus({preventScroll:true});});
   }
@@ -323,6 +320,7 @@ function renderSummary(s){const section=$('section','tc-after');add(section,$('d
   else if(s.closureFacts){section.append(notice('Class record saved','The academic record is secure. A student-facing narrative is pending its qualified translation route.'));const list=$('ul','tc-fact-list');s.closureFacts.facts.forEach((f)=>{if(f.semantic_key==='completed_objective_refs'||f.semantic_key==='unfinished_core_objective_refs'){list.append(add($('li',''),$('strong','',f.semantic_key==='completed_objective_refs'?'Completed objectives':'Carried forward'),$('span','',Array.isArray(f.effective_state)?f.effective_state.join(', ')||'None':'—')));}});section.append(list);}
   else section.append(notice('Summary pending','The Class will leave an official record when it closes.'));
   const artifacts=add($('div','tc-artifacts'),$('span','','Board history where permitted'),$('span','','Your Notebook'),$('span','','Linked Work when available'));
+  if(Array.isArray(s.teacherConversation)&&s.teacherConversation.length)section.append(button('Review raised-hand questions',()=>openSheet('teacher'),'tc-button tc-button--soft'));
   if(s.summary?.payload?.transcript_url){const link=document.createElement('a');link.className='tc-artifact-link';link.href=s.summary.payload.transcript_url;link.textContent='Full transcript · secondary record';link.setAttribute('aria-label','Open full transcript as a secondary class artifact');artifacts.append(link);}
   section.append(artifacts);return section;}
 function render(){
@@ -343,10 +341,15 @@ function render(){
   const right=add($('aside','tc-layout__side'),work,renderControls(s));
   add(body,left,right);root.append(body);if(s.controller?.lifecycleState==='CLOSED')root.append(renderSummary(s));
   const corner=$('div','tc-corner-actions');
+  if(s.teacherMessagingAllowed&&!state.reviewOnly){
+    const hand=button('✋ NEED HELP?',()=>openSheet('teacher'),'tc-raise-hand');
+    hand.title='Raise your hand to ask the Teacher a question';
+    hand.setAttribute('aria-label','Raise your hand to request help');
+    root.append(hand);
+  }
   if(s.modeKey!=='ASSESSMENT'&&s.modeKey!=='CLASSWORK'){
-    const ask=button('✉',()=>openSheet('teacher'),'tc-corner-button');ask.title='Message AI Teacher';ask.setAttribute('aria-label','Message AI Teacher');
     const note=button('✎',()=>openSheet('notebook'),'tc-corner-button');note.title='Notebook';note.setAttribute('aria-label','Open Notebook');
-    corner.append(ask,note);
+    corner.append(note);
   }
   root.append(corner);
   const message=$('div','tc-message');message.setAttribute('role','alert');const connection=$('div','tc-connection');connection.setAttribute('role','status');connection.setAttribute('aria-live','polite');root.append(message,connection);
