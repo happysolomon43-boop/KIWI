@@ -128,3 +128,16 @@
  .tc-history-dialog{padding:21px 15px}
 }
 @media(prefers-reduced-motion:reduce){.tc-sheet-dialog,.tc-history-dialog{transition:none!important;animation:none!important}}
+
+/* D14 raised-hand affordance: anchored to the viewport's right edge at 37%,
+   independent of the scrolling Board, Notebook corner tool, and mobile tabs. */
+.tc-raise-hand{position:fixed;top:37%;right:max(0px,env(safe-area-inset-right));z-index:12;display:flex;align-items:center;justify-content:center;min-height:50px;padding:11px 14px;border:1px solid rgba(198,251,215,.45);border-right:0;border-radius:13px 0 0 13px;background:linear-gradient(140deg,#b8efd0,#8cd6b0);color:#103321;font:800 12px/1.1 var(--font-body,system-ui);letter-spacing:.035em;box-shadow:0 12px 42px #0008;cursor:pointer;touch-action:manipulation;max-width:140px;text-align:center}
+.tc-raise-hand:hover,.tc-raise-hand:focus-visible{background:#d8ffe9;outline:2px solid #d8ffe9;outline-offset:3px}
+.tc-sheet-form textarea{font-size:16px;line-height:1.5;min-height:110px}
+@media(max-width:699px){.tc-raise-hand{min-height:48px;top:37%;font-size:11px;padding:10px 9px;max-width:112px}}
+@media(forced-colors:active){.tc-raise-hand{border:2px solid ButtonText;background:ButtonFace;color:ButtonText}}
+
+.tc-help-status{display:block;margin-top:6px;font-size:11px;font-weight:700;color:#a5dac0}
+.tc-help-reason{margin-top:5px;color:#a9c6b5;font-size:12px;line-height:1.55}
+.tc-raise-hand[data-help-status="RAISED"],.tc-raise-hand[data-help-status="PROCESSING"],.tc-raise-hand[data-help-status="DEFERRED"]{border-color:#c1efce}
+.tc-raise-hand[data-help-status="ANSWERED"]{box-shadow:0 0 0 2px rgba(174,244,200,.2),0 12px 42px #0008}

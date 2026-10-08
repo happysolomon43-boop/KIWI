@@ -13,6 +13,8 @@ function classroomFake(parent={class_state:'CANCELLED',course_state:'ACTIVE',tim
     if(sql.includes('from public.teaching_classes c')&&sql.includes('for share of c,co'))return {rows:[parent]};
     if(sql.includes('from public.teaching_class_sessions where student_id=$1 and class_id=$2 for update'))
       return {rows:[{class_session_id:'session',state_version:2,lifecycle_state:'ACTIVE',instructional_substate:'INSTRUCTION'}]};
+    if(sql.includes('select status,created_at from public.teaching_classroom_help_requests'))return {rows:[]};
+    if(sql.includes('insert into public.teaching_classroom_help_requests'))return {rows:[]};
     if(sql.includes('insert into public.teaching_teacher_communications')||sql.includes('insert into public.teaching_classroom_interactions'))
       return {rows:[{interaction_id:'interaction'}]};
     throw Error('Unexpected SQL '+sql);
@@ -20,6 +22,7 @@ function classroomFake(parent={class_state:'CANCELLED',course_state:'ACTIVE',tim
   const repo=createD14ClassroomRepository({
     query:run,withTransaction:fn=>fn({query:run}),randomUUID:()=> 'uuid',
     d11Repository:{getClassContext:async()=>({})},
+    outboxStore:{appendUsing:async(_query,event)=>{statements.push({sql:'teaching_runtime.event_outbox append',values:[event]});return {inserted:true};}},
   });
   return {repo,statements};
 }
@@ -64,6 +67,8 @@ test('legitimate active current Teacher messaging holds parent authority through
   });
   assert.equal(result.interaction_id,'interaction');
   assert.ok(statements.find(x=>x.sql.includes('insert into public.teaching_classroom_interactions')));
+  assert.ok(statements.find(x=>x.sql.includes('insert into public.teaching_classroom_help_requests')));
+  assert.ok(statements.find(x=>x.sql.includes('teaching_runtime.event_outbox append')));
 });
 test('historical LEAVE intent remains outside AI conversation cancellation',async()=>{
   const {repo,statements}=classroomFake();
@@ -98,4 +103,22 @@ test('Classroom snapshot and early entry refuse revoked timetable authority',asy
   });
   ctx.session=null;
   await assert.rejects(d14.enter({id:'u'},'c'),{code:'TEACHING_D14_CLASS_TIMETABLE_SUPERSEDED'});
+});
+
+test('atomic raised-hand publication rejects a rescheduled Class or revised parent Course even if Controller version still matches',async()=>{
+  for(const parent of [
+    {class_state:'SCHEDULED',course_state:'ACTIVE',timetable_state:'APPROVED',course_id:'co',schedule_version:3,course_state_version:5},
+    {class_state:'SCHEDULED',course_state:'ACTIVE',timetable_state:'APPROVED',course_id:'co',schedule_version:2,course_state_version:6},
+  ]){
+    const {repo,statements}=classroomFake(parent);
+    await assert.rejects(repo.publishTeacherTurn({
+      studentId:'u',classId:'c',expectedControllerVersion:2,helpRequestId:'help1',
+      expectedScheduleVersion:2,expectedCourseStateVersion:5,
+      expectedPlanId:'plan1',expectedPlanVersion:1,
+      expectedBlueprintId:'blueprint1',expectedBlueprintVersion:1,
+      message:'This obsolete Teacher answer must never publish.',
+      idempotencyKey:'d14-help-answer:help1',
+    }),{code:'TEACHING_D14_HELP_STALE',status:409});
+    assert.ok(!statements.some(x=>x.sql.includes('insert into public.teaching_teacher_communications')));
+  }
 });

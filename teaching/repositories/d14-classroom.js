@@ -1,9 +1,9 @@
 'use strict';
 
-function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repository}={}) {
+function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repository,outboxStore=null,dueEventStore=null}={}) {
   if (![query,withTransaction,randomUUID].every((f)=>typeof f==='function') || !d11Repository) throw new TypeError('D14 persistence dependencies required.');
   async function assertReady() {
-    const {rows}=await query("select to_regclass('public.teaching_student_notebook_items') notebook,to_regclass('public.teaching_classroom_interactions') interactions,to_regclass('public.teaching_class_study_note_versions') study_notes,to_regclass('public.teaching_teacher_communications') teacher_messages");
+    const {rows}=await query("select to_regclass('public.teaching_student_notebook_items') notebook,to_regclass('public.teaching_classroom_interactions') interactions,to_regclass('public.teaching_class_study_note_versions') study_notes,to_regclass('public.teaching_teacher_communications') teacher_messages,to_regclass('public.teaching_classroom_help_requests') help_requests");
     if(Object.values(rows?.[0]||{}).some((v)=>v==null)) throw Object.assign(new Error('D14 persistence missing.'),{code:'TEACHING_D14_SCHEMA_MISSING'});
   }
   async function listClasses(studentId,courseId) {
@@ -60,6 +60,41 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
       ...(teacher.rows||[]).map(row=>({id:row.id,role:'TEACHER',kind:'TEACHER_TURN',message:row.message,sentAt:row.sent_at}))]
       .sort((a,b)=>Date.parse(a.sentAt)-Date.parse(b.sentAt)||String(a.id).localeCompare(String(b.id)));
   }
+  async function helpRequests(studentId,classId) {
+    const {rows=[]}=await query("select help_request_id,interaction_id,status,decision_reason,created_at,updated_at,next_review_at,response_communication_id from public.teaching_classroom_help_requests where student_id=$1 and class_id=$2 order by created_at desc limit 30",[studentId,classId]);
+    return rows.map(row=>({id:row.help_request_id,interactionId:row.interaction_id,status:row.status,reason:row.decision_reason,createdAt:row.created_at,updatedAt:row.updated_at,nextReviewAt:row.next_review_at,responseCommunicationId:row.response_communication_id}));
+  }
+  async function retireOutstandingHelp(studentId,classId) {
+    const {rows=[]}=await query("update public.teaching_classroom_help_requests set status='CANCELLED',decision_reason='This Class ended before the Teacher could answer this question.',next_review_at=null,lease_expires_at=null,updated_at=now() where student_id=$1 and class_id=$2 and status in ('RAISED','PROCESSING','DEFERRED') returning help_request_id",[studentId,classId]);
+    return rows.length;
+  }
+  async function getHelp(studentId,helpRequestId) {
+    const {rows=[]}=await query("select * from public.teaching_classroom_help_requests where student_id=$1 and help_request_id=$2",[studentId,helpRequestId]);return rows[0]||null;
+  }
+  async function claimHelp(studentId,helpRequestId) {
+    return withTransaction(async tx=>{
+      const {rows=[]}=await tx.query("select * from public.teaching_classroom_help_requests where student_id=$1 and help_request_id=$2 for update",[studentId,helpRequestId]);
+      const row=rows[0];if(!row)return null;
+      const now=Date.now(),due=!row.next_review_at||Date.parse(row.next_review_at)<=now;
+      if(!((['RAISED','DEFERRED'].includes(row.status)&&due)||(row.status==='PROCESSING'&&row.lease_expires_at&&Date.parse(row.lease_expires_at)<=now)))return null;
+      const claimed=await tx.query("update public.teaching_classroom_help_requests set status='PROCESSING',lease_expires_at=now()+interval '90 seconds',attempts=attempts+1,updated_at=now() where help_request_id=$1 returning *",[helpRequestId]);return claimed.rows[0];
+    });
+  }
+  async function finalizeHelp({studentId,helpRequestId,status,reason=null,nextReviewAt=null,scheduleVersion=null}) {
+    if(!['DEFERRED','DECLINED','CANCELLED','UNAVAILABLE'].includes(status))throw new TypeError('Help request disposition invalid.');
+    return withTransaction(async tx=>{
+      const {rows=[]}=await tx.query("select * from public.teaching_classroom_help_requests where student_id=$1 and help_request_id=$2 for update",[studentId,helpRequestId]);const current=rows[0];
+      if(!current||current.status!=='PROCESSING')return current||null;
+      const {rows:updated}=await tx.query("update public.teaching_classroom_help_requests set status=$2,decision_reason=$3,next_review_at=$4,lease_expires_at=null,updated_at=now() where help_request_id=$1 returning *",[helpRequestId,status,reason&&String(reason).slice(0,500),nextReviewAt]);
+      if(status==='DEFERRED'){
+        if(!dueEventStore?.enqueueUsing)throw new Error('D14 durable review scheduler unavailable.');
+        const eventId='d14-help-review:'+helpRequestId+':'+current.attempts;
+        await dueEventStore.enqueueUsing(tx.query.bind(tx),{
+          eventId,schemaVersion:1,eventType:require('../events/names').TEACHING_EVENTS.CLASS_HELP_REVIEW_DUE,eventCategory:'scheduled_due_event',triggerType:'system_time',source:'teaching.d14',origin:'d14',actorId:studentId,aggregateType:'CLASS',aggregateId:current.class_id,aggregateVersion:Number(scheduleVersion||1),occurredAt:new Date().toISOString(),effectiveAt:new Date(nextReviewAt).toISOString(),dueAt:new Date(nextReviewAt).toISOString(),correlationId:helpRequestId,idempotencyKey:eventId,payload:{student_id:studentId,class_id:current.class_id,help_request_id:helpRequestId,attempts:current.attempts}});
+      }
+      return updated[0];
+    });
+  }
   async function latestTeacherMessage(studentId,classId){const {rows}=await query("select communication_id,message,created_at from public.teaching_teacher_communications where student_id=$1 and class_id=$2 and visibility='STUDENT' order by created_at desc limit 1",[studentId,classId]);return rows[0]||null;}
   async function firstEntry(studentId,classId){const {rows}=await query("select created_at from public.teaching_classroom_interactions where student_id=$1 and class_id=$2 and interaction_kind='JOIN' order by created_at limit 1",[studentId,classId]);return rows[0]||null;}
   // Classroom intent and Teacher publication must never outlive the authority
@@ -69,7 +104,7 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
   async function assertCurrentTeachingAuthority(tx,studentId,classId){
     const {rows}=await tx.query(
       "select c.lifecycle_state as class_state,co.lifecycle_state as course_state,"+
-      "tv.timetable_state as timetable_state,c.schedule_version,c.source_timetable_version_id"+
+      "tv.timetable_state as timetable_state,c.schedule_version,c.source_timetable_version_id,c.course_id,co.state_version course_state_version"+
       " from public.teaching_classes c"+
       " join public.teaching_courses co on co.course_id=c.course_id and co.student_id=c.student_id"+
       " join public.teaching_timetable_versions tv on tv.timetable_version_id=c.source_timetable_version_id"+
@@ -86,17 +121,32 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
     }
     return current;
   }
-  async function publishTeacherTurn({studentId,classId,expectedControllerVersion,message,blocks=[],idempotencyKey}){
+  async function publishTeacherTurn({studentId,classId,expectedControllerVersion,message,blocks=[],idempotencyKey,helpRequestId=null,expectedBlueprintId=null,expectedBlueprintVersion=null,expectedScheduleVersion=null,expectedCourseStateVersion=null,expectedPlanId=null,expectedPlanVersion=null}){
     const {validateBlock}=require('../d14/board');
     if(typeof message!=='string'||!message.trim()||message.length>5000||!Array.isArray(blocks)||blocks.length>30)throw Object.assign(new Error('Teacher turn invalid.'),{code:'TEACHING_D14_TEACHER_TURN_INVALID',status:422});
     const safe=blocks.map(validateBlock);
     return withTransaction(async(tx)=>{
       const existing=await tx.query('select * from public.teaching_teacher_communications where student_id=$1 and idempotency_key=$2',[studentId,idempotencyKey]);
       if(existing.rows[0])return existing.rows[0];
-      await assertCurrentTeachingAuthority(tx,studentId,classId);
+      const parent=await assertCurrentTeachingAuthority(tx,studentId,classId);
       const locked=await tx.query('select * from public.teaching_class_sessions where student_id=$1 and class_id=$2 for update',[studentId,classId]);const session=locked.rows[0];
-      if(!session||session.lifecycle_state!=='ACTIVE'||Number(session.state_version)!==Number(expectedControllerVersion)||['ASSESSMENT','BREAK','INTERRUPTED'].includes(session.instructional_substate))throw Object.assign(new Error('Teacher turn targets stale or restricted Class state.'),{code:'TEACHING_D14_TEACHER_TURN_STALE',status:409});
+      if(!session||session.lifecycle_state!=='ACTIVE'||Number(session.state_version)!==Number(expectedControllerVersion)||['ASSESSMENT','CLASSWORK','BREAK','INTERRUPTED'].includes(session.instructional_substate))throw Object.assign(new Error('Teacher turn targets stale or restricted Class state.'),{code:'TEACHING_D14_TEACHER_TURN_STALE',status:409});
+      if(helpRequestId){
+        const failHelpStale=()=>{throw Object.assign(new Error('Classroom authority changed before help could publish.'),{code:'TEACHING_D14_HELP_STALE',status:409});};
+        if(String(parent.schedule_version)!==String(expectedScheduleVersion)
+          ||String(parent.course_state_version)!==String(expectedCourseStateVersion))failHelpStale();
+        const {rows:currentPlans=[]}=await tx.query("select course_plan_id,version_no from public.teaching_course_plans where student_id=$1 and course_id=$2 and plan_state<>'SUPERSEDED' order by version_no desc limit 1 for share",[studentId,parent.course_id]);
+        const currentPlan=currentPlans[0]||null;
+        if(String(currentPlan?.course_plan_id||'')!==String(expectedPlanId||'')
+          ||String(currentPlan?.version_no??'')!==String(expectedPlanVersion??''))failHelpStale();
+        const {rows:currentBlueprintRows=[]}=await tx.query('select lesson_blueprint_id,version_no from public.teaching_lesson_blueprints where student_id=$1 and class_id=$2 order by version_no desc limit 1 for share',[studentId,classId]);
+        const currentBlueprint=currentBlueprintRows[0]||null;
+        if(String(currentBlueprint?.lesson_blueprint_id||'')!==String(expectedBlueprintId||'')||String(currentBlueprint?.version_no??'')!==String(expectedBlueprintVersion??''))throw Object.assign(new Error('Lesson blueprint changed before help could publish.'),{code:'TEACHING_D14_HELP_STALE',status:409});
+        const {rows:helpRows=[]}=await tx.query("select * from public.teaching_classroom_help_requests where student_id=$1 and help_request_id=$2 and class_id=$3 for update",[studentId,helpRequestId,classId]);
+        const help=helpRows[0];if(!help||help.status!=='PROCESSING'||help.class_session_id!==session.class_session_id||Number(help.controller_version)!==Number(session.state_version))throw Object.assign(new Error('Raised hand is stale or is no longer processing.'),{code:'TEACHING_D14_HELP_STALE',status:409});
+      }
       const {rows}=await tx.query("insert into public.teaching_teacher_communications(communication_id,student_id,class_id,class_session_id,controller_version,message,visibility,provenance_refs,idempotency_key) values($1,$2,$3,$4,$5,$6,'STUDENT',$7::jsonb,$8) returning *",[randomUUID(),studentId,classId,session.class_session_id,session.state_version,message.trim(),JSON.stringify([`class-session:${session.class_session_id}@${session.state_version}`]),idempotencyKey]);
+      if(helpRequestId)await tx.query("update public.teaching_classroom_help_requests set status='ANSWERED',response_communication_id=$2,decision_reason=null,lease_expires_at=null,updated_at=now() where help_request_id=$1",[helpRequestId,rows[0].communication_id]);
       if(safe.length){const ordinal=await tx.query('select coalesce(max(ordinal),-1)+1 n from public.teaching_board_scenes where class_session_id=$1',[session.class_session_id]);const sceneId=randomUUID();
         await tx.query("insert into public.teaching_board_scenes(board_scene_id,student_id,class_session_id,ordinal,scene_type,title) values($1,$2,$3,$4,'TEACHER_TURN',$5)",[sceneId,studentId,session.class_session_id,ordinal.rows[0].n,null]);
         for(const [i,b] of safe.entries())await tx.query('insert into public.teaching_board_items(board_item_id,student_id,board_scene_id,ordinal,block_type,content,provenance_refs) values($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb)',[randomUUID(),studentId,sceneId,i,b.type,JSON.stringify(b.content),JSON.stringify([`teacher-communication:${rows[0].communication_id}`])]);
@@ -115,11 +165,26 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
   async function recordInteraction({studentId,classId,session,kind,body,idempotencyKey}){
     return withTransaction(async(tx)=>{
       const existing=await tx.query('select * from public.teaching_classroom_interactions where student_id=$1 and idempotency_key=$2',[studentId,idempotencyKey]);
-      if(existing.rows[0]){if(existing.rows[0].class_id!==classId||existing.rows[0].interaction_kind!==kind||existing.rows[0].body!==body)throw Object.assign(new Error('Conflicting interaction retry.'),{status:409,code:'TEACHING_D14_IDEMPOTENCY_CONFLICT'});return existing.rows[0];}
+      if(existing.rows[0]){if(existing.rows[0].class_id!==classId||existing.rows[0].interaction_kind!==kind||existing.rows[0].body!==body)throw Object.assign(new Error('Conflicting interaction retry.'),{status:409,code:'TEACHING_D14_IDEMPOTENCY_CONFLICT'});if(['ASK_TEACHER','NEED_HELP'].includes(kind)){const {rows:h=[]}=await tx.query('select help_request_id from public.teaching_classroom_help_requests where interaction_id=$1',[existing.rows[0].interaction_id]);return {...existing.rows[0],help_request_id:h[0]?.help_request_id||null};}return existing.rows[0];}
       if(['JOIN','ASK_TEACHER','NEED_HELP'].includes(kind))await assertCurrentTeachingAuthority(tx,studentId,classId);
       const current=await tx.query('select class_session_id,state_version,lifecycle_state from public.teaching_class_sessions where student_id=$1 and class_id=$2 for update',[studentId,classId]);
       if(session && (current.rows[0]?.class_session_id!==session.class_session_id||Number(current.rows[0]?.state_version)!==Number(session.state_version)))throw Object.assign(new Error('Class changed. Reload before acting.'),{status:409,code:'TEACHING_D14_STALE_CONTROLLER'});
-      const {rows}=await tx.query('insert into public.teaching_classroom_interactions(interaction_id,student_id,class_id,class_session_id,controller_version,interaction_kind,body,idempotency_key) values($1,$2,$3,$4,$5,$6,$7,$8) returning *',[randomUUID(),studentId,classId,session?.class_session_id||null,session?.state_version||null,kind,body,idempotencyKey]);return rows[0];
+      if(['ASK_TEACHER','NEED_HELP'].includes(kind)){
+        // The session row above is locked, serializing concurrent student
+        // submissions across workers. Keep one raised hand in flight.
+        const {rows:recent=[]}=await tx.query("select status,created_at from public.teaching_classroom_help_requests where student_id=$1 and class_id=$2 order by created_at desc limit 1",[studentId,classId]);
+        if(recent[0]&&(['RAISED','PROCESSING','DEFERRED'].includes(recent[0].status)||Date.now()-Date.parse(recent[0].created_at)<12000))
+          throw Object.assign(new Error('A raised hand is still being reviewed. Please wait for the Teacher before asking again.'),{code:'TEACHING_D14_HELP_ALREADY_PENDING',status:429});
+      }
+      const {rows}=await tx.query('insert into public.teaching_classroom_interactions(interaction_id,student_id,class_id,class_session_id,controller_version,interaction_kind,body,idempotency_key) values($1,$2,$3,$4,$5,$6,$7,$8) returning *',[randomUUID(),studentId,classId,session?.class_session_id||null,session?.state_version||null,kind,body,idempotencyKey]);
+      if(!['ASK_TEACHER','NEED_HELP'].includes(kind))return rows[0];
+      if(!outboxStore?.appendUsing)throw Object.assign(new Error('Durable raised-hand worker unavailable.'),{code:'TEACHING_D14_HELP_WORKER_UNAVAILABLE',status:503});
+      const helpId=randomUUID();
+      await tx.query("insert into public.teaching_classroom_help_requests(help_request_id,student_id,class_id,class_session_id,interaction_id,controller_version,status) values($1,$2,$3,$4,$5,$6,'RAISED')",[helpId,studentId,classId,session.class_session_id,rows[0].interaction_id,session.state_version]);
+      const eventId='d14-help:'+helpId;
+      await outboxStore.appendUsing(tx.query.bind(tx),{
+        eventId,schemaVersion:1,eventType:require('../events/names').TEACHING_EVENTS.CLASS_HELP_REQUESTED,eventCategory:'committed_domain_event',triggerType:'committed_domain_event',source:'teaching.d14',origin:'d14',actorId:studentId,aggregateType:'CLASS',aggregateId:classId,aggregateVersion:Number(session.state_version),occurredAt:new Date().toISOString(),correlationId:helpId,idempotencyKey:eventId,payload:{student_id:studentId,class_id:classId,help_request_id:helpId}});
+      return {...rows[0],help_request_id:helpId};
     });
   }
   async function latestNote(studentId,classId){const {rows}=await query('select * from public.teaching_class_study_note_versions where student_id=$1 and class_id=$2 order by version_no desc limit 1',[studentId,classId]);return rows[0]||null;}
@@ -130,6 +195,6 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
       const {rows}=await tx.query('insert into public.teaching_class_study_note_versions(note_version_id,student_id,class_id,version_no,state,stage,binding,note_payload,validation,closure_fact_id,idempotency_key) values($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10,$11) returning *',[randomUUID(),studentId,classId,Number(old?.version_no||0)+1,state,stage,JSON.stringify(binding),JSON.stringify(payload),JSON.stringify(validation),closureFactId,idempotencyKey]);return rows[0];
     });
   }
-  return Object.freeze({assertReady,listClasses,identity,board,notebook,addNotebook,recordInteraction,conversation,latestNote,saveNote,latestTeacherMessage,firstEntry,publishTeacherTurn});
+  return Object.freeze({assertReady,listClasses,identity,board,notebook,addNotebook,recordInteraction,conversation,helpRequests,retireOutstandingHelp,getHelp,claimHelp,finalizeHelp,latestNote,saveNote,latestTeacherMessage,firstEntry,publishTeacherTurn});
 }
 module.exports={createD14ClassroomRepository};
