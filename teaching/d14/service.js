@@ -29,7 +29,7 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
     const d11=await d11Service.getClass(user,classId);
     const source=await context(user.id,classId);
     const currentTime=clock().getTime(),starts=Date.parse(source.classRow.scheduled_start_at),ends=Date.parse(source.classRow.scheduled_end_at);
-    const mode=source.session?.instructional_substate||(currentTime>=ends?'UNSTARTED_PAST':currentTime>=starts?'START_DELAYED':'PRE_CLASS');
+    const mode=source.session?.lifecycle_state==='CLOSED'?'CLOSURE':source.session?.instructional_substate||(currentTime>=ends?'UNSTARTED_PAST':currentTime>=starts?'START_DELAYED':'PRE_CLASS');
     const restricted=RESTRICTED.has(mode);
     const [identity,scenes,notes,studyNote,teacherMessage,firstEntry,conversation]=await Promise.all([
       repository.identity(user.id,source.classRow.course_id),
