@@ -23,7 +23,7 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
       return Object.freeze({...row,can_enter:canEnter,entry_opens_at:row.scheduled_start_at,
         has_authoritative_session:Boolean(sessionState),historical_unstarted:isPast(row)&&!sessionState&&!row.attendance_outcome});
     });
-    return Object.freeze({course,serverNow:instant.toISOString(),classes:Object.freeze(enriched),upcoming:Object.freeze(enriched.filter(row=>!isPast(row))),history:Object.freeze(enriched.filter(isPast).sort((a,b)=>Date.parse(b.scheduled_start_at)-Date.parse(a.scheduled_start_at)))});
+    return Object.freeze({course,serverNow:new Date(at).toISOString(),classes:Object.freeze(enriched),upcoming:Object.freeze(enriched.filter(row=>!isPast(row))),history:Object.freeze(enriched.filter(isPast).sort((a,b)=>Date.parse(b.scheduled_start_at)-Date.parse(a.scheduled_start_at)))});
   }
   async function snapshot(user,classId){
     const d11=await d11Service.getClass(user,classId);
