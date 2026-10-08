@@ -259,6 +259,47 @@ function registerD11Runtime({
     }));
   }
 
+  // A future Class receives its workspace immediately but should not consume
+  // model calls weeks before teaching. This durable review due wakes the D11
+  // owner at the configured lead time, rechecking all relevant authority.
+  eventRuntime.register(TEACHING_EVENTS.PREPARATION_REVIEW_DUE,{
+    reconcile:async(event)=>{
+      const studentId=event.payload?.student_id||event.actor_id;
+      const classId=event.payload?.class_id||event.aggregate_id;
+      const context=await repository.getClassContext(studentId,classId);
+      const row=context?.classRow,workspace=context?.workspace;
+      if(!row||!workspace||workspace.workspace_id!==event.payload?.preparation_workspace_id){
+        return {disposition:RECONCILIATION_DISPOSITIONS.SUPERSEDED,reason:'PREPARATION_WORKSPACE_CHANGED'};
+      }
+      if(workspace.lifecycle_state!=='ACTIVE'||workspace.maturity_stage==='PRE_LOCK_READY'){
+        return {disposition:RECONCILIATION_DISPOSITIONS.ALREADY_SATISFIED,reason:'PREPARATION_ALREADY_COMPLETE'};
+      }
+      if(row.student_id!==studentId||row.lifecycle_state!=='SCHEDULED'
+        ||row.course_lifecycle_state!=='ACTIVE'||row.source_timetable_state!=='APPROVED'
+        ||row.source_timetable_version_id!==event.payload?.timetable_version_id
+        ||Number(row.schedule_version)!==Number(event.payload?.schedule_version)
+        ||Number(workspace.state_version)!==Number(event.payload?.workspace_state_version)
+        ||Date.parse(row.scheduled_start_at)<=Date.now()||context.session){
+        return {disposition:RECONCILIATION_DISPOSITIONS.SUPERSEDED,reason:'PREPARATION_CLASS_NO_LONGER_CURRENT'};
+      }
+      return {disposition:RECONCILIATION_DISPOSITIONS.ACTIONABLE};
+    },
+    handle:async(event)=>{
+      const result=await service.handlePreparationEvent({
+        eventId:event.event_id,actorId:event.actor_id,
+        aggregateId:event.payload?.preparation_workspace_id,
+        correlationId:event.correlation_id||event.event_id,
+        payload:{...event.payload,reason:'DURABLE_PRE_CLASS_REVIEW_DUE'},
+      });
+      return {safeMetadata:{
+        class_id:event.payload?.class_id,
+        preparation_workspace_id:event.payload?.preparation_workspace_id,
+        model_work_started:Boolean(result?.modelWorkStarted),
+        deferred:Boolean(result?.deferred),
+      }};
+    },
+  });
+
   eventRuntime.register(TEACHING_EVENTS.CLASS_START_DUE,{
     reconcile:async(event)=>{
       const studentId=event.payload?.student_id || event.actor_id;
@@ -363,6 +404,7 @@ function registerD11Runtime({
   return Object.freeze({
     publishedRegistrations:Object.freeze(registrations),
     dueEventTypes:Object.freeze([
+      TEACHING_EVENTS.PREPARATION_REVIEW_DUE,
       TEACHING_EVENTS.CLASS_START_DUE,
       TEACHING_EVENTS.BREAK_END_DUE,
       TEACHING_EVENTS.CLASS_END_DUE,
