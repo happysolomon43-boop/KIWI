@@ -1,5 +1,7 @@
 'use strict';
 
+const {LEARNING_EVIDENCE_DESCRIPTORS,ASSISTANCE_LEVELS,OBJECTIVE_CRITICALITY}=require('./contracts');
+
 // Mode-specific, immutable contract derived from TPF-05's canonical envelope.
 // TPF-05 explicitly permits runtime mode-specific schema projection. This
 // structure is appended AFTER the design-frozen prompt, never inserted inside it.
@@ -14,6 +16,10 @@ const D11_BLUEPRINT_OUTPUT_FORMAT=Object.freeze({
     'independent_evidence_opportunities','remediation_branches','homework_candidates','unresolved_items',
   ]),
   status_values:Object.freeze(['OK','REVIEW_NEEDED','INSUFFICIENT_EVIDENCE','UNRESOLVED_CONFLICT']),
+  evidence_descriptor_enum:LEARNING_EVIDENCE_DESCRIPTORS,
+  objective_criticality_enum:OBJECTIVE_CRITICALITY,
+  assistance_level_enum:ASSISTANCE_LEVELS,
+  enum_rules:'evidence_descriptor_targets[] and learning_evidence_descriptor MUST be from evidence_descriptor_enum, or null for the segment descriptor. These are planning evidence labels, not student-mastery states. Inventing labels such as PRACTICE, EXPLANATION, RECALL, DISCUSSION, or NONE is forbidden. Use [] or null when no supported evidence label applies.',
   objective_required:Object.freeze({
     id:'Unique, nonempty objective identifier within the output',
     learning_unit_ref:'Exact learning_unit_id from the current authoritative Course Plan (never an invented identifier)',
@@ -21,7 +27,7 @@ const D11_BLUEPRINT_OUTPUT_FORMAT=Object.freeze({
     criticality:'CORE | SECONDARY | ENRICHMENT; at least one CORE',
     minimum_safe_minutes:'Integer >= 0, <= 240',
     prerequisite_refs:'Array of evidence-linked prerequisite references, [] if none',
-    evidence_descriptor_targets:'Array of supported D11 evidence descriptors, [] if none',
+    evidence_descriptor_targets:'Array containing ONLY evidence_descriptor_enum values (exact spelling), [] if none. Never use unsupported labels.',
     independent_evidence_required:'Boolean, true for a CORE independent-use competence unless evidence says otherwise',
   }),
   segment_required:Object.freeze({
@@ -32,8 +38,8 @@ const D11_BLUEPRINT_OUTPUT_FORMAT=Object.freeze({
     minimum_safe_minutes:'Integer from 0 to planned_minutes',
     criticality:'CORE | SECONDARY | ENRICHMENT',
     optional:'Boolean; never true for CORE segment',
-    learning_evidence_descriptor:'Supported D11 descriptor or null',
-    assistance_level:'NONE | LIGHT | GUIDED | MODELED',
+    learning_evidence_descriptor:'One exact evidence_descriptor_enum value or null; NEVER invent a descriptor',
+    assistance_level:'One exact assistance_level_enum value; assistance is a separate dimension from evidence labels',
     representation:'Short description or null',
     stopping_condition:'Bounded stopping rule or null',
   }),
