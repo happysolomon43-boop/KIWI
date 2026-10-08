@@ -471,13 +471,14 @@ function createD11Service({
     if(['HANDED_OFF','SUPERSEDED','CANCELLED'].includes(workspace.lifecycle_state))
       return Object.freeze({accepted:true,noop:true,reason:'WORKSPACE_TERMINAL'});
     const current=await repository.getClassContext(workspace.student_id,workspace.target_ref);
-    if(!current?.classRow||current.classRow.lifecycle_state==='CANCELLED'
-      ||clock().getTime()>=Date.parse(current.classRow.scheduled_end_at))
+    if(!current?.classRow||current.classRow.lifecycle_state!=='SCHEDULED'
+      ||clock().getTime()>=Date.parse(current.classRow.scheduled_start_at))
       return Object.freeze({accepted:true,noop:true,reason:'CLASS_NO_LONGER_PREPARABLE'});
     if(!Number.isFinite(Date.parse(current.classRow.scheduled_start_at))
-      ||current.classRow.course_lifecycle_state&&current.classRow.course_lifecycle_state!=='ACTIVE'
-      ||current.classRow.source_timetable_state&&current.classRow.source_timetable_state!=='APPROVED'
-      ||current.session)
+      ||!Number.isFinite(Date.parse(current.classRow.scheduled_end_at))
+      ||current.classRow.course_lifecycle_state!=='ACTIVE'
+      ||current.classRow.source_timetable_state!=='APPROVED'
+      ||!current.plan||current.session)
       return Object.freeze({accepted:true,noop:true,reason:'CLASS_NOT_ELIGIBLE_FOR_PREPARATION'});
     if(shouldDeferPreparation(current.classRow.scheduled_start_at,clock())){
       if(typeof dueEventStore.enqueue!=='function') {
