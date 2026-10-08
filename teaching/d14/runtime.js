@@ -11,7 +11,11 @@ function registerD14Runtime({publishedEvents,service,eventRuntime=null,repositor
     }),
     publishedEvents.register(TEACHING_EVENTS.CLASS_ENDED,{
       subscriberId:'d14-postclass-note-reconciliation',
-      handle:async(event)=>service.runStudyStage({studentId:event.actorId||event.payload?.student_id,classId:event.payload?.class_id,stage:'POST_CLASS'}),
+      handle:async(event)=>{
+        const studentId=event.actorId||event.payload?.student_id,classId=event.payload?.class_id;
+        await service.retireOutstandingHelp({studentId,classId});
+        return service.runStudyStage({studentId,classId,stage:'POST_CLASS'});
+      },
     }),
     publishedEvents.register(TEACHING_EVENTS.CLASS_HELP_REQUESTED,{
       subscriberId:'d14-durable-raised-hand-teacher',

@@ -102,3 +102,18 @@ test('D14 help request migration remains service-only and does not grant academi
   assert.match(ui,/if\(s.teacherMessagingAllowed&&!state.reviewOnly\)/);
   assert.doesNotMatch(ui,/button\('Message AI Teacher'/);
 });
+
+test('ending a Class retires outstanding raised hands before post-Class reconciliation',async()=>{
+  const steps=[];
+  const registered=new Map();
+  registerD14Runtime({
+    publishedEvents:{register:(name,{handle})=>{registered.set(name,handle);return {name};}},
+    service:{
+      processHelp:async()=>({}),
+      retireOutstandingHelp:async()=>{steps.push('RETIRED');return {retired:2};},
+      runStudyStage:async()=>{steps.push('POST_CLASS');return {state:'VALIDATED_PRIVATE'};},
+    },
+  });
+  await registered.get(TEACHING_EVENTS.CLASS_ENDED)({actorId:'student1',payload:{class_id:'class1'}});
+  assert.deepEqual(steps,['RETIRED','POST_CLASS']);
+});

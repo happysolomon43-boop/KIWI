@@ -110,6 +110,10 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
       : null;
     return {interactionId:row.interaction_id,helpRequestId:row.help_request_id||null,kind:row.interaction_kind,acceptedAt:row.created_at,academicResponse:false,controllerMutation:false,status:row.help_request_id?'HELP_RAISED':'RECORDED_FOR_TEACHER',attendance};
   }
+  async function retireOutstandingHelp({studentId,classId}) {
+    if(!studentId||!classId)return {retired:0};
+    return {retired:typeof repository.retireOutstandingHelp==='function'?await repository.retireOutstandingHelp(studentId,classId):0};
+  }
   async function processHelp({studentId,classId,helpRequestId}={}) {
     if(!studentId||!classId||!helpRequestId)fail('TEACHING_D14_HELP_CONTEXT_REQUIRED',400);
     const request=await repository.claimHelp(studentId,helpRequestId);
@@ -222,6 +226,6 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
     const row=await repository.saveNote({studentId,classId,state:stage==='PRE_CLASS'?'PREPARED_NOT_PUBLISHABLE':'VALIDATED_PRIVATE',stage,binding:request.binding,payload:output,validation,closureFactId:closure?.closure_fact_id||null,idempotencyKey:key});
     return {state:row.state,published:false,noteVersionId:row.note_version_id};
   }
-  return Object.freeze({listClasses,snapshot,notebook,signal,processHelp,enter,respond,runStudyStage,publishTeacherTurn:repository.publishTeacherTurn});
+  return Object.freeze({listClasses,snapshot,notebook,signal,retireOutstandingHelp,processHelp,enter,respond,runStudyStage,publishTeacherTurn:repository.publishTeacherTurn});
 }
 module.exports={createD14Service,MODES};

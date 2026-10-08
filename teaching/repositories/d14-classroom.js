@@ -64,6 +64,10 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
     const {rows=[]}=await query("select help_request_id,interaction_id,status,decision_reason,created_at,updated_at,next_review_at,response_communication_id from public.teaching_classroom_help_requests where student_id=$1 and class_id=$2 order by created_at desc limit 30",[studentId,classId]);
     return rows.map(row=>({id:row.help_request_id,interactionId:row.interaction_id,status:row.status,reason:row.decision_reason,createdAt:row.created_at,updatedAt:row.updated_at,nextReviewAt:row.next_review_at,responseCommunicationId:row.response_communication_id}));
   }
+  async function retireOutstandingHelp(studentId,classId) {
+    const {rows=[]}=await query("update public.teaching_classroom_help_requests set status='CANCELLED',decision_reason='This Class ended before the Teacher could answer this question.',next_review_at=null,lease_expires_at=null,updated_at=now() where student_id=$1 and class_id=$2 and status in ('RAISED','PROCESSING','DEFERRED') returning help_request_id",[studentId,classId]);
+    return rows.length;
+  }
   async function getHelp(studentId,helpRequestId) {
     const {rows=[]}=await query("select * from public.teaching_classroom_help_requests where student_id=$1 and help_request_id=$2",[studentId,helpRequestId]);return rows[0]||null;
   }
@@ -184,6 +188,6 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
       const {rows}=await tx.query('insert into public.teaching_class_study_note_versions(note_version_id,student_id,class_id,version_no,state,stage,binding,note_payload,validation,closure_fact_id,idempotency_key) values($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10,$11) returning *',[randomUUID(),studentId,classId,Number(old?.version_no||0)+1,state,stage,JSON.stringify(binding),JSON.stringify(payload),JSON.stringify(validation),closureFactId,idempotencyKey]);return rows[0];
     });
   }
-  return Object.freeze({assertReady,listClasses,identity,board,notebook,addNotebook,recordInteraction,conversation,helpRequests,getHelp,claimHelp,finalizeHelp,latestNote,saveNote,latestTeacherMessage,firstEntry,publishTeacherTurn});
+  return Object.freeze({assertReady,listClasses,identity,board,notebook,addNotebook,recordInteraction,conversation,helpRequests,retireOutstandingHelp,getHelp,claimHelp,finalizeHelp,latestNote,saveNote,latestTeacherMessage,firstEntry,publishTeacherTurn});
 }
 module.exports={createD14ClassroomRepository};
