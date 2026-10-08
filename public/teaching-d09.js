@@ -257,8 +257,8 @@ function calendarEventCard(item,data){
   const start=calendarStart(item),end=calendarEnd(item),time=el('div','teaching-d09-calendar-row__time');
   time.append(el('span','',displayCalendarTime(start,zone)),el('span','',end?displayCalendarTime(end,zone):'—'));
   const body=el('div','teaching-d09-calendar-row__body'),top=el('div','teaching-d09-calendar-row__top'),title=el('div','teaching-d09-calendar-row__title');
-  const kindLabel=kind==='ASSESSMENT'?statusName(item.assessmentType||'Assessment'):'Class',duration=calendarDuration(item);
-  title.append(el('strong','',item.title||kindLabel),el('div','teaching-d09-calendar-row__meta',(kind==='ASSESSMENT'?'Announced assessment':'Approved schedule')+(duration?` · ${duration} min`:'')));
+  const kindLabel=kind==='ASSESSMENT'?statusName(item.assessmentType||'Assessment'):'Class',duration=calendarDuration(item),courseName=item.course_title||item.courseTitle||'Course',itemTitle=item.title&&item.title!==courseName?item.title:null;
+  title.append(el('strong','',courseName),el('div','teaching-d09-calendar-row__meta',(itemTitle?`${itemTitle} · `:'')+(kind==='ASSESSMENT'?'Announced assessment':'Approved schedule')+(duration?` · ${duration} min`:'')));
   const badge=el('span','teaching-d09-calendar-kind',kindLabel);badge.dataset.kind=kind;top.append(title,badge);body.append(top);
   if(kind==='CLASS'&&window.KIWITeachingD10){
     const actions=el('div','teaching-d09-calendar-actions'),move=el('button','teaching-d08-link-button','Request new time'),absence=el('button','teaching-d08-link-button','Emergency absence');
