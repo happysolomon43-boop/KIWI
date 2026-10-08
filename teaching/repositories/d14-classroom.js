@@ -72,8 +72,9 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
       "tv.timetable_state as timetable_state,c.schedule_version,c.source_timetable_version_id"+
       " from public.teaching_classes c"+
       " join public.teaching_courses co on co.course_id=c.course_id and co.student_id=c.student_id"+
-      " left join public.teaching_timetable_versions tv on tv.timetable_version_id=c.source_timetable_version_id"+
-      " where c.student_id=$1 and c.class_id=$2 for share of c,co",
+      " join public.teaching_timetable_versions tv on tv.timetable_version_id=c.source_timetable_version_id"+
+      " and tv.student_id=c.student_id"+
+      " where c.student_id=$1 and c.class_id=$2 for share of c,co,tv",
       [studentId,classId]
     );
     const current=rows?.[0];
