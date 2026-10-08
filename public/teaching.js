@@ -207,8 +207,14 @@ function renderTeachingNavigation() {
 
   if (!shell || !dock || !(template instanceof HTMLTemplateElement)) return;
 
-  const destinations = [...teachingNavigationItems.values()]
-    .slice(0, TEACHING_DOCK_DESTINATION_SLOTS);
+  const registeredDestinations = [...teachingNavigationItems.values()];
+  const calendarDestination = registeredDestinations.find((item) => item.id === 'calendar') || null;
+  const remainingDestinations = registeredDestinations.filter((item) => item.id !== 'calendar');
+  const destinations = [
+    { id: 'courses', label: 'Courses', icon: '⌂', onSelect: () => navigateTeaching('overview') },
+    ...(calendarDestination ? [calendarDestination] : []),
+    ...remainingDestinations,
+  ].slice(0, TEACHING_DOCK_DESTINATION_SLOTS);
   const dockReady = destinations.length === TEACHING_DOCK_DESTINATION_SLOTS;
 
   dock.replaceChildren();
