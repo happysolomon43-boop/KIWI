@@ -22,7 +22,7 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
         where student_id=c.student_id and class_id=c.class_id order by created_at desc limit 1
       ) s on true
       left join lateral (
-        select outcome,presence_state,missed_minutes,arrived_at,exited_at from public.teaching_attendance_records
+        select attendance_record_id,outcome,presence_state,missed_minutes,arrived_at,exited_at from public.teaching_attendance_records
         where student_id=c.student_id and class_id=c.class_id and schedule_version=c.schedule_version
         order by version_no desc,recorded_at desc limit 1
       ) a on true
