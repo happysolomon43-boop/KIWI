@@ -130,7 +130,7 @@ function renderWalkthrough(){
       const label=item.reviewState==='IN_PROGRESS'?'Resume test Classroom':'Join test review';
       controls.append(action(label,()=>void reviewClass(item,true).catch(showProblem)));
       if(item.reviewState==='IN_PROGRESS'){
-        controls.append(action('Complete review & next →',()=>void onReviewComplete(item.classId).catch(showProblem),'admin-action--quiet'));
+        controls.append(action('Complete review & next →',async()=>{try{const next=await onReviewComplete(item.classId);if(next)await classroomSection.openClassroom(next,{reviewOnly:true,onReviewComplete});}catch(error){showProblem(error);}},'admin-action--quiet'));
       }
       if(item.realCanEnter){
         controls.append(action('Join real Class',()=>void joinRealClass(item).catch(showProblem),'admin-action--live'));
