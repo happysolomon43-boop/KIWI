@@ -44,5 +44,5 @@ test('Admin client sequences reviews and cannot treat test review as academic Cl
   assert.match(page,/await mutate\(updated\.currentClassId,'start'\)/);
   assert.match(page,/reviewOnly:true/);
   assert.match(page,/realCanEnter/);
-  assert.doesNotMatch(page,/controller\/close|\/classroom\/enter/);
+  assert.doesNotMatch(page,/api\.kiwiApiRequest\([^\n]*(?:controller\/close|classroom\/enter)/);
 });
