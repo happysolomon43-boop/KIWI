@@ -234,7 +234,7 @@ async function kiwiApiRawRequest(endpoint, options = {}) {
 
 // Private assets use the same session refresh and timeout handling as JSON.
 async function kiwiApiBlobRequest(endpoint, options={}) {
-  if(typeof endpoint!=='string'||!/^\/teaching\/classes\/[^/]+\/classroom\/assets\/[^/]+$/.test(endpoint))throw new TypeError('Expected a private Classroom asset endpoint.');
+  if(typeof endpoint!=='string'||!/^\/teaching\/(?:admin\/classroom-test\/)?classes\/[^/]+\/classroom\/assets\/[^/]+$/.test(endpoint))throw new TypeError('Expected a private Classroom asset endpoint.');
   const accessToken=token('kiwi_auth_token');
   return requestWithSession(endpoint,{method:'GET',headers:{Accept:'image/png,image/jpeg,image/svg+xml',...(accessToken?{Authorization:`Bearer ${accessToken}`}:{})},...(options.signal?{signal:options.signal}:{})},options.timeoutMs,async(response,path)=>{
     if(!response.ok)return parseResponse(response,path);
