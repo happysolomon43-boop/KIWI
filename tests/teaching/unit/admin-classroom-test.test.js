@@ -4,7 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 const {
-  fingerprint, matchesKey, sandboxConfiguration, testInstanceGate,
+  fingerprint, matchesKey, sandboxConfiguration, sandboxSurfaceGate, testInstanceGate,
   createAttestationHandler, createAdminClassroomTestRouter,
 } = require('../../../teaching/admin-classroom-test');
 
@@ -149,4 +149,25 @@ test('Standalone sandbox denies missing key and attestation uses DB-owned real r
   assert.equal(payload.engine,'KIWI_D11_D14');
   assert.equal(payload.upcomingClassCount,2);
   assert.equal(payload.databaseFingerprint,fingerprint(SANDBOX_DB));
+});
+
+
+test('Sandbox server exposes only keyed real Classroom paths and never the wider KIWI API or static UI',()=>{
+  const env={...ENV,KIWI_CLASSROOM_TEST_INSTANCE:'true',DATABASE_URL:SANDBOX_DB};
+  const gate=sandboxSurfaceGate(env);
+  const invoke=(method,path,key=KEY)=>{
+    let passed=false,status=null,output=null;
+    const req={method,path,headers:key?{'x-kiwi-classroom-test-key':key}:{}};
+    const res={setHeader(){},status(code){status=code;return this;},json(obj){output=obj;return this;}};
+    gate(req,res,()=>{passed=true;});
+    return {passed,status,output};
+  };
+  assert.equal(invoke('GET','/api/teaching/internal/classroom-test/attest').passed,true);
+  assert.equal(invoke('GET','/api/teaching/classes/abc/classroom').passed,true);
+  assert.equal(invoke('POST','/api/teaching/classes/abc/interactions').passed,true);
+  assert.equal(invoke('GET','/api/teaching/courses',null).status,404);
+  assert.equal(invoke('GET','/api/auth/me').status,404);
+  assert.equal(invoke('GET','/teaching.html').status,404);
+  assert.equal(invoke('POST','/api/teaching/courses').status,404);
+  assert.equal(invoke('POST','/api/teaching/classes/abc/responses').status,404);
 });
