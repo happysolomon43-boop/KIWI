@@ -146,7 +146,7 @@ test('source SQL and D10 commit payload correctly bind cross-Course approved tim
   assert.match(repo,/t\.timetable_state='APPROVED'/);
   assert.match(repo,/c\.source_request_id=\$2/);
   assert.match(repo,/c\.scheduled_start_at>now\(\)/);
-  assert.match(repo,/expectedTimetableVersionId!=null/);
+  assert.match(repo,/expectedTimetableVersionId\s*!=\s*null/);
   assert.match(repo,/loadClassBase\(studentId, classId, tx, true\)/);
   assert.match(d10,/timetable_version_id:targetResult\?\.timetableVersionId/);
   assert.match(runtime,/TEACHING_EVENTS\.CLASS_PREPARATION_RECONCILE/);
