@@ -159,3 +159,28 @@ test('a non-cooperating provider cannot publish its late answer after the author
   assert.ok(done.metadata?.safeMetadata?.late_result_discarded_at);
   assert.equal(done.metadata?.safeMetadata?.remote_abort_confirmation,'NOT_OBSERVABLE');
 });
+
+test('D08 REVIEW_READY plan revocation and Topic/Learning Unit descendant invalidation match real owner lifecycle',()=>{
+  const base=fs.readFileSync(path.join(__dirname,'../../migrations/20261008_teaching_d05_durable_authority_revocations.sql'),'utf8');
+  const patch=fs.readFileSync(path.join(__dirname,'../../migrations/20261008_teaching_d05_topic_dependency_revocation.sql'),'utf8');
+  assert.match(base,/before_value->>'plan_state' IN \('REVIEW_READY','APPROVED','VALIDATED'\)/);
+  assert.match(patch,/parent_state='REVIEW_READY'/);
+  assert.match(patch,/AFTER UPDATE OR DELETE ON public\.teaching_topics/);
+  assert.match(patch,/AFTER UPDATE OR DELETE ON public\.teaching_learning_units/);
+  assert.doesNotMatch(patch,/AFTER INSERT(?: OR UPDATE)? ON public\.teaching_(?:topics|learning_units)/);
+  assert.match(patch,/ON CONFLICT \(student_id,owner_kind,owner_ref,authority_version\) DO NOTHING/);
+});
+
+test('an edited Topic cancels only the prior Plan version for every descendant worker',async()=>{
+  const db=memoryRevocations();
+  const a=createAcademicAuthorityCancellationReader({query:db.query});
+  const b=createAcademicAuthorityCancellationReader({query:db.query});
+  const before=envelope();
+  assert.equal((await a.read(before)).cancelled,false);
+  db.committed.add('student1|COURSE_PLAN|plan1|5');
+  const old=await b.read(before,{phase:'during_model'});
+  assert.equal(old.cancelled,true);
+  assert.equal(old.ownerKind,'COURSE_PLAN');
+  const replacement=envelope();replacement.preconditions.course_plan_version='6';
+  assert.equal((await a.read(replacement)).cancelled,false);
+});

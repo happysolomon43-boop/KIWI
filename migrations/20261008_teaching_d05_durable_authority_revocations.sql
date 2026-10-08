@@ -53,7 +53,7 @@ BEGIN
   ELSIF TG_TABLE_SCHEMA='public' AND TG_TABLE_NAME='teaching_course_plans' THEN
     owner:='COURSE_PLAN';ref:=before_value->>'course_plan_id';version:=before_value->>'version_no';
     IF before_value->>'version_no' IS NOT DISTINCT FROM after_value->>'version_no'
-      AND NOT (before_value->>'plan_state' IN ('APPROVED','VALIDATED')
+      AND NOT (before_value->>'plan_state' IN ('REVIEW_READY','APPROVED','VALIDATED')
         AND after_value->>'plan_state' IN ('SUPERSEDED','STALE','REVIEW_REQUIRED'))
       THEN RETURN NEW;END IF;
     reason:='COURSE_PLAN_SUPERSEDED';
