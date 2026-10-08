@@ -1,96 +1,72 @@
-const normal=window.KIWI_API_CLIENT;
-const statusElement=document.getElementById('sandbox-status');
-const detail=document.getElementById('sandbox-detail');
-const picker=document.getElementById('course-picker');
-const openButton=document.getElementById('open-course');
-const mount=document.getElementById('classroom-mount');
-const help=document.getElementById('course-help');
+// Admin view of the REAL KIWI Classroom. No second runtime, synthetic snapshot,
+// or alternative academic controller is involved.
+const api=window.KIWI_API_CLIENT;
 const sourceTitle=document.getElementById('source-title');
 const sourceDetail=document.getElementById('source-detail');
+const status=document.getElementById('status');
+const panel=document.getElementById('classroom-panel');
+const mount=document.getElementById('classroom-mount');
+const refreshButton=document.getElementById('refresh-course');
 const PREFIX='/teaching/admin/classroom-test';
-let classroomSection=null,ready=false,linkedSource=null;
-if(!normal?.kiwiApiRequest||!normal?.hasKiwiSession)throw new Error('Test Classroom requires KIWI session handling.');
+let classroomSection=null;
+let loading=false;
+if(typeof api?.kiwiApiRequest!=='function'||typeof api?.hasKiwiSession!=='function')
+  throw new Error('KIWI shared API client is required.');
 
-function routedPath(path){
-  if(!/^\/teaching\/(classes|courses)(\/|$)/.test(path))throw new TypeError('Non-Classroom API requests are prohibited from Test Classroom.');
-  return PREFIX+path.substring('/teaching'.length);
+function showProblem(error){
+  const descriptions={
+    CLASSROOM_TEST_SOURCE_NOT_CONFIGURED:'No course is linked to this admin account.',
+    CLASSROOM_TEST_SOURCE_NOT_FOUND:'Your linked course is no longer active or accessible.',
+    CLASSROOM_TEST_SOURCE_UNAVAILABLE:'The KIWI Course could not be verified.',
+    CLASSROOM_TEST_ADMIN_REQUIRED:'Only a signed-in KIWI admin can open this page.',
+    CLASSROOM_TEST_AUTH_UNAVAILABLE:'KIWI could not verify administrator access.',
+  };
+  panel.hidden=true;
+  sourceTitle.textContent='Classroom unavailable';
+  status.textContent=descriptions[error?.code]||error?.message||'Could not connect to KIWI Classroom.';
 }
-// The normal KIWI Classroom module is loaded unchanged. Only its API
-// transport prefix changes; the backend verifies admin and database isolation.
-window.KIWI_API_CLIENT=Object.freeze({
-  ...normal,
-  kiwiApiRequest:(path,options)=>normal.kiwiApiRequest(routedPath(path),options),
-  kiwiApiBlobRequest:(path,options)=>normal.kiwiApiBlobRequest(routedPath(path),options),
-});
-window.KIWITeachingCourses=Object.freeze({
-  registerSection(section){if(section.id==='classroom')classroomSection=section;},
-  openSection(){},
-});
-window.KIWI_CLASSROOM_TEST_MODE=true;
-await import('/teaching-classroom.js');
-
-function showStatus(title,description){statusElement.textContent=title;detail.textContent=description||'';}
-const courseKey=value=>String(value||'').toLowerCase().replace(/[^a-z0-9]/g,'');
-const matchesLinkedSource=course=>linkedSource&&courseKey(course?.title||course?.subject_name)===courseKey(linkedSource.title);
-async function check(){
-  picker.disabled=true;openButton.disabled=true;ready=false;
-  showStatus('Verifying source course…','');
-  linkedSource=null;
-  sourceTitle.textContent='Loading course…';
-  sourceDetail.textContent='Checking active Course ownership and Plan details.';
+async function load(){
+  if(loading)return;
+  loading=true;
+  refreshButton.disabled=true;
+  panel.hidden=true;
+  mount.replaceChildren();
+  sourceTitle.textContent='Checking course…';
+  sourceDetail.textContent='Verifying the existing KIWI course.';
+  status.textContent='Connecting to KIWI Classroom…';
   try{
-    const binding=await normal.kiwiApiRequest(PREFIX+'/source-course');
-    if(binding.linked!==true||!binding.course?.courseId||binding.execution!=='ISOLATED_SANDBOX_ONLY')throw new Error('Source Course binding is not verified.');
-    linkedSource=binding.course;
-    sourceTitle.textContent=linkedSource.title||'KIWI Course';
-    sourceDetail.textContent=(linkedSource.subjectName||'KIWI subject')+' · '+linkedSource.planCount+' Course Plan(s) · '+linkedSource.scheduledClassCount+' real scheduled Classes · read only';
-    showStatus('Verifying isolated KIWI engine…','');
-    const info=await normal.kiwiApiRequest(PREFIX+'/status',{timeoutMs:16000});
-    if(info.isolated!==true||info.realEngine!==true)throw new Error('The target is not a verified KIWI test runtime.');
-    if(info.ready!==true){showStatus('Test account needs provisioning','The sandbox database does not have its test-user record.');return;}
-    showStatus('Isolated KIWI engine connected',String(info.activeCourseCount)+' active test Course(s), '+String(info.upcomingClassCount)+' upcoming test Class(es).');
-    const data=await normal.kiwiApiRequest(PREFIX+'/courses');
-    const courses=Array.isArray(data)?data:Array.isArray(data?.courses)?data.courses:[];
-    picker.replaceChildren();
-    const valid=courses.filter(x=>x?.course_id&&matchesLinkedSource(x)&&x.lifecycle_state==='ACTIVE');
-    if(!valid.length){
-      picker.append(new Option('No matching rehearsal Course',''));
-      help.textContent=linkedSource.title+' is linked as a source. A matching active test Course must be prepared in the separate KIWI sandbox before the rehearsal can start.';
-      return;
+    if(!api.hasKiwiSession())throw new Error('Please sign in to KIWI with the administrator account.');
+    // This route verifies the currently authenticated user is a database admin
+    // AND the production Course belongs to that account and is active.
+    const binding=await api.kiwiApiRequest(PREFIX+'/source-course');
+    if(binding?.linked!==true||binding.execution!=='NORMAL_KIWI_CLASSROOM'
+       ||!binding.course?.courseId||binding.course.lifecycleState!=='ACTIVE')
+      throw new Error('KIWI could not verify the linked Classroom.');
+    const course=binding.course;
+    const response=await api.kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.courseId)+'/classes');
+    if(!Array.isArray(response?.upcoming)&&!Array.isArray(response?.classes))
+      throw new Error('The KIWI Classroom list is temporarily unavailable.');
+    sourceTitle.textContent=course.title||'KIWI Classroom';
+    sourceDetail.textContent=(course.subjectName||'Subject')+' · '+course.planCount+' Course Plan(s) · '+course.scheduledClassCount+' scheduled Class(es)';
+    if(!classroomSection){
+      // The same production Classroom module registers its section here.
+      window.KIWITeachingCourses=Object.freeze({
+        registerSection(section){if(section.id==='classroom')classroomSection=section;},
+        openSection(){},
+      });
+      window.KIWI_CLASSROOM_TEST_MODE='LIVE_COURSE';
+      await import('/teaching-classroom.js?v=20261009-direct-preview');
     }
-    valid.forEach(course=>picker.append(new Option((course.title||course.course_code||'Course')+' · '+(course.lifecycle_state||'Unknown state'),course.course_id)));
-    ready=true;
-    picker.disabled=false;openButton.disabled=false;
-  }catch(error){
-    const messages={
-      CLASSROOM_TEST_SOURCE_NOT_CONFIGURED:'No production course is selected for Test Classroom.',
-      CLASSROOM_TEST_SOURCE_NOT_FOUND:'The linked KIWI Course is no longer active or belongs to another account.',
-      CLASSROOM_TEST_SOURCE_UNAVAILABLE:'KIWI could not verify the source Course.',
-      CLASSROOM_TEST_NOT_CONFIGURED:'The isolated KIWI service is not connected in the primary server configuration.',
-      CLASSROOM_TEST_SANDBOX_UNAVAILABLE:'The isolated KIWI engine is offline or cannot be reached.',
-      CLASSROOM_TEST_ISOLATION_UNVERIFIED:'Safety block: KIWI could not prove that this runtime uses a different database.',
-      CLASSROOM_TEST_USER_NOT_PROVISIONED:'A dedicated test user has not been provisioned in the isolated database.',
-      CLASSROOM_TEST_ADMIN_REQUIRED:'Only the authenticated KIWI admin account can use this feature.',
-      CLASSROOM_TEST_AUTH_UNAVAILABLE:'KIWI could not verify the admin role against the account database.',
-    };
-    if(!linkedSource){sourceTitle.textContent='Source Course unavailable';sourceDetail.textContent=messages[error?.code]||'KIWI could not verify the selected Course.';}
-    showStatus('Test Classroom unavailable',(messages[error?.code]||String(error?.message||'Sandbox unavailable')).slice(0,240));
-    picker.replaceChildren(new Option('No verified sandbox connection',''));
-  }
+    if(typeof classroomSection?.render!=='function')throw new Error('KIWI Classroom interface could not load.');
+    panel.hidden=false;
+    await classroomSection.render({
+      course:{course_id:course.courseId,title:course.title,lifecycle_state:'ACTIVE'},
+      container:mount,
+      adminPreview:true,
+    });
+    status.textContent='Connected to existing KIWI Classroom · Read-only preview available';
+  }catch(error){showProblem(error);}
+  finally{refreshButton.disabled=false;loading=false;}
 }
-openButton.addEventListener('click',async()=>{
-  if(!ready||!picker.value||!classroomSection)return;
-  try {
-    const data=await normal.kiwiApiRequest(PREFIX+'/courses');
-    const courses=Array.isArray(data)?data:Array.isArray(data?.courses)?data.courses:[];
-    const course=courses.find(x=>String(x.course_id)===picker.value&&x.lifecycle_state==='ACTIVE'&&matchesLinkedSource(x));
-    if(!course)return;
-    mount.replaceChildren();
-    await classroomSection.render({course,container:mount});
-  } catch(error) {showStatus('Course unavailable',String(error?.message||'Unable to load').slice(0,200));}
-});
-document.getElementById('check-again').addEventListener('click',()=>void check());
-if(!normal.hasKiwiSession()){
-  showStatus('Admin sign-in required','Sign in to KIWI with your admin account and return to this page.');
-  picker.replaceChildren(new Option('Admin session required',''));
-}else await check();
+refreshButton.addEventListener('click',()=>void load());
+void load();
