@@ -32,3 +32,18 @@ The isolated real-engine gateway introduced in PR #316 remains as a dormant opti
 - Preview before opening is GET-only and read-only; no attendance JOIN or controller mutation.
 - Real Class entry remains blocked until scheduled start and follows KIWI D11/D14.
 - Standard student Classroom behavior and menu remain unchanged.
+
+
+## Admin sequential test reviews (2026-10-09)
+
+The Admin Test Classroom adds a guided **lesson-by-lesson walkthrough** over the **same KIWI D14 Class list and read-only Classroom**. Its source remains the existing active, admin-owned PHY101 Course.
+
+- **Join test review**: POST to the admin-only walkthrough progress endpoint to register a test-only `IN_PROGRESS` review, then open the real Class in `reviewOnly=true` mode. This does **not** call `POST /classroom/enter`.
+- **Complete test review → next**: persist a `REVIEWED` test marker, then open the next Class preview automatically. The API rejects out-of-order or unstarted reviews; completion is self-reported, not an academic claim.
+- **Resume**: a partially reviewed class remains the active test step after refreshing or changing devices.
+- **Restart walkthrough**: after explicit confirmation, delete only test-progress rows.
+- **Join real Class**: offered only when the genuine D14 `can_enter` gate is true, and explicitly warns before triggering real join/attendance.
+
+The backend uses `classroomService.listClasses` for authoritative class ordering and approved timetable filtering, including schedule-version fencing. The separate `teaching_runtime.admin_classroom_walkthroughs` table persists *only admin review state*, with no D11 session, Board, teacher message, attendance, grade, or timetable writes. The admin router verifies the live account role on every request and the Course's ownership. Review mutations are serialised by a transaction-scoped advisory lock.
+
+**Required migration:** `migrations/20261009_admin_classroom_walkthrough_progress.sql` must be applied before enabling the UI. Both production and KIWI Teaching Integration should have matching schema. `REVIEWED` must never be surfaced as `CLASS_CLOSED` or consumed by academic workflows. Future classes may have no generated Board scenes until their real lesson starts; the preview is not a fake AI teaching run.

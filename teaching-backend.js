@@ -225,7 +225,7 @@ function createTeachingRouter({
   // The primary instance proxies ONLY the real Classroom routes to a verified,
   // different-database test instance; no academic write is made here.
   if(env.KIWI_CLASSROOM_TEST_INSTANCE!=='true'&&typeof query==='function'){
-    router.use('/admin/classroom-test',createAdminClassroomTestRouter({query,env}));
+    router.use('/admin/classroom-test',createAdminClassroomTestRouter({query,withTransaction,classroomService:foundation.d14?.service||null,env}));
   }
 
   router.get('/status', (req, res) => {
