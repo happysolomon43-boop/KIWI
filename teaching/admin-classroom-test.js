@@ -37,6 +37,19 @@ function matchesKey(provided, configured) {
   const lhs = Buffer.from(provided), rhs = Buffer.from(configured);
   return lhs.length === rhs.length && crypto.timingSafeEqual(lhs, rhs);
 }
+function sandboxSurfaceGate(env = process.env) {
+  return function blockNonClassroomSandboxRoutes(req,res,next) {
+    if(env.KIWI_CLASSROOM_TEST_INSTANCE!=='true')return next();
+    res.setHeader('Cache-Control','no-store');
+    const path=req.path||'';
+    const attest=path==='/api/teaching/internal/classroom-test/attest'&&req.method==='GET';
+    const classroom=path.startsWith('/api/teaching')
+      && ALLOWED.some(([method,pattern])=>method===req.method&&pattern.test(path.slice('/api/teaching'.length)));
+    if(!(attest||classroom) || !matchesKey(req.headers[KEY_HEADER],env.KIWI_CLASSROOM_TEST_SHARED_KEY))
+      return res.status(404).json({code:'CLASSROOM_TEST_NOT_FOUND'});
+    next();
+  };
+}
 function testInstanceGate(env = process.env) {
   return function classroomTestInstanceGate(req, res, next) {
     if (env.KIWI_CLASSROOM_TEST_INSTANCE !== 'true') return next();
@@ -170,4 +183,4 @@ function createAdminClassroomTestRouter({query,env=process.env,fetchImpl=globalT
   });
   return router;
 }
-module.exports={fingerprint,matchesKey,sandboxConfiguration,testInstanceGate,createAttestationHandler,createAdminClassroomTestRouter,ALLOWED};
+module.exports={fingerprint,matchesKey,sandboxConfiguration,sandboxSurfaceGate,testInstanceGate,createAttestationHandler,createAdminClassroomTestRouter,ALLOWED};
