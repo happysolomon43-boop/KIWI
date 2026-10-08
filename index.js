@@ -125,6 +125,7 @@ const teachingClassRuntimeRecovery = createD11RuntimeRecovery({
   intervalMs:120000,logger:console,
 });
 const teachingD31Release = createD31ReleaseIntelligence({
+  visualAI: ai,
   runtimePlatform: teachingRuntimePlatform,
   query,
   randomUUID,
@@ -22665,6 +22666,12 @@ try {
 await runSchemaMigrations();
 try {
   await _aiRuntime.initialize();
+const classroomVisualCapabilities = ai.capabilityStatus();
+console.info('[KIWI Classroom visuals] configured capabilities:', JSON.stringify({
+  imageGeneration: Boolean(classroomVisualCapabilities.imageGeneration?.configured),
+  diagramRender: Boolean(classroomVisualCapabilities.diagramRender?.configured),
+}));
+
 } catch (e) {
   console.error('[KIWI AI] Orchestrator initialization failed; AI requests paused and automatic recovery scheduled:', e.message);
 }

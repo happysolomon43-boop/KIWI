@@ -165,7 +165,7 @@ async function parseResponse(response, endpoint) {
   throw error;
 }
 
-async function requestWithSession(endpoint, requestOptions, timeoutMs) {
+async function requestWithSession(endpoint, requestOptions, timeoutMs, responseParser=parseResponse) {
   const effectiveTimeoutMs = requestTimeoutFor(endpoint, timeoutMs);
   let response = await fetchWithTimeout(
     `${config.apiBaseUrl}${endpoint}`,
@@ -185,7 +185,7 @@ async function requestWithSession(endpoint, requestOptions, timeoutMs) {
     }
   }
 
-  return parseResponse(response, endpoint);
+  return responseParser(response, endpoint);
 }
 
 async function kiwiApiRequest(endpoint, options = {}) {
@@ -230,6 +230,18 @@ async function kiwiApiRawRequest(endpoint, options = {}) {
   };
 
   return requestWithSession(endpoint, requestOptions, options.timeoutMs);
+}
+
+// Private assets use the same session refresh and timeout handling as JSON.
+async function kiwiApiBlobRequest(endpoint, options={}) {
+  if(typeof endpoint!=='string'||!/^\/teaching\/classes\/[^/]+\/classroom\/assets\/[^/]+$/.test(endpoint))throw new TypeError('Expected a private Classroom asset endpoint.');
+  const accessToken=token('kiwi_auth_token');
+  return requestWithSession(endpoint,{method:'GET',headers:{Accept:'image/png,image/jpeg,image/svg+xml',...(accessToken?{Authorization:`Bearer ${accessToken}`}:{})},...(options.signal?{signal:options.signal}:{})},options.timeoutMs,async(response,path)=>{
+    if(!response.ok)return parseResponse(response,path);
+    const mime=(response.headers.get('Content-Type')||'').split(';')[0];
+    if(!['image/png','image/jpeg','image/svg+xml'].includes(mime))throw new Error('Unsupported Classroom visual.');
+    return response.blob();
+  });
 }
 
 function hasKiwiSession() {
@@ -313,6 +325,7 @@ function loadUnifiedUploadAssets() {
 global.KIWI_API_CLIENT = Object.freeze({
   kiwiApiRequest,
   kiwiApiRawRequest,
+  kiwiApiBlobRequest,
   hasKiwiSession,
 });
 

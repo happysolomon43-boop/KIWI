@@ -258,7 +258,10 @@ function createCapabilityRuntime({
     seed = null,
     metadata = {},
     signal = null,
+    beforeAttempt = null,
   } = {}) {
+    if(signal?.aborted)throw signal.reason;
+    if(typeof beforeAttempt==='function')await beforeAttempt();
     const model = capabilityModel(AI_CAPABILITIES.IMAGE_GENERATION);
     const request = createImageGenerationRequest({ prompt, altText, steps, seed, metadata });
     const cacheKey = imageGenerationCacheKey(request, model.id);
@@ -280,6 +283,8 @@ function createCapabilityRuntime({
     for (const credential of slots) {
       const startedAt = Date.now();
       try {
+        if(signal?.aborted)throw signal.reason;
+        if(typeof beforeAttempt==='function')await beforeAttempt();
         const result = await adapter.generateImage({
           credential,
           modelId: model.id,
@@ -326,7 +331,10 @@ function createCapabilityRuntime({
     fallbackText = null,
     metadata = {},
     signal = null,
+    beforeAttempt = null,
   } = {}) {
+    if(signal?.aborted)throw signal.reason;
+    if(typeof beforeAttempt==='function')await beforeAttempt();
     const model = capabilityModel(AI_CAPABILITIES.DIAGRAM_RENDER);
     const request = createDiagramRenderRequest({
       diagramType,
@@ -355,6 +363,8 @@ function createCapabilityRuntime({
 
     const startedAt = Date.now();
     try {
+      if(signal?.aborted)throw signal.reason;
+      if(typeof beforeAttempt==='function')await beforeAttempt();
       const result = await adapter.renderDiagram({
         request,
         timeoutMs: diagramTimeoutMs,

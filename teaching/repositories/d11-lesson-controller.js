@@ -1,4 +1,5 @@
 'use strict';
+const {enqueueInstructionUsing}=require('../d14/instruction-event');
 
 const crypto = require('node:crypto');
 const { buildClosureFactPack } = require('../d11/contracts');
@@ -1095,6 +1096,7 @@ function createD11LessonControllerRepository({
         academic_penalty_created:false,
       },
     });
+    await enqueueInstructionUsing(tx,outboxStore,inserted.rows[0]);
     return Object.freeze({ session:inserted.rows[0], inserted:true });
   }
 
@@ -1166,6 +1168,7 @@ function createD11LessonControllerRepository({
       fromState:session.instructional_substate,toState,reason,sourceEventRef,idempotencyKey,
       safeMetadata:{...safeMetadata,resume_state:resumeState || null},
     });
+    await enqueueInstructionUsing(tx,outboxStore,next);
     return Object.freeze({ previous:session, session:next });
   }
 

@@ -23,6 +23,7 @@ const METHOD_BY_ADAPTER = Object.freeze({
   d12Intelligence: 'evaluateResponse',
   d13Intelligence: 'interpretEvidence',
   d14HelpIntelligence: 'decide',
+  d14LessonIntelligence: 'decide',
   d16Intelligence: 'generateHomework',
   d17Intelligence: 'planBlueprint',
 });

@@ -8,6 +8,7 @@ const { createD12Intelligence } = require('../d12/intelligence');
 const { createD13Intelligence } = require('../d13/intelligence');
 const { createD16Intelligence } = require('../d16/intelligence');
 const { createD17Intelligence } = require('../d17/intelligence');
+const {createD14LessonIntelligence}=require('../d14/lesson-intelligence');
 const { createD14HelpIntelligence } = require('../d14/help-intelligence');
 const { resolveOwnerReleaseAuthorization } = require('./owner-release-override');
 const { createD31ReleaseOrchestrator } = require('./release-orchestrator');
@@ -20,6 +21,7 @@ const ADAPTER_KEYS = Object.freeze([
   'd12Intelligence',
   'd13Intelligence',
   'd14HelpIntelligence',
+  'd14LessonIntelligence',
   'd16Intelligence',
   'd17Intelligence',
 ]);
@@ -38,7 +40,7 @@ function assertCentralBoundary(runtimePlatform) {
   return boundary;
 }
 
-function createD31ReleaseIntelligence({ runtimePlatform, query, randomUUID, env = process.env } = {}) {
+function createD31ReleaseIntelligence({ runtimePlatform, query, randomUUID, env = process.env, visualAI = null } = {}) {
   const authorization = resolveOwnerReleaseAuthorization(env);
   if (!authorization.enabled) {
     return Object.freeze({
@@ -50,21 +52,23 @@ function createD31ReleaseIntelligence({ runtimePlatform, query, randomUUID, env 
 
   assertCentralBoundary(runtimePlatform);
   const orchestrator = createD31ReleaseOrchestrator({ runtimePlatform, query, randomUUID });
+  const visualCapabilities=()=>{const s=visualAI?.capabilityStatus?.()||{};return {imageGeneration:Boolean(s.imageGeneration?.configured),diagramRender:Boolean(s.diagramRender?.configured),supportedDiagramTypes:s.diagramRender?.supportedDiagramTypes||[]};};
   const intelligence = Object.freeze({
+    d14LessonIntelligence:createD14LessonIntelligence({orchestrator,visualCapabilities}),
     d07Intelligence: createD07Intelligence({ orchestrator }),
     d08Intelligence: createD08Intelligence({ orchestrator }),
     d09Intelligence: createD09Intelligence({ orchestrator }),
     d11Intelligence: createD11Intelligence({ orchestrator }),
     d12Intelligence: createD12Intelligence({ orchestrator }),
     d13Intelligence: createD13Intelligence({ orchestrator }),
-    d14HelpIntelligence: createD14HelpIntelligence({ orchestrator }),
+    d14HelpIntelligence: createD14HelpIntelligence({ orchestrator,visualCapabilities }),
     d16Intelligence: createD16Intelligence({ orchestrator }),
     d17Intelligence: createD17Intelligence({ orchestrator }),
   });
 
   return Object.freeze({
     authorization,
-    intelligence,
+    intelligence:Object.freeze({...intelligence,d14VisualAI:visualAI}),
     enabledAdapterKeys: ADAPTER_KEYS,
   });
 }

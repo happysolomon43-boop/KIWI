@@ -1,5 +1,6 @@
 'use strict';
 
+const {normalizeVisualIntent,VISUAL_INSTRUCTION}=require('./visual-intent');
 const CAPABILITY='teaching.pedagogy.natural_teacher_explanation_generation';
 const DECISIONS=Object.freeze(new Set(['ANSWER_NOW','DEFER','DECLINE']));
 const MAX_ANSWER=1800;
@@ -17,10 +18,13 @@ function normalizeProposal(output) {
   if(value.decision==='DECLINE' && reason.length<8)return null;
   if(value.decision==='DEFER' && (!Number.isInteger(delayMinutes)||delayMinutes<1||delayMinutes>3))return null;
   if(value.decision!=='ANSWER_NOW'&&teacherMessage)return null;
-  return Object.freeze({decision:value.decision,teacherMessage,reason:reason||null,delayMinutes:value.decision==='DEFER'?delayMinutes:null});
+  let visualRequest=null;
+  try{visualRequest=normalizeVisualIntent(value.visualRequest);}catch{return null;}
+  if(visualRequest&&value.decision!=='ANSWER_NOW')return null;
+  return Object.freeze({...(visualRequest?{visualRequest}:{}),decision:value.decision,teacherMessage,reason:reason||null,delayMinutes:value.decision==='DEFER'?delayMinutes:null});
 }
 
-function raiseHandRequest({studentId,classId,helpRequest,context}) {
+function raiseHandRequest({studentId,classId,helpRequest,context,visualCapabilities=null}) {
   const {classRow,session,plan}=context;
   if(!classRow||!session||!helpRequest?.interaction_id)throw new TypeError('Live, authenticated Class context and raised-hand request required.');
   const controllerVersion=String(session.state_version);
@@ -55,15 +59,17 @@ function raiseHandRequest({studentId,classId,helpRequest,context}) {
       review_needed_field:'reviewNeeded',
       state_bearing_fields:['decision'],
       student_facing_field:'teacherMessage',
-      declared_fields:['decision','teacherMessage','reason','delayMinutes','reviewNeeded'],
+      declared_fields:['decision','teacherMessage','reason','delayMinutes','reviewNeeded','visualRequest'],
       validate:async(value)=>{const p=normalizeProposal(value);return p?{ok:true,value:p}:{ok:false,reason:'D14_HELP_SCHEMA_INVALID'};},
     },
     contextSpec:{
       authoritative_refs:[{ref:'class:'+classId},...(context.blueprint?.blueprint_state==='VALIDATED'?[{ref:'lesson-blueprint:'+context.blueprint.lesson_blueprint_id}]:[]),...(plan?.course_plan_id?[{ref:'course-plan:'+plan.course_plan_id}]:[])],
+      provenance_refs:[{ref:'classroom-board:'+classId}],
       untrusted_refs:[{ref:'student-question:'+helpRequest.interaction_id}],
     },
     academicInput:{
-      instruction:'Classify whether the untrusted student question is a relevant request for help with the current lesson. Return JSON with exactly decision (ANSWER_NOW, DEFER or DECLINE), teacherMessage, reason, delayMinutes. ANSWER_NOW: short clear explanation grounded in supplied current Class, with an optional gentle check question; never give direct answers to assessed or graded work. DEFER: when the timing interrupts an independent activity, return 1-3 minutes and explain what to continue doing. DECLINE: for unrelated, abusive or unsafe requests, provide a respectful reason and redirect to the lesson. Do not invent current lesson facts. If lesson evidence is insufficient, DEFER rather than invent.',
+      instruction:'Classify whether the untrusted student question is a relevant request for help with the current lesson. Return JSON with decision (ANSWER_NOW, DEFER or DECLINE), teacherMessage, reason, delayMinutes, reviewNeeded and optional visualRequest. ANSWER_NOW: short clear explanation grounded in supplied current Class, with an optional gentle check question; never give direct answers to assessed or graded work. DEFER: when the timing interrupts an independent activity, return 1-3 minutes and explain what to continue doing. DECLINE: for unrelated, abusive or unsafe requests, provide a respectful reason and redirect to the lesson. Do not invent current lesson facts. If lesson evidence is insufficient, DEFER rather than invent. '+VISUAL_INSTRUCTION,
+      visual_capabilities:visualCapabilities||{imageGeneration:false,diagramRender:false,supportedDiagramTypes:[]},
       class_id:classId,
       class_mode:String(session.instructional_substate),
       active_learning_unit_id:session.progress_state?.current_learning_unit_ref||null,
@@ -76,11 +82,11 @@ function raiseHandRequest({studentId,classId,helpRequest,context}) {
   };
 }
 
-function createD14HelpIntelligence({orchestrator}={}) {
+function createD14HelpIntelligence({orchestrator,visualCapabilities=()=>null}={}) {
   if(!orchestrator||typeof orchestrator.execute!=='function')throw new TypeError('D14 help intelligence requires qualified D05 orchestrator.');
   return Object.freeze({
     async decide({studentId,classId,helpRequest,context}) {
-      const result=await orchestrator.execute(raiseHandRequest({studentId,classId,helpRequest,context}));
+      const result=await orchestrator.execute(raiseHandRequest({studentId,classId,helpRequest,context,visualCapabilities:visualCapabilities()}));
       if(!result.accepted||!result.provisional||!result.validatedResult?.output) {
         const error=new Error('Teacher could not validate a reply for this raised hand.');
         error.code='TEACHING_D14_HELP_AI_UNAVAILABLE';error.retryable=true;throw error;
