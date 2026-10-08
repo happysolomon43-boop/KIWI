@@ -457,6 +457,15 @@ function createD11LessonControllerRepository({
   } = {}) {
     const classRow = await loadClassBase(studentId, classId, tx, true);
     if (!classRow) return null;
+    // EVERY caller, including live recovery and model tasks racing a Course
+    // cancellation, must obey the same current-parent authority gate. A caller
+    // without an expected timetable ref is not exempt from this check.
+    if (classRow.lifecycle_state!=='SCHEDULED'
+      ||classRow.course_lifecycle_state!=='ACTIVE'
+      ||classRow.source_timetable_state!=='APPROVED'
+      || !Number.isFinite(Date.parse(classRow.scheduled_end_at))
+      ||(Date.parse(classRow.scheduled_end_at)<=clock().getTime()
+        && !await getSession(studentId,classId,tx,false))) return null;
     // Final locked eligibility check: a timetable may have been superseded
     // after the fanout event was published. Never create new preparation or due
     // events for a cancelled, old, already-started, or elapsed Class.
