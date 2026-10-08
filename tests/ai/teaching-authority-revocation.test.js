@@ -98,7 +98,7 @@ test('D31 cancels a Course model run before model inference when a committed ver
     }
   };
   const coordinator=createD31ReleaseOrchestrator({runtimePlatform:platform,query,randomUUID:()=> 'cancellation-operation'});
-  const request=curriculumAuditRequest({course,sources:[]});
+  const request=curriculumAuditRequest({course,sources:[{source_content_item_id:'source1',student_id:'student1',course_id:'course1',source_kind:'PRIMARY_KIWI_SUBJECT',source_ref:'subject:1:card:1',content_summary:'Force and acceleration material'}]});
   const result=await coordinator.execute(request);
   assert.equal(result.cancelled,true);
   assert.equal(aiCalls,0);
