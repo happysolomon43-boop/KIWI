@@ -169,7 +169,7 @@ function stage4(course,data,container,reload) {
   });
   container.append(card);
 }
-function stage5(course,data,container,reload) {
+function stage5(course,data,container,reload,onQueued) {
   const card=el('section','teaching-d09-card');
   card.append(el('div','teaching-kicker','Timetable'),el('h3','','Shared Semester timetable'),el('p','','Proposed timetable and feasibility are Semester-wide: KIWI schedules all current Course Plans together against the same availability, protected time and recovery capacity. This Course view shows only its slots, but every rebuild creates one coordinated Semester timetable version.'));
   const postActivation=data.semesterHasActivatedCourses===true||!['DRAFT','READY','PLANNING','SETUP'].includes(String(course.lifecycle_state||'DRAFT'));
@@ -197,21 +197,98 @@ function stage5(course,data,container,reload) {
   });
   card.append(slotList);
   const proposalMessage=el('div');proposalMessage.setAttribute('role','status');proposalMessage.setAttribute('aria-live','polite');card.append(proposalMessage);
-  propose.addEventListener('click',async()=>{propose.disabled=true;proposalMessage.textContent='Starting the shared Semester timetable build in the background…';proposalMessage.className='teaching-message';try{await kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.course_id)+'/timetable/propose',{method:'POST',body:{}});proposalMessage.textContent='Timetable build started in the background. You can keep using KIWI while it finishes.';proposalMessage.dataset.kind='success';const monitor=async()=>{try{const review=await fetchReview(course.course_id),build=review.backgroundBuild;if(build?.active){window.setTimeout(monitor,3000);return;}if(build&&['CANCELLED','FAILED'].includes(String(build.status||'').toUpperCase())){proposalMessage.textContent=scheduleActionError({code:build.lastErrorCode},'The timetable could not be rebuilt.');proposalMessage.dataset.kind='error';propose.disabled=false;return;}await reload(review,{text:'Semester timetable rebuilt successfully.',kind:'success'});}catch(error){proposalMessage.textContent=scheduleActionError(error,'KIWI could not check the timetable build.');proposalMessage.dataset.kind='error';propose.disabled=false;}};window.setTimeout(monitor,2500);}catch(error){proposalMessage.textContent=scheduleActionError(error,'Semester timetable build could not be started.');proposalMessage.className='teaching-message';proposalMessage.dataset.kind='error';propose.disabled=false;}});
+  propose.addEventListener('click',async()=>{
+    propose.disabled=true;
+    proposalMessage.textContent='Submitting the Semester timetable rebuild…';
+    proposalMessage.className='teaching-message';
+    try{
+      const accepted=await kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.course_id)+'/timetable/propose',{method:'POST',body:{}});
+      if(!accepted?.accepted&&!accepted?.background)throw Object.assign(new Error('The server did not acknowledge a background rebuild.'),{code:'TEACHING_D09_BUILD_NOT_ACKNOWLEDGED'});
+      proposalMessage.textContent=accepted.joinedExisting?'A matching timetable build is already running.':'Build queued. The existing timetable remains visible while KIWI computes the replacement.';
+      proposalMessage.dataset.kind='success';
+      onQueued?.({jobId:accepted.jobId||null,unknown:false});
+    }catch(error){
+      // A network timeout cannot tell us whether an idempotent job was accepted.
+      // Check the authoritative job status; never automatically submit a
+      // duplicate or claim the existing timetable was deleted.
+      if(error?.code==='KIWI_API_TIMEOUT'){
+        proposalMessage.textContent='Request timed out. Checking KIWI for the rebuild job; the previous timetable has not been deleted.';
+        proposalMessage.dataset.kind='warning';
+        onQueued?.({unknown:true});
+      }else{
+        proposalMessage.textContent=scheduleActionError(error,'Semester timetable build could not be started.');
+        proposalMessage.dataset.kind='error';
+        propose.disabled=false;
+      }
+    }
+  });
   container.append(card);
 }
 async function renderSchedule({course,container}) {
   installStyles(); const page=el('div','teaching-d09-page'),live=el('div');live.setAttribute('role','status');live.setAttribute('aria-live','polite'); container.replaceChildren(page);
-  let buildPollTimer=null;
+  let buildPollTimer=null,buildGeneration=0,lastRendered=null;
+  function queueStatusPoll({jobId=null,unknown=false}={}){
+    if(buildPollTimer!=null)window.clearTimeout(buildPollTimer);
+    const generation=++buildGeneration;
+    let attempt=0;
+    const poll=async()=>{
+      if(!page.isConnected||generation!==buildGeneration)return;
+      try{
+        const review=await fetchReview(course.course_id);
+        if(!page.isConnected||generation!==buildGeneration)return;
+        const build=review.backgroundBuild;
+        if(unknown&&!build){
+          live.textContent='The request outcome could not be confirmed. The previous timetable is preserved; use Refresh before trying another build.';
+          live.dataset.kind='warning';return;
+        }
+        if(jobId&&build?.eventId!==jobId&&build?.active){
+          live.textContent='A newer Semester build is running. Waiting for its authoritative result.';
+        }else if(build?.active){
+          live.textContent='Timetable build running in the background. Existing course and availability details remain editable.';
+        }else if(build&&['FAILED','CANCELLED'].includes(String(build.status||'').toUpperCase())){
+          live.textContent=scheduleActionError({code:build.lastErrorCode},'The build ended without replacing the timetable. Your previous records are preserved.');
+          live.dataset.kind='error';
+          return;
+        }else if(build&&build.status==='PUBLISHED'){
+          await refresh(review,{text:'Timetable rebuild finished. Check its proposal/approval status below.',kind:'success'});
+          return;
+        }else{
+          live.textContent='No current build was found; your previous timetable remains unchanged.';
+          live.dataset.kind='warning';return;
+        }
+        live.className='teaching-message';
+        buildPollTimer=window.setTimeout(poll,Math.min(12000,4000+attempt++*1000));
+      }catch(error){
+        if(!page.isConnected||generation!==buildGeneration)return;
+        live.textContent='KIWI could not check the rebuild yet. Retrying without erasing your current schedule.';
+        live.className='teaching-message';live.dataset.kind='warning';
+        buildPollTimer=window.setTimeout(poll,10000);
+      }
+    };
+    buildPollTimer=window.setTimeout(poll,2500);
+  }
   function renderData(data,notice=null){
     if(buildPollTimer!=null){window.clearTimeout(buildPollTimer);buildPollTimer=null;}
-    const grid=el('div','teaching-d09-grid'),left=el('div'),right=el('div');grid.append(left,right);page.replaceChildren(live,grid);stage4(course,data,left,refresh);stage5(course,data,right,refresh);
-    const text=typeof notice==='string'?notice:notice?.text||'';live.textContent=text;live.className=text?'teaching-message':'';delete live.dataset.kind;if(text&&notice?.kind)live.dataset.kind=notice.kind;
-    if(data.backgroundBuild?.active)buildPollTimer=window.setTimeout(()=>{if(page.isConnected)refresh(null,{text:'Timetable build is still running in the background.'});},5000);
+    ++buildGeneration;
+    lastRendered=data;
+    const grid=el('div','teaching-d09-grid'),left=el('div'),right=el('div');
+    grid.append(left,right);page.replaceChildren(live,grid);
+    stage4(course,data,left,refresh);
+    stage5(course,data,right,refresh,queueStatusPoll);
+    const text=typeof notice==='string'?notice:notice?.text||'';
+    live.textContent=text;live.className=text?'teaching-message':'';delete live.dataset.kind;
+    if(text&&notice?.kind)live.dataset.kind=notice.kind;
+    // Poll only job status. Do not rebuild the student's availability editor
+    // every five seconds: that previously caused blinking and lost input.
+    if(data.backgroundBuild?.active)queueStatusPoll({jobId:data.backgroundBuild.eventId});
   }
   async function refresh(prefetched=null,notice=null){
-    try { renderData(prefetched||await fetchReview(course.course_id),notice); }
-    catch(error){page.replaceChildren(el('div','teaching-message',error.message||'Scheduling could not be loaded.'));page.firstElementChild.dataset.kind='error';}
+    try{renderData(prefetched||await fetchReview(course.course_id),notice);}
+    catch(error){
+      if(lastRendered){live.textContent=scheduleActionError(error,'Scheduling refresh failed. Existing information is preserved.');live.className='teaching-message';live.dataset.kind='error';return;}
+      page.replaceChildren(el('div','teaching-message',error.message||'Scheduling could not be loaded.'));
+      page.firstElementChild.dataset.kind='error';
+    }
   }
   showScheduleLoading(page,'Loading Semester availability and timetable');
   await refresh();
@@ -304,7 +381,7 @@ async function renderCalendar() {
   meta.append(el('span','teaching-d09-calendar-zone',`Times shown in ${zone}`),refreshButton,back);head.append(copy,meta);
   const updated=el('div','teaching-d09-calendar-refresh');updated.setAttribute('role','status');updated.setAttribute('aria-live','polite');
   const content=el('div','teaching-d09-calendar-content');page.append(head,updated,content);main.replaceChildren(page);
-  let loading=false,hasData=false,historyOpen=false;
+  let loading=false,hasData=false,historyOpen=false,lastCalendarSignature=null;
   async function refresh(){
     if(!page.isConnected||loading)return;
     loading=true;refreshButton.disabled=true;
@@ -325,7 +402,9 @@ async function renderCalendar() {
       }
       if(!events.length&&!proposals.length)body.append(el('div','teaching-empty','No Teaching timetable items yet.'));
       if(data.issues?.length)body.append(el('div','teaching-message','Some calendar information is temporarily unavailable. The displayed items are still sourced from authoritative records.'));
-      content.replaceChildren(body);hasData=true;updated.textContent='Calendar updated · '+new Date().toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});
+      const signature=JSON.stringify({events,proposals,issues:data.issues||[]});
+      if(signature!==lastCalendarSignature){content.replaceChildren(body);lastCalendarSignature=signature;}
+      hasData=true;updated.textContent='Calendar updated · '+new Date().toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});
     }catch(error){if(!page.isConnected)return;updated.textContent='Calendar refresh failed. You can retry without leaving this page.';if(!hasData)content.replaceChildren(el('div','teaching-message',error.message||'Calendar could not be loaded.'));}
     finally{loading=false;refreshButton.disabled=false;}
   }
@@ -333,7 +412,7 @@ async function renderCalendar() {
   await refresh();
   const onVisible=()=>{if(page.isConnected&&document.visibilityState==='visible')refresh();};
   document.addEventListener('visibilitychange',onVisible);window.addEventListener('focus',onVisible);
-  const timer=window.setInterval(()=>{if(!page.isConnected){window.clearInterval(timer);document.removeEventListener('visibilitychange',onVisible);window.removeEventListener('focus',onVisible);return;}if(document.visibilityState==='visible')refresh();},30000);
+  const timer=window.setInterval(()=>{if(!page.isConnected){window.clearInterval(timer);document.removeEventListener('visibilitychange',onVisible);window.removeEventListener('focus',onVisible);return;}if(document.visibilityState==='visible')refresh();},90000);
 }
 courseSurface.registerSection({id:'schedule',label:'Schedule',order:30,render:renderSchedule,renderSummary});
 if(nav&&typeof nav.register==='function')nav.register({id:'calendar',label:'Calendar',description:'Classes and assessments in one timetable',icon:'◷',menuIcon:'calendar',onSelect:renderCalendar});

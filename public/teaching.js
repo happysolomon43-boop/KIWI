@@ -200,6 +200,16 @@ function suppressVercelToolbar() {
   });
 }
 
+function syncTeachingDockSelection() {
+  const dock=document.getElementById('teachingDock');
+  if(!dock)return;
+  const current=activeTeachingNavigationId||(['overview','course'].includes(activeTeachingView)?'courses':null);
+  dock.querySelectorAll('[data-nav-id]').forEach((button)=>{
+    const selected=button.dataset.navId===current;
+    button.dataset.active=selected?'true':'false';
+    if(selected)button.setAttribute('aria-current','page');else button.removeAttribute('aria-current');
+  });
+}
 function renderTeachingNavigation() {
   const shell = document.getElementById('teachingDockShell');
   const dock = document.getElementById('teachingDock');
@@ -258,6 +268,7 @@ function renderTeachingNavigation() {
     isMenu: true,
     onSelect: () => setMenuOpen(true, { restoreFocus: false }),
   });
+  syncTeachingDockSelection();
 }
 
 function registerTeachingNavigationItem(item) {
@@ -398,6 +409,7 @@ function menuIcon(kind) {
 }
 
 function renderSectionMenu() {
+  syncTeachingDockSelection();
   const nav = document.getElementById('teachingMenuFuture');
   if (!nav) return;
 
@@ -1055,9 +1067,15 @@ async function loadTeachingWorkspace() {
         teacher: detail.teacher || null,
       } : course;
     }));
-    renderTeachingNavigation();
+    // Course details hydrate silently. Replacing the entire active Course DOM
+    // after this optional response blurs inputs and causes visible flicker.
     renderSectionMenu();
-    renderActiveTeachingView();
+    if(activeTeachingView==='overview') renderActiveTeachingView();
+    else if(activeTeachingView==='course'){
+      const title=document.querySelector('.teaching-course-context__identity h1');
+      const course=getTeachingCourse(selectedTeachingCourseId);
+      if(title&&course)title.textContent=displayCourseName(course.title);
+    }
   });
 
   const restoredCourse = pendingTeachingLocation?.view === 'course'
