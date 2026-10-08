@@ -153,6 +153,8 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
       const published=await repository.publishTeacherTurn({
         studentId,classId,expectedControllerVersion:request.controller_version,
         message:result.teacherMessage,idempotencyKey:'d14-help-answer:'+helpRequestId,helpRequestId,
+        expectedBlueprintId:ctx.blueprint?.lesson_blueprint_id||null,
+        expectedBlueprintVersion:ctx.blueprint?.version_no==null?null:Number(ctx.blueprint.version_no),
       });
       return {accepted:true,status:'ANSWERED',helpRequestId,communicationId:published.communication_id};
     }catch(error){

@@ -117,7 +117,7 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
     }
     return current;
   }
-  async function publishTeacherTurn({studentId,classId,expectedControllerVersion,message,blocks=[],idempotencyKey,helpRequestId=null}){
+  async function publishTeacherTurn({studentId,classId,expectedControllerVersion,message,blocks=[],idempotencyKey,helpRequestId=null,expectedBlueprintId=null,expectedBlueprintVersion=null}){
     const {validateBlock}=require('../d14/board');
     if(typeof message!=='string'||!message.trim()||message.length>5000||!Array.isArray(blocks)||blocks.length>30)throw Object.assign(new Error('Teacher turn invalid.'),{code:'TEACHING_D14_TEACHER_TURN_INVALID',status:422});
     const safe=blocks.map(validateBlock);
@@ -128,6 +128,9 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
       const locked=await tx.query('select * from public.teaching_class_sessions where student_id=$1 and class_id=$2 for update',[studentId,classId]);const session=locked.rows[0];
       if(!session||session.lifecycle_state!=='ACTIVE'||Number(session.state_version)!==Number(expectedControllerVersion)||['ASSESSMENT','CLASSWORK','BREAK','INTERRUPTED'].includes(session.instructional_substate))throw Object.assign(new Error('Teacher turn targets stale or restricted Class state.'),{code:'TEACHING_D14_TEACHER_TURN_STALE',status:409});
       if(helpRequestId){
+        const {rows:currentBlueprintRows=[]}=await tx.query('select lesson_blueprint_id,version_no from public.teaching_lesson_blueprints where student_id=$1 and class_id=$2 order by version_no desc limit 1 for share',[studentId,classId]);
+        const currentBlueprint=currentBlueprintRows[0]||null;
+        if(String(currentBlueprint?.lesson_blueprint_id||'')!==String(expectedBlueprintId||'')||String(currentBlueprint?.version_no??'')!==String(expectedBlueprintVersion??''))throw Object.assign(new Error('Lesson blueprint changed before help could publish.'),{code:'TEACHING_D14_HELP_STALE',status:409});
         const {rows:helpRows=[]}=await tx.query("select * from public.teaching_classroom_help_requests where student_id=$1 and help_request_id=$2 and class_id=$3 for update",[studentId,helpRequestId,classId]);
         const help=helpRows[0];if(!help||help.status!=='PROCESSING'||help.class_session_id!==session.class_session_id||Number(help.controller_version)!==Number(session.state_version))throw Object.assign(new Error('Raised hand is stale or is no longer processing.'),{code:'TEACHING_D14_HELP_STALE',status:409});
       }

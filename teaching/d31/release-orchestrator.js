@@ -50,7 +50,12 @@ function createD31ReleaseReaders({query}={}) {
         query('select state_version,lifecycle_state from public.teaching_class_sessions where student_id=$1 and class_id=$2 order by created_at desc limit 1',[actorId,id])
       ]);
       const session=sessionRows.rows?.[0]||null;
+      const wantsBlueprint=Object.keys(envelope.preconditions||{}).some(key=>key.startsWith('lesson_blueprint_'));
+      const {rows:currentBlueprintRows=[]}=wantsBlueprint?await query('select lesson_blueprint_id,version_no from public.teaching_lesson_blueprints where student_id=$1 and class_id=$2 order by version_no desc limit 1',[actorId,id]):{rows:[]};
+      const currentBlueprint=currentBlueprintRows[0]||null;
       const fields={
+        lesson_blueprint_id:currentBlueprint?.lesson_blueprint_id||null,
+        lesson_blueprint_version:currentBlueprint?.version_no==null?null:String(currentBlueprint.version_no),
         course_lifecycle_state:course.lifecycle_state,
         course_state_version:String(course.state_version),
         class_schedule_version:String(classRow.schedule_version),

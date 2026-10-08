@@ -36,6 +36,8 @@ function raiseHandRequest({studentId,classId,helpRequest,context}) {
       course_plan_id:plan?.course_plan_id||null,
       course_plan_version:plan?.version_no==null?null:String(plan.version_no),
       controller_version:controllerVersion,
+      lesson_blueprint_id:context.blueprint?.lesson_blueprint_id||null,
+      lesson_blueprint_version:context.blueprint?.version_no==null?null:String(context.blueprint.version_no),
     },
     resultContract:{output_schema_id:'d14.raised_hand_triage',output_schema_version:'1',validator_ids:['schema','domain','current-state']},
     taskMode:'D14_RAISED_HAND_IN_CLASS_GUIDANCE',
