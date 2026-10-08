@@ -10,13 +10,13 @@ The primary KIWI account must have a **live database-verified admin role**. Mere
 
 ## Existing KIWI system execution path
 
-1. Admin opens Teaching → Menu → Test Classroom.
+1. Admin opens Teaching → Menu → Test Classroom. The backend verifies the configured live source Course belongs to the admin and remains ACTIVE. The page displays its title, subject, plan count and scheduled Class count as **read-only reference**.
 2. The primary KIWI backend authorizes the current account as admin against the live database.
 3. Before every request, the backend uses a server-held shared key to attest the isolated KIWI instance.
 4. The test KIWI instance must return its full real-engine identity and database identity fingerprint **different from production**. Matching database identity, missing key, wrong service or missing configuration returns 503.
 5. The gateway permits only an explicit allowlist of existing KIWI Teaching operations: Course Class listing, Classroom snapshot/private assets, enter, notes, classroom interactions/responses and D11 controller lifecycle operations.
 6. The actual **public/teaching-classroom.js** module renders the Classroom. It is not replaced with a mock; only the transport prefix changes.
-7. The test instance executes KIWI's normal D11/D14 repositories, Board, Workspace, real model routes and workers. The test user is selected on the server, never from browser input.
+7. The page accepts only an **active sandbox Course whose normalized title matches the linked source Course**. This is a UI selection guard, not content migration. The sandbox Course must separately be provisioned with the corresponding real Course Plan and learning units. The test instance executes KIWI's normal D11/D14 repositories, Board, Workspace, real model routes and workers. The test user is selected on the server, never from browser input.
 8. Test grades, notes, attendance, events and other writes remain in the isolated database.
 
 Real lesson timing, preparation, Class/Plan lineage, and official timetable state still apply. A Class cannot start early merely because it is in the simulator.
@@ -35,6 +35,7 @@ Isolated service server-side environment:
 - Required regular KIWI provider keys, AI release mode, runtime and worker configuration
 
 Primary service server-side environment:
+- KIWI_CLASSROOM_TEST_SOURCE_COURSE_ID — existing active owner-held Course ID; only the course's read-only metadata is queried in production
 - KIWI_CLASSROOM_TEST_ORIGIN — HTTPS origin of isolated KIWI backend
 - KIWI_CLASSROOM_TEST_SHARED_KEY — same shared key
 - KIWI_PUBLIC_ORIGIN — current production origin for same-origin rejection
@@ -52,3 +53,7 @@ The sandbox's Teaching router checks the server-held key and uses only the confi
 - Only then claim a production-ready simulator.
 
 An accelerated clock is **not** implemented by this gateway. A correct fast-forward mode would require coordinated backend clock injection into the scheduler, D02/D05 events, D11 and D14 and their workers. Merely advancing a browser countdown would be a false simulation.
+
+## Linked course state (2026-10-09)
+
+The initial selected live source is PHY101 (`ef94c6bf-7fa7-4932-a2c5-0fddf757de8f`). Its metadata binding cannot directly start a production class or copy its academic outcomes. To make the rehearsal usable, provision a corresponding test PHY101 Course/Plan/Class on the separate KIWI instance; this read-only binding intentionally does not relax the independent sandbox setup and attestation gate.
