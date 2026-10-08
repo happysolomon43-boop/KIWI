@@ -1,5 +1,6 @@
 const {kiwiApiRequest,kiwiApiBlobRequest}=window.KIWI_API_CLIENT||{};
 const courses=window.KIWITeachingCourses;
+const classroomTestMode=window.KIWI_CLASSROOM_TEST_MODE===true;
 if(typeof kiwiApiRequest!=='function'||!courses?.registerSection)throw new Error('Teaching Classroom requires the shared KIWI client and Course shell.');
 
 const $=(tag,className='',text=null)=>{const n=document.createElement(tag);if(className)n.className=className;if(text!==null)n.textContent=String(text);return n;};
@@ -78,7 +79,7 @@ async function controllerAction(path,body={}){
 }
 async function fetchAfterAction(){const data=await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(state.classId)}/classroom`);data._receivedAt=Date.now();if(!state.reviewOnly&&state.scene>=Math.max(0,(state.snapshot?.board?.length||0)-1))state.scene=Math.max(0,(data.board?.length||0)-1);state.snapshot=data;render();}
 async function open(classId,{reviewOnly=false}={}){
-  const opener=document.activeElement;close({restore:false});state.returnFocus=opener;state.classId=classId;state.reviewOnly=reviewOnly;state.host=$('div','tc-overlay');state.host.setAttribute('role','dialog');state.host.setAttribute('aria-modal','true');state.host.setAttribute('aria-label','KIWI Classroom');
+  const opener=document.activeElement;close({restore:false});state.returnFocus=opener;state.classId=classId;state.reviewOnly=reviewOnly;state.host=$('div','tc-overlay');state.host.setAttribute('role','dialog');state.host.setAttribute('aria-modal','true');state.host.setAttribute('aria-label',classroomTestMode?'KIWI Test Classroom — isolated':'KIWI Classroom');
   document.body.append(state.host);document.body.classList.add('tc-active');state.host.append(notice('Opening Classroom','Connecting to the current Class record…'));
   state.host.addEventListener('keydown',trapClassroomFocus);state.host.tabIndex=-1;state.host.focus();
   try{if(!reviewOnly)await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(classId)}/classroom/enter`,{method:'POST',body:{}});await fetchSnapshot();state.host.querySelector('h1')?.focus?.({preventScroll:true});state.interval=setInterval(updateClocks,1000);state.refresh=setInterval(()=>fetchSnapshot().catch(()=>{state.host?.querySelector('.tc-connection')?.replaceChildren($('span','','Reconnecting to Class…'));}),12000);}
@@ -105,8 +106,8 @@ function updateClocks(){
   const breakClock=state.host.querySelector('[data-clock="activity"]');if(breakClock){const target=s.controller?.breakEndsAt||s.controller?.progressState?.activity_ends_at;if(target)breakClock.textContent=`${duration(new Date(target).getTime()-now)} remaining`;}
 }
 function renderHeader(s){
-  const header=$('header','tc-header');const brand=add($('div','tc-brand'),$('span','tc-brand__mark','K'),$('span','','KIWI / TEACHING'));
-  const heading=$('h1','',s.identity.course_title);heading.tabIndex=-1;const identity=add($('div','tc-header__identity'),$('div','tc-eyebrow','LIVE CLASSROOM'),heading,$('p','',s.identity.teacher_name||'KIWI Teacher'));
+  const header=$('header','tc-header');const brand=add($('div','tc-brand'),$('span','tc-brand__mark','K'),$('span','',classroomTestMode?'KIWI / TEST CLASSROOM':'KIWI / TEACHING'));
+  const heading=$('h1','',s.identity.course_title);heading.tabIndex=-1;const identity=add($('div','tc-header__identity'),$('div','tc-eyebrow',classroomTestMode?'TEST CLASSROOM · ISOLATED':'LIVE CLASSROOM'),heading,$('p','',s.identity.teacher_name||'KIWI Teacher'));
   const mode=$('span','tc-mode',MODE[s.modeKey]||s.mode);mode.dataset.mode=s.modeKey;mode.setAttribute('role','status');mode.setAttribute('aria-live','polite');mode.setAttribute('aria-label',`Current Class mode: ${MODE[s.modeKey]||s.mode}`);
   const clocks=add($('div','tc-header__clocks'),add($('div','tc-clock'),$('small','','CLASS TIME'),$('strong','',`Ends ${when(s.class.scheduledEndAt)}`),$('span','','')));
   clocks.querySelector('span').dataset.clock='class';
@@ -119,7 +120,7 @@ function renderHeader(s){
     try{
       const result=await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(state.classId)}/interactions`,{method:'POST',body:{kind:'LEAVE',idempotencyKey:state.leaveRequestId}});
       const outcome=result?.attendance?.outcome||result?.attendance?.record?.outcome;
-      try{if(outcome)sessionStorage.setItem('kiwi_last_class_attendance',outcome);}catch{}
+      try{if(outcome&&!classroomTestMode)sessionStorage.setItem('kiwi_last_class_attendance',outcome);}catch{}
       close();
     }catch(error){
       leave.disabled=false;

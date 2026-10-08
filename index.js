@@ -41,6 +41,7 @@ const { isAIAvailabilityError } = require('./services/ai/errors');
 const { createShadowIntelligence, createReckoningEngine, createQuestionBank, createQuestionValidator, createAISemanticReviewer, createPreparationService, isAdaptiveReckoningQuestion, DELIVERY_E_RECKONING_CONFIG } = require('./services/reckoning');
 const { finalizeKsSnapshot } = require('./services/reckoning/ks-outcome');
 const { createTeachingRouter } = require('./teaching-backend');
+const { sandboxSurfaceGate } = require('./teaching/admin-classroom-test');
 const { createStudyImportRouter } = require('./study-import');
 const { createTeachingD05RuntimePlatform } = require('./teaching/runtime');
 const { createD11RuntimeRecoveryRepository } = require('./teaching/repositories/d11-runtime-recovery');
@@ -13530,6 +13531,11 @@ Return only the inscription.
 
 // ════════════════════════════════════════════════════════════════════════════
 const app = express();
+
+ // A Classroom test service is not a second public KIWI app. It accepts only
+ // the same D11/D14 routes through a server-keyed API, even if the production
+ // application has other routers or static files mounted.
+ app.use(sandboxSurfaceGate(process.env));
 
 const _corsOptions = {
   origin: true, // open to all origins
