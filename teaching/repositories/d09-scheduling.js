@@ -512,7 +512,18 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     const proposals=await query(`select s.*,co.title course_title,t.timetable_state,t.version_no timetable_version_no
       from public.teaching_timetable_slots s join public.teaching_timetable_versions t on t.timetable_version_id=s.timetable_version_id
       join public.teaching_courses co on co.course_id=s.course_id
-      where s.student_id=$1 and t.timetable_state in ('PROPOSED','EDITED_PROPOSAL') ${proposalFilters.length?'and '+proposalFilters.join(' and '):''}
+      where s.student_id=$1
+        and t.timetable_state in ('PROPOSED','EDITED_PROPOSAL')
+        and co.lifecycle_state in ('DRAFT','READY','PLANNING','SETUP')
+        and not exists (
+          select 1
+            from public.teaching_classes active_class
+           where active_class.student_id=s.student_id
+             and active_class.lifecycle_state not in ('CANCELLED','COMPLETED')
+             and active_class.scheduled_start_at < s.ends_at
+             and active_class.scheduled_end_at > s.starts_at
+        )
+        ${proposalFilters.length?'and '+proposalFilters.join(' and '):''}
       order by s.starts_at`,proposalParams);
     return {classes:classRows.rows||[],proposals:proposals.rows||[]};
   }

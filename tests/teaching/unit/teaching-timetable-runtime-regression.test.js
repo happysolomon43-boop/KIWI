@@ -48,3 +48,25 @@ test('Teaching typography disables synthetic stretched faces without global resc
   assert.doesNotMatch(source, /body\s+\*/);
   assert.doesNotMatch(source, /!important/);
 });
+
+
+test('Teaching startup does not block on redundant status or optional information hydration', () => {
+  const source = read('public/teaching.js');
+  const client = read('public/kiwi-api-client.js');
+
+  assert.doesNotMatch(source, /await kiwiApiRequest\('\/teaching\/status'\)/);
+  assert.match(source, /const informationRequest = kiwiApiRequest\('\/teaching\/information\/courses'\)/);
+  assert.match(source, /void informationRequest\.then/);
+  assert.match(client, /refreshAccessTokenInFlight/);
+  assert.match(client, /performAccessTokenRefresh\(\)[\s\S]*\.finally/);
+});
+
+test('Timetable build actions preserve the current view while background work starts', () => {
+  const modern = read('public/teaching-schedule-experience.js');
+  const legacy = read('public/teaching-d09.js');
+
+  assert.match(modern, /window\.setTimeout\(\(\)=>\{void reload/);
+  assert.match(legacy, /window\.setTimeout\(\(\)=>\{void reload/);
+  assert.doesNotMatch(modern, /await reload\(null,'Timetable build started/);
+  assert.doesNotMatch(legacy, /await reload\(null,\{text:'Timetable build started/);
+});

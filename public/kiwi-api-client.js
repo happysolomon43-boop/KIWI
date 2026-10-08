@@ -114,7 +114,9 @@ async function fetchWithTimeout(url, options = {}, timeoutMs = DEFAULT_TIMEOUT_M
   }
 }
 
-async function refreshAccessToken() {
+let refreshAccessTokenInFlight = null;
+
+async function performAccessTokenRefresh() {
   const refreshToken = token('kiwi_refresh_token');
   if (!refreshToken) return false;
 
@@ -140,6 +142,14 @@ async function refreshAccessToken() {
   } catch (_) {
     return false;
   }
+}
+
+async function refreshAccessToken() {
+  if (!refreshAccessTokenInFlight) {
+    refreshAccessTokenInFlight = performAccessTokenRefresh()
+      .finally(() => { refreshAccessTokenInFlight = null; });
+  }
+  return refreshAccessTokenInFlight;
 }
 
 async function parseResponse(response, endpoint) {

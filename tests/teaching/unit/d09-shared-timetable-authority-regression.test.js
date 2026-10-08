@@ -213,3 +213,25 @@ test('timetable version scope comes from the actual planning set, not every hist
   assert.match(service,/timetableCourseIds=Object\.freeze\(\[\.\.\.\(review\.timetable\?\.course_plan_refs\|\|\[\]\)\]/);
   assert.match(service,/rebuildScope:Object\.freeze/);
 });
+
+
+test('Course admission proposals preserve existing active timetable authority', () => {
+  const root=path.resolve(__dirname,'../../..');
+  const service=fs.readFileSync(path.join(root,'teaching/d09/service.js'),'utf8');
+
+  assert.match(service,/source==='COURSE_ADMISSION_EXPANSION_PROPOSAL'/);
+  assert.match(service,/latestApprovedTimetable/);
+  assert.match(service,/D09_ACTIVE_AUTHORITY_FLOOR/);
+  assert.match(service,/fixedAuthoritySlots/);
+  assert.match(service,/activeAuthorityPreserved:true/);
+});
+
+test('Calendar proposals are preactivation-only and cannot overlap materialized Classes', () => {
+  const root=path.resolve(__dirname,'../../..');
+  const repository=fs.readFileSync(path.join(root,'teaching/repositories/d09-scheduling.js'),'utf8');
+
+  assert.match(repository,/co\.lifecycle_state in \('DRAFT','READY','PLANNING','SETUP'\)/);
+  assert.match(repository,/not exists \([\s\S]*from public\.teaching_classes active_class/);
+  assert.match(repository,/active_class\.scheduled_start_at < s\.ends_at/);
+  assert.match(repository,/active_class\.scheduled_end_at > s\.starts_at/);
+});

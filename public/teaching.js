@@ -1024,29 +1024,42 @@ function renderActiveTeachingView() {
 }
 
 async function loadTeachingWorkspace() {
-  const [subjects, baseCourses, information] = await Promise.all([
+  const informationRequest = kiwiApiRequest('/teaching/information/courses').catch(() => ({ courses: [] }));
+  const [subjects, baseCourses] = await Promise.all([
     kiwiApiRequest('/teaching/subjects'),
     kiwiApiRequest('/teaching/courses'),
-    kiwiApiRequest('/teaching/information/courses').catch(() => ({ courses: [] })),
   ]);
-  const details = new Map((information.courses || []).map((course) => [String(course.courseId), course]));
-  const courses = canonicalCourseRows(baseCourses.map((course) => {
-    const detail = details.get(String(course.course_id));
-    return detail ? {
-      ...course,
-      title: detail.title || course.title,
-      lifecycle_state: detail.lifecycleState || course.lifecycle_state,
-      current_topic: detail.currentTopic || null,
-      next_event: detail.nextEvent || null,
-      teacher: detail.teacher || null,
-    } : course;
-  }));
-  teachingWorkspace = { subjects, courses };
+  teachingWorkspace = { subjects, courses: canonicalCourseRows(baseCourses) };
+
+  void informationRequest.then((information) => {
+    const details = new Map((information.courses || []).map((course) => [String(course.courseId), course]));
+    if (!details.size) return;
+    teachingWorkspace.courses = canonicalCourseRows(teachingWorkspace.courses.map((course) => {
+      const detail = details.get(String(course.course_id));
+      return detail ? {
+        ...course,
+        title: detail.title || course.title,
+        lifecycle_state: detail.lifecycleState || course.lifecycle_state,
+        current_topic: detail.currentTopic || null,
+        next_event: detail.nextEvent || null,
+        teacher: detail.teacher || null,
+      } : course;
+    }));
+    renderTeachingNavigation();
+    renderSectionMenu();
+    renderActiveTeachingView();
+  });
+
   const restoredCourse = pendingTeachingLocation?.view === 'course'
     ? getTeachingCourse(pendingTeachingLocation.courseId)
     : null;
   if (restoredCourse && pendingTeachingLocation.sectionId === 'overview') {
-    restoredCourse.information_overview = await kiwiApiRequest(`/teaching/information/courses/${encodeURIComponent(restoredCourse.course_id)}/overview`).catch(() => null);
+    void kiwiApiRequest(`/teaching/information/courses/${encodeURIComponent(restoredCourse.course_id)}/overview`)
+      .then((overview) => {
+        restoredCourse.information_overview = overview;
+        if (selectedTeachingCourseId === restoredCourse.course_id && activeTeachingCourseSection === 'overview') renderCourseWorkspace();
+      })
+      .catch(() => null);
   }
 }
 
@@ -1068,21 +1081,6 @@ async function refreshTeachingWorkspace({ preserveView = true } = {}) {
 async function verifyTeachingSession() {
   if (!hasKiwiSession()) {
     renderTeachingSessionProblem();
-    return false;
-  }
-
-  try {
-    await kiwiApiRequest('/teaching/status');
-  } catch (error) {
-    if (error?.status === 401) {
-      renderTeachingSessionProblem('Your KIWI session has expired. Return to KIWI and sign in again.');
-    } else {
-      renderTeachingAccessProblem({
-        title: 'KIWI connection interrupted',
-        message: 'KIWI could not check your session right now. Your sign-in has not been cleared.',
-        retry: verifyTeachingSession,
-      });
-    }
     return false;
   }
 

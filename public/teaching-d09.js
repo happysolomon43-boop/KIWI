@@ -196,7 +196,7 @@ function stage5(course,data,container,reload) {
   });
   card.append(slotList);
   const proposalMessage=el('div');proposalMessage.setAttribute('role','status');proposalMessage.setAttribute('aria-live','polite');card.append(proposalMessage);
-  propose.addEventListener('click',async()=>{propose.disabled=true;proposalMessage.textContent='Starting the shared Semester timetable build in the background…';proposalMessage.className='teaching-message';try{await kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.course_id)+'/timetable/propose',{method:'POST',body:{}});await reload(null,{text:'Timetable build started in the background. You can keep using KIWI while it finishes.',kind:'success'});}catch(error){proposalMessage.textContent=scheduleActionError(error,'Semester timetable build could not be started.');proposalMessage.className='teaching-message';proposalMessage.dataset.kind='error';propose.disabled=false;}});
+  propose.addEventListener('click',async()=>{propose.disabled=true;proposalMessage.textContent='Starting the shared Semester timetable build in the background…';proposalMessage.className='teaching-message';try{await kiwiApiRequest('/teaching/courses/'+encodeURIComponent(course.course_id)+'/timetable/propose',{method:'POST',body:{}});proposalMessage.textContent='Timetable build started in the background. You can keep using KIWI while it finishes.';proposalMessage.dataset.kind='success';window.setTimeout(()=>{void reload(null,{text:'Timetable build is running in the background.',kind:'success'});},1200);}catch(error){proposalMessage.textContent=scheduleActionError(error,'Semester timetable build could not be started.');proposalMessage.className='teaching-message';proposalMessage.dataset.kind='error';propose.disabled=false;}});
   container.append(card);
 }
 async function renderSchedule({course,container}) {
@@ -257,8 +257,8 @@ function calendarEventCard(item,data){
   const start=calendarStart(item),end=calendarEnd(item),time=el('div','teaching-d09-calendar-row__time');
   time.append(el('span','',displayCalendarTime(start,zone)),el('span','',end?displayCalendarTime(end,zone):'—'));
   const body=el('div','teaching-d09-calendar-row__body'),top=el('div','teaching-d09-calendar-row__top'),title=el('div','teaching-d09-calendar-row__title');
-  const kindLabel=kind==='ASSESSMENT'?statusName(item.assessmentType||'Assessment'):'Class',duration=calendarDuration(item);
-  title.append(el('strong','',item.title||kindLabel),el('div','teaching-d09-calendar-row__meta',(kind==='ASSESSMENT'?'Announced assessment':'Approved schedule')+(duration?` · ${duration} min`:'')));
+  const kindLabel=kind==='ASSESSMENT'?statusName(item.assessmentType||'Assessment'):'Class',duration=calendarDuration(item),courseName=item.course_title||item.courseTitle||'Course',itemTitle=item.title&&item.title!==courseName?item.title:null;
+  title.append(el('strong','',courseName),el('div','teaching-d09-calendar-row__meta',(itemTitle?`${itemTitle} · `:'')+(kind==='ASSESSMENT'?'Announced assessment':'Approved schedule')+(duration?` · ${duration} min`:'')));
   const badge=el('span','teaching-d09-calendar-kind',kindLabel);badge.dataset.kind=kind;top.append(title,badge);body.append(top);
   if(kind==='CLASS'&&window.KIWITeachingD10){
     const actions=el('div','teaching-d09-calendar-actions'),move=el('button','teaching-d08-link-button','Request new time'),absence=el('button','teaching-d08-link-button','Emergency absence');
