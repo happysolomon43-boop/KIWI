@@ -565,8 +565,13 @@ function createD11Service({
     if(!context.session && now.getTime()>=new Date(context.classRow.scheduled_end_at).getTime()) {
       fail('An elapsed Class cannot start a new live Controller. Review its record instead.','TEACHING_D11_CLASS_WINDOW_EXPIRED',409);
     }
-    const prep=await repository.ensurePreparationWorkspace({studentId:user.id,classId,correlationId:sourceEventRef || null});
-    context=await repository.getClassContext(user.id,classId);
+    // After final PPL handoff the workspace is intentionally omitted from
+    // getClassContext. Re-seeding a new SKELETON here would discard the
+    // perfectly current validated Blueprint and block the real start.
+    const alreadyHandedOff=blueprintCurrentForContext(context)&&!context.workspace;
+    const prep=alreadyHandedOff?null
+      :await repository.ensurePreparationWorkspace({studentId:user.id,classId,correlationId:sourceEventRef || null});
+    context=alreadyHandedOff?context:await repository.getClassContext(user.id,classId);
     const workspaceReady=!context.workspace || ['FINALIZED','HANDED_OFF'].includes(String(context.workspace.lifecycle_state));
     const bindBlueprint=Boolean(
       context.blueprint &&
