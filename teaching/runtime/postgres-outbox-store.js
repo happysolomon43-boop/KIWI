@@ -118,7 +118,11 @@ function createPostgresTeachingOutboxStore({ query, randomUUID } = {}) {
       `with candidates as (
          select event_id from teaching_runtime.event_outbox
           where status in ('PENDING','RETRY_WAIT') and next_attempt_at <= $1
-          order by created_at asc,event_id asc
+          order by case
+            when created_at <= $1 - interval '5 minutes' then 0
+            when event_type in ('teaching.class.joined','teaching.class.ended','teaching.course.activated','teaching.request.applied') then 1
+            else 2 end,
+            created_at asc,event_id asc
           for update skip locked limit $2
        )
        update teaching_runtime.event_outbox o
