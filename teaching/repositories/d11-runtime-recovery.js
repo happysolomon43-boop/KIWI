@@ -41,7 +41,13 @@ function createD11RuntimeRecoveryRepository({query}={}){
           -- Class / timetable authority. Its immutable PPL history is kept,
           -- but a *new* valid Class workspace needs to be generated.
           or (
-            exists (
+            not exists (
+              select 1 from teaching_preparation.workspaces aw
+              where aw.student_id=c.student_id and aw.target_ref=c.class_id
+                and aw.workspace_type='LESSON_BLUEPRINT' and aw.target_kind='next_class'
+                and aw.lifecycle_state in ('ACTIVE','FINALIZATION_DUE','FINALIZED')
+            )
+            and exists (
               select 1 from teaching_preparation.workspaces hw
               where hw.student_id=c.student_id and hw.target_ref=c.class_id
                 and hw.workspace_type='LESSON_BLUEPRINT' and hw.target_kind='next_class'
