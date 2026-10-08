@@ -94,8 +94,11 @@ test('active shared Semesters route availability edits through a formal Request'
 test('timetable rematerialization retires every superseded unstarted Class and Calendar hides cancellations', () => {
   const repository=read('teaching/repositories/d09-scheduling.js');
   const materializer=repository.slice(repository.indexOf('async function materializeApprovedTimetableUsing'),repository.indexOf('return Object.freeze({',repository.indexOf('async function materializeApprovedTimetableUsing')));
-  assert.match(materializer,/lifecycle_state='SCHEDULED'[\s\S]*source_timetable_version_id<>\$3/);
-  assert.doesNotMatch(materializer,/scheduled_start_at>=/);
+  assert.match(materializer,/c\.lifecycle_state='SCHEDULED'[\s\S]*c\.source_timetable_version_id<>\$3/);
+  assert.match(materializer,/not exists \(select 1 from public\.teaching_class_sessions/);
+  assert.match(materializer,/not exists \(select 1 from public\.teaching_attendance_records/);
+  assert.match(materializer,/not exists \(select 1 from public\.teaching_classroom_interactions/);
+  assert.match(materializer,/Date\.parse\(s\.starts_at\|\|s\.startsAt\)>=materializedAt/);
   assert.match(repository,/c\.lifecycle_state<>'CANCELLED'/);
 });
 
@@ -130,7 +133,7 @@ test('Unfingerprinted assets revalidate and Teaching detects deployments without
   assert.doesNotMatch(server,/max-age=31536000, immutable/);
   assert.match(teaching,/\.tc-active/);
   assert.match(teaching,/visibilitychange/);
-  assert.match(html,/teaching-classroom\.js\?v=20261008-classroom-sheets-1/);
+  assert.match(html,/teaching-classroom\.js\?v=20261008-classroom-timing-2/);
 });
 
 test('Vercel static frontend emits a deployment marker with no-store caching',()=>{

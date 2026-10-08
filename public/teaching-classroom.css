@@ -70,3 +70,61 @@
   .tc-history-card{flex-direction:column;align-items:flex-start}
   .tc-corner-button{width:48px;height:48px;min-width:48px;min-height:48px}
 }
+
+
+/* Classroom v3: compact course actions and focused reading/writing overlays. */
+.tc-course-actions{display:flex;align-items:center;justify-content:flex-start;flex-wrap:wrap;gap:9px;min-width:0}
+.tc-course-actions .tc-button{display:inline-flex;align-items:center;justify-content:center;gap:9px;padding:9px 14px;min-height:43px;background:rgba(165,227,190,.07);border:1px solid rgba(187,238,207,.22);color:#d5f7e2;font-size:13px;font-weight:650;border-radius:12px}
+.tc-course-actions .tc-button:hover:not(:disabled){background:rgba(165,227,190,.14)}
+.tc-history-tab-count{display:inline-flex;align-items:center;justify-content:center;min-width:23px;height:23px;padding:0 5px;border-radius:7px;background:rgba(158,238,190,.16);color:#ccf7dc;font:700 11px/1 var(--font-body,system-ui)}
+.tc-class-availability{display:block;margin-top:9px;font-size:12px;line-height:1.4;font-weight:650;color:#a0daba}
+.tc-class-card .tc-button:disabled{background:rgba(159,199,172,.08);color:#a0b4a7;border-color:rgba(173,212,184,.13);opacity:1;cursor:not-allowed}
+.tc-class-card .tc-button{min-width:148px}
+.tc-classroom-sync{margin:0!important}
+.tc-sheet{align-items:center;justify-content:center;padding:clamp(12px,3vw,24px);isolation:isolate}
+.tc-sheet-backdrop{background:rgba(0,11,8,.82);backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px)}
+.tc-sheet-dialog{width:min(485px,100%);max-height:calc(100dvh - 50px);min-height:auto;padding:25px 25px 21px;gap:16px;border-radius:23px;border:1px solid rgba(177,238,201,.22);background:radial-gradient(circle at 100% 0%,rgba(64,123,86,.14),transparent 55%),linear-gradient(165deg,#153627 0%,#0b2118 65%,#081a13 100%);box-shadow:0 35px 110px #000c,0 0 0 1px rgba(182,229,197,.045) inset}
+.tc-sheet-handle{display:none}
+.tc-sheet-heading{align-items:center;gap:14px}
+.tc-sheet-heading-copy{min-width:0;flex:1}
+.tc-sheet-heading h2{font-size:clamp(25px,4.5vw,29px);font-weight:700;line-height:1.15;letter-spacing:-.035em}
+.tc-sheet-emblem{display:grid;place-items:center;flex:none;width:46px;height:46px;border:1px solid rgba(186,242,208,.25);border-radius:14px;background:rgba(160,238,190,.13);color:#bbf6d4;font-size:23px;box-shadow:inset 0 1px rgba(255,255,255,.035)}
+.tc-sheet-close{width:37px;height:37px;align-self:flex-start;border-radius:11px;color:#cee8d8;background:rgba(176,238,202,.07);font-size:22px}
+.tc-sheet-description{margin:-6px 0 0;padding-left:1px;font:400 13px/1.6 var(--font-body,system-ui);color:#b6cfbf}
+.tc-sheet-help{font-size:12px;color:#b2cdbd;line-height:1.6}
+.tc-sheet-notes{gap:9px;max-height:min(28dvh,205px);overflow:auto}
+.tc-sheet-notes>p:only-child{padding:13px 14px;background:rgba(172,233,195,.045);border:1px dashed rgba(169,223,186,.2);border-radius:11px}
+.tc-sheet-form{gap:9px}
+.tc-sheet-form textarea,.tc-sheet-form select{padding:13px 14px;border:1px solid rgba(190,245,210,.21);background:#071a12;border-radius:12px;font-size:16px}
+.tc-sheet-form textarea{min-height:104px;max-height:33dvh}
+.tc-sheet-form textarea:focus-visible,.tc-sheet-form select:focus-visible{border-color:#9eeec2;outline:1px solid #9eeec2;outline-offset:1px}
+.tc-sheet-form textarea::placeholder{color:#809a88}
+.tc-sheet-status:empty{display:none}
+.tc-sheet-footer{gap:9px;padding-top:4px}
+.tc-sheet-footer .tc-button{min-height:43px;padding:10px 17px;font-size:13px}
+.tc-sheet-footer .tc-button--quiet{border-color:rgba(183,232,197,.22);color:#d7e7da}
+.tc-sheet-footer .tc-button--solid{background:#b2efcf}
+.tc-conversation{min-height:0;max-height:min(31dvh,220px);padding:2px 2px 7px;gap:9px}
+.tc-conversation>.tc-sheet-help:only-child{padding:18px;background:rgba(166,228,185,.048);border-radius:12px;text-align:center}
+.tc-teacher-limits{font-size:11px;line-height:1.5;padding:11px 13px;border-left:2px solid rgba(177,234,201,.48);background:rgba(169,236,197,.035);border-radius:0 9px 9px 0}
+.tc-history-dialog{width:min(520px,calc(100vw - 28px));max-height:calc(100dvh - 60px);padding:24px;border-radius:23px;border-color:rgba(187,239,209,.27);background:linear-gradient(155deg,#153627,#0a1d14 78%);box-shadow:0 35px 100px rgba(0,0,0,.73)}
+.tc-history-heading{align-items:center}
+.tc-history-heading h2{font-size:27px}
+.tc-history-card{background:rgba(161,216,179,.05)}
+@media(max-width:560px){
+ .tc-course-actions{gap:8px}
+ .tc-course-actions .tc-button{min-height:43px;padding:9px 12px;font-size:12px}
+ .tc-class-card .tc-button{width:100%;justify-self:stretch}
+ .tc-sheet{align-items:center;padding:16px 12px}
+ .tc-sheet-dialog{width:100%;max-width:430px;max-height:calc(100dvh - 54px);padding:20px 17px 17px;border-radius:22px;gap:14px}
+ .tc-sheet-handle{display:block;flex:none;align-self:center;width:38px;height:4px;margin:-5px 0 2px;border-radius:9px;background:rgba(177,231,195,.3)}
+ .tc-sheet-emblem{width:42px;height:42px;border-radius:12px;font-size:21px}
+ .tc-sheet-heading h2{font-size:25px}
+ .tc-sheet-description{font-size:12px}
+ .tc-sheet-footer{justify-content:stretch}
+ .tc-sheet-footer .tc-button{flex:1}
+ .tc-sheet-notes{max-height:21dvh}
+ .tc-conversation{max-height:27dvh}
+ .tc-history-dialog{padding:21px 15px}
+}
+@media(prefers-reduced-motion:reduce){.tc-sheet-dialog,.tc-history-dialog{transition:none!important;animation:none!important}}

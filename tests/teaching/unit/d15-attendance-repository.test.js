@@ -44,3 +44,10 @@ test('D15 concern lookup uses only real concern columns and stable ordering',asy
   assert.match(calls[0].sql,/order by opened_at desc,attendance_concern_id desc/i);
   assert.doesNotMatch(calls[0].sql,/created_at/i);
 });
+
+
+test('D15 finalization evidence reads the actual session end column (ended_at), never absent closed_at',async()=>{
+  const source=require('node:fs').readFileSync(require('node:path').resolve(__dirname,'../../../teaching/repositories/d15-attendance.js'),'utf8');
+  assert.match(source,/started_at,ended_at as closed_at,state_version/);
+  assert.doesNotMatch(source,/started_at,closed_at,state_version/);
+});

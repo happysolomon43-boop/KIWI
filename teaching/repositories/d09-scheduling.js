@@ -577,13 +577,22 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     // SCHEDULED means the obligation never started, even if its clock time has
     // just elapsed. Cancel every superseded unstarted projection so a rebuild
     // or reschedule cannot leave the old Class beside its replacement.
-    await q(tx,`update public.teaching_classes set lifecycle_state='CANCELLED',source_request_id=coalesce($4,source_request_id),updated_at=now()
-      where student_id=$1 and lifecycle_state='SCHEDULED'
-        and course_id in (select course_id from public.teaching_courses where student_id=$1 and semester_id=$2)
-        and (source_timetable_version_id is null or source_timetable_version_id<>$3)`,
+    await q(tx,`update public.teaching_classes c set lifecycle_state='CANCELLED',source_request_id=coalesce($4,c.source_request_id),updated_at=now()
+      where c.student_id=$1 and c.lifecycle_state='SCHEDULED'
+        and c.course_id in (select course_id from public.teaching_courses where student_id=$1 and semester_id=$2)
+        and (c.source_timetable_version_id is null or c.source_timetable_version_id<>$3)
+        and not exists (select 1 from public.teaching_class_sessions sess where sess.student_id=c.student_id and sess.class_id=c.class_id)
+        and not exists (select 1 from public.teaching_attendance_records ar where ar.student_id=c.student_id and ar.class_id=c.class_id)
+        and not exists (select 1 from public.teaching_classroom_interactions ci where ci.student_id=c.student_id and ci.class_id=c.class_id)`,
       [studentId,semesterId,timetable.timetable_version_id,requestId]);
     const classes=[];
-    for(const slot of (slots||[]).filter((s)=>String(s.slot_kind||s.kind)==='CLASS'&&eligible.has(String(s.course_id||s.courseId||'')))){
+    const materializedAt=clock().getTime();
+    // Rebuilding an approved timetable must never create a Class in the past:
+    // past obligations are handled only by existing authoritative Class records.
+    for(const slot of (slots||[]).filter((s)=>String(s.slot_kind||s.kind)==='CLASS'
+      &&eligible.has(String(s.course_id||s.courseId||''))
+      &&Number.isFinite(Date.parse(s.starts_at||s.startsAt||''))
+      &&Date.parse(s.starts_at||s.startsAt)>=materializedAt)){
       const {rows:existing}=await q(tx,`select * from public.teaching_classes where student_id=$1 and source_timetable_slot_id=$2 for update`,
         [studentId,slot.timetable_slot_id]);
       if(existing?.[0]){ classes.push(existing[0]); continue; }

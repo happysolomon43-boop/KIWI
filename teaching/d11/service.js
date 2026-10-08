@@ -15,6 +15,7 @@ const {
   validateLiveReplanProposal,
 } = require('./contracts');
 const { TEACHING_EVENTS } = require('../events/names');
+const { buildPreparationEvent } = require('../preparation/events');
 const {
   evaluateWorkspaceTransition,
   evaluateFinalizationReadiness,
@@ -431,19 +432,44 @@ function createD11Service({
   }
 
   async function handlePreparationEvent(event) {
-    if(!intelligence) return Object.freeze({accepted:true,modelWorkStarted:false,routeQualification:'UNQUALIFIED_UNTIL_D30'});
-    if(!preparationRepository) return Object.freeze({accepted:true,modelWorkStarted:false,reason:'PREPARATION_REPOSITORY_UNAVAILABLE'});
+    if(!intelligence)return Object.freeze({accepted:true,modelWorkStarted:false,routeQualification:'UNQUALIFIED_UNTIL_D30'});
+    if(!preparationRepository)return Object.freeze({accepted:true,modelWorkStarted:false,reason:'PREPARATION_REPOSITORY_UNAVAILABLE'});
     const workspace=await preparationRepository.getWorkspace(canonicalEventField(event,'aggregateId','aggregate_id'));
-    if(!workspace || workspace.target_kind!=='next_class') return Object.freeze({accepted:true,noop:true});
-    if(['HANDED_OFF','SUPERSEDED','CANCELLED'].includes(workspace.lifecycle_state)) return Object.freeze({accepted:true,noop:true,reason:'WORKSPACE_TERMINAL'});
-    try {
-      const result=await preparationStep({id:workspace.student_id},workspace.target_ref,{requestKey:canonicalEventField(event,'eventId','event_id') || randomUUID()});
-      return Object.freeze({accepted:true,modelWorkStarted:true,done:Boolean(result.done)});
-    } catch(error) {
-      // Preparation model work is provisional. Failure must never consume the
-      // authoritative PPL event or replace the T0 state machine.
-      return Object.freeze({accepted:true,modelWorkStarted:true,failedSafely:true,code:error?.code || 'TEACHING_D11_PREPARATION_FAILED'});
+    if(!workspace||workspace.target_kind!=='next_class')return Object.freeze({accepted:true,noop:true});
+    if(['HANDED_OFF','SUPERSEDED','CANCELLED'].includes(workspace.lifecycle_state))
+      return Object.freeze({accepted:true,noop:true,reason:'WORKSPACE_TERMINAL'});
+    const current=await repository.getClassContext(workspace.student_id,workspace.target_ref);
+    if(!current?.classRow||current.classRow.lifecycle_state==='CANCELLED'
+      ||clock().getTime()>=Date.parse(current.classRow.scheduled_end_at))
+      return Object.freeze({accepted:true,noop:true,reason:'CLASS_NO_LONGER_PREPARABLE'});
+    // Model work is provisional and never mutates the authoritative Controller.
+    // A failed model call must not be acknowledged as a successful publication.
+    // Let the durable outbox retry it with its bounded backoff and audit trail.
+    const result=await preparationStep({id:workspace.student_id},workspace.target_ref,{
+      requestKey:canonicalEventField(event,'eventId','event_id')||randomUUID(),
+    });
+    let continuationQueued=false;
+    if(!result.done&&typeof outboxStore.append==='function'){
+      const next=await preparationRepository.getWorkspace(workspace.workspace_id);
+      if(next&&next.lifecycle_state==='ACTIVE'){
+        const eventId='d11-ppl-continue:'+next.workspace_id+':state-v'+Number(next.state_version);
+        const continuation=buildPreparationEvent({
+          eventId,eventType:TEACHING_EVENTS.PREPARATION_INPUT_CHANGED,
+          workspaceId:next.workspace_id,workspaceVersion:Number(next.state_version),
+          occurredAt:clock().toISOString(),
+          correlationId:canonicalEventField(event,'correlationId','correlation_id')||eventId,
+          causationId:canonicalEventField(event,'eventId','event_id')||null,
+          changedDependencyRefs:[],
+          payload:{reason:'STAGED_LESSON_PREPARATION_CONTINUATION'},
+        });
+        const published=await outboxStore.append(continuation);
+        continuationQueued=Boolean(published?.inserted||published?.event);
+      }
     }
+    return Object.freeze({
+      accepted:true,modelWorkStarted:true,done:Boolean(result.done),
+      continuationQueued,
+    });
   }
 
   async function startController(user,classId,sourceEventRef=null,idempotencyKey=null,options={}) {
@@ -455,6 +481,9 @@ function createD11Service({
     const now=clock();
     if(now.getTime()<new Date(context.classRow.scheduled_start_at).getTime()) {
       fail('Class cannot start before its authoritative scheduled time.','TEACHING_D11_CLASS_START_EARLY',409);
+    }
+    if(!context.session && now.getTime()>=new Date(context.classRow.scheduled_end_at).getTime()) {
+      fail('An elapsed Class cannot start a new live Controller. Review its record instead.','TEACHING_D11_CLASS_WINDOW_EXPIRED',409);
     }
     const prep=await repository.ensurePreparationWorkspace({studentId:user.id,classId,correlationId:sourceEventRef || null});
     context=await repository.getClassContext(user.id,classId);

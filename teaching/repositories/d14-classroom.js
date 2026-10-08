@@ -11,21 +11,35 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
       s.lifecycle_state session_state,s.instructional_substate,
       a.outcome attendance_outcome,a.presence_state,a.missed_minutes,a.arrived_at,a.exited_at
       from public.teaching_classes c
+      join public.teaching_courses co on co.student_id=c.student_id and co.course_id=c.course_id
+      left join lateral (
+        select timetable_version_id from public.teaching_timetable_versions t
+        where t.student_id=c.student_id and t.semester_id=co.semester_id and t.timetable_state='APPROVED'
+        order by t.version_no desc limit 1
+      ) approved on true
       left join lateral (
         select lifecycle_state,instructional_substate from public.teaching_class_sessions
         where student_id=c.student_id and class_id=c.class_id order by created_at desc limit 1
       ) s on true
       left join lateral (
-        select outcome,presence_state,missed_minutes,arrived_at,exited_at from public.teaching_attendance_records
+        select attendance_record_id,outcome,presence_state,missed_minutes,arrived_at,exited_at from public.teaching_attendance_records
         where student_id=c.student_id and class_id=c.class_id and schedule_version=c.schedule_version
         order by version_no desc,recorded_at desc limit 1
       ) a on true
       where c.student_id=$1 and c.course_id=$2 and c.lifecycle_state<>'CANCELLED'
+        and (
+          approved.timetable_version_id is null
+          or c.source_timetable_version_id=approved.timetable_version_id
+          or co.semester_id is null
+          or s.lifecycle_state is not null
+          or a.attendance_record_id is not null
+          or c.lifecycle_state<>'SCHEDULED'
+        )
       order by c.scheduled_start_at`,[studentId,courseId]);
     return rows;
   }
   async function identity(studentId,courseId) {
-    const {rows}=await query('select co.title course_title,t.display_name teacher_name from public.teaching_courses co left join lateral (select i.display_name from public.teaching_course_teacher_assignments a join public.teaching_teacher_identities i on i.teacher_identity_id=a.teacher_identity_id and i.student_id=a.student_id where a.student_id=co.student_id and a.course_id=co.course_id and a.effective_to is null order by a.version_no desc limit 1) t on true where co.student_id=$1 and co.course_id=$2',[studentId,courseId]);
+    const {rows}=await query('select co.title course_title,co.lifecycle_state,t.display_name teacher_name from public.teaching_courses co left join lateral (select i.display_name from public.teaching_course_teacher_assignments a join public.teaching_teacher_identities i on i.teacher_identity_id=a.teacher_identity_id and i.student_id=a.student_id where a.student_id=co.student_id and a.course_id=co.course_id and a.effective_to is null order by a.version_no desc limit 1) t on true where co.student_id=$1 and co.course_id=$2',[studentId,courseId]);
     return rows?.[0]||null;
   }
   async function board(studentId,classSessionId) {
