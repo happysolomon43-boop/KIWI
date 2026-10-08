@@ -5,15 +5,24 @@ const {
   assertIanaTimezone, instructionalMinutes, headroomPolicy, digest,
 } = require('./contracts');
 
+const {MIN_GAP_MINUTES,spacingAllowed,assertClassSpacing}=require('./class-spacing');
+
 const DAY_MS = 86400000;
 const MINUTE_MS = 60000;
 const DEFAULT_HORIZON = Object.freeze({ imminentDays:7, concreteDays:28 });
 
+// Cadence search visits the same zones many thousands of times. Reusing
+// immutable formatters avoids blocking the durable worker's lease heartbeat.
+const dateFormatters = new Map();
 function dateParts(date, timeZone) {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit',
-    second:'2-digit', hourCycle:'h23', weekday:'short',
-  }).formatToParts(date);
+  if (!dateFormatters.has(timeZone)) {
+    if (dateFormatters.size >= 32) dateFormatters.delete(dateFormatters.keys().next().value);
+    dateFormatters.set(timeZone, new Intl.DateTimeFormat('en-CA', {
+      timeZone, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit',
+      second:'2-digit', hourCycle:'h23', weekday:'short',
+    }));
+  }
+  const parts = dateFormatters.get(timeZone).formatToParts(date);
   return Object.fromEntries(parts.filter((p)=>p.type!=='literal').map((p)=>[p.type,p.value]));
 }
 function dateKey(date, timeZone) {
@@ -322,7 +331,9 @@ function computeSchedule(context,{now=new Date().toISOString()}={}) {
   if(required>maxCore) initialReasons.push('RECOVERY_HEADROOM_BELOW_MINIMUM');
   const scheduleLimit=Math.min(required,maxCore);
   const slots=[];
+  const fixedClasses=(context.fixedAuthoritySlots||[]).filter((slot)=>(slot.kind||slot.slot_kind)==='CLASS');
   const dayCounts=new Map();
+  for(const slot of fixedClasses){const key=dateKey(new Date(slot.startsAt||slot.starts_at),context.semester.timezone);dayCounts.set(key,(dayCounts.get(key)||0)+1);}
   const courseDayCounts=new Map();
   const lastCourseByDay=new Map();
   const preferences=context.profile?.preferences || context.preferences || {};
@@ -345,16 +356,24 @@ function computeSchedule(context,{now=new Date().toISOString()}={}) {
         const courseDayKey=`${period.key}|${w.courseId}`;
         const sameCourseToday=courseDayCounts.get(courseDayKey)||0;
         const otherCourseReady=task.kind==='CLASS'&&work.some((other)=>other!==w&&other.tasks.some((candidate)=>candidate.kind==='CLASS'&&candidate.remaining>0));
-        const available=minutesBetween(period.cursor,period.end);
+        let candidateStart=period.cursor;
+        if(task.kind==='CLASS'){
+          for(const prior of [...fixedClasses,...slots].filter((slot)=>(slot.kind||slot.slot_kind)==='CLASS')){
+            const priorStart=Date.parse(prior.startsAt||prior.starts_at), priorEnd=Date.parse(prior.endsAt||prior.ends_at);
+            if(priorStart<=Date.parse(candidateStart)&&priorEnd+MIN_GAP_MINUTES*MINUTE_MS>Date.parse(candidateStart))candidateStart=new Date(priorEnd+MIN_GAP_MINUTES*MINUTE_MS).toISOString();
+          }
+        }
+        const available=minutesBetween(candidateStart,period.end);
         if(available<=0) continue;
         const minutes=Math.min(task.remaining,available,scheduleLimit-scheduledTotal);
         if(minutes<=0) continue;
-        const candidateEnd=new Date(cursorMs+minutes*MINUTE_MS).toISOString();
+        const candidateEnd=new Date(Date.parse(candidateStart)+minutes*MINUTE_MS).toISOString();
+        if(task.kind==='CLASS'&&!spacingAllowed(candidateStart,candidateEnd,[...fixedClasses,...slots],context.semester.timezone))continue;
         if(w.deadline.hard && Date.parse(candidateEnd)>Date.parse(w.deadline.hard)) continue;
-        if(conflictsForWork(context,w,task,period.cursor,candidateEnd)) continue;
+        if(conflictsForWork(context,w,task,candidateStart,candidateEnd)) continue;
         const score=preferenceScore(period,w,preferences)
-          + protectedPreference(context,w,task,period.cursor,candidateEnd)
-          + stablePlacementScore(priorIndex,w,task,period.cursor,candidateEnd,now,settings)
+          + protectedPreference(context,w,task,candidateStart,candidateEnd)
+          + stablePlacementScore(priorIndex,w,task,candidateStart,candidateEnd,now,settings)
           + portfolioBalanceScore(w)
           + deadlinePriorityScore(w,candidateEnd)
           - (task.kind==='CLASS' && w.lastDate===period.key?(otherCourseReady?240:70):0)
@@ -363,12 +382,12 @@ function computeSchedule(context,{now=new Date().toISOString()}={}) {
           - (period.kind==='RECOVERY_ONLY' && task.kind!=='RECOVERY'?10000:0);
         if(period.kind==='RECOVERY_ONLY' && task.kind!=='RECOVERY') continue;
         if(!best || score>best.score || (score===best.score && Date.parse(period.cursor)<Date.parse(best.period.cursor))){
-          best={period,w,task,minutes,score};
+          best={period,w,task,minutes,score,start:candidateStart};
         }
       }
     }
     if(!best) break;
-    const start=best.period.cursor;
+    const start=best.start;
     const end=new Date(Date.parse(start)+best.minutes*MINUTE_MS).toISOString();
     const count=dayCounts.get(best.period.key)||0;
     const spacingException=best.task.kind==='CLASS' && best.w.lastDate && addDateKey(best.w.lastDate,1)===best.period.key;
@@ -483,6 +502,7 @@ function validateEditedSchedule(context, existingSlots, edits,{now=new Date().to
       const e=new Error('Edited timetable contains overlapping Teaching slots.'); e.status=422; e.code='TEACHING_D09_SLOT_OVERLAP'; throw e;
     }
   }
+  assertClassSpacing(slots,context.semester.timezone,{now});
   const required=(context.courses||[]).reduce((sum,b)=>sum+topologicalUnits(b).reduce((s,u)=>s+instructionalMinutes(u).max,0),0)
     +(context.reserves||[]).reduce((s,r)=>s+(Number(r.minutes)||0),0);
   const scheduled=slots.reduce((s,x)=>s+minutesBetween(x.startsAt,x.endsAt),0);

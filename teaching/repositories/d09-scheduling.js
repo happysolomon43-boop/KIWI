@@ -1,4 +1,5 @@
 'use strict';
+const {assertClassSpacing}=require('../d09/class-spacing');
 
 const crypto = require('node:crypto');
 const { digest, assertSchedulingContextCurrent } = require('../d09/contracts');
@@ -349,6 +350,7 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
   }
   async function saveProposalUsing(tx,{studentId,courseId,context,planningContext=null,result,source='DETERMINISTIC_INITIAL'}){
     const scheduleContext=planningContext||context;
+    assertClassSpacing(result.schedule,scheduleContext.semester.timezone,{now:clock().toISOString()});
     await assertContextCurrentUsing(tx,{studentId,context});
     await ensureCourse(studentId,courseId,tx,true);
     const {rows:vrows}=await q(tx,'select coalesce(max(version_no),0)+1 v from public.teaching_timetable_versions where semester_id=$1',[context.semester.semester_id]);
@@ -539,12 +541,25 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
     return {classes:classRows.rows||[],proposals:proposals.rows||[]};
   }
 
+  async function assertSpacingRepairCurrentUsing(tx,{studentId,semesterId,timetableVersionId}){
+    const {rows}=await q(tx,"select timetable_version_id from public.teaching_timetable_versions where student_id=$1 and semester_id=$2 and timetable_state='APPROVED' order by version_no desc limit 1 for update",[studentId,semesterId]);
+    if(rows[0]?.timetable_version_id!==timetableVersionId)throw Object.assign(new Error('Approved timetable changed during repair. Please retry.'),{code:'TEACHING_D09_SPACING_REPAIR_STALE',status:409});
+    // The existing materializer preserves begun Classes. Refuse to move their
+    // source obligations, rather than creating a second Class beside them.
+    const {rows:started}=await q(tx,`select c.class_id from public.teaching_classes c where c.student_id=$1 and c.source_timetable_version_id=$2 and c.scheduled_start_at>=now()
+      and (exists(select 1 from public.teaching_class_sessions s where s.student_id=c.student_id and s.class_id=c.class_id)
+      or exists(select 1 from public.teaching_attendance_records a where a.student_id=c.student_id and a.class_id=c.class_id)
+      or exists(select 1 from public.teaching_classroom_interactions i where i.student_id=c.student_id and i.class_id=c.class_id)) limit 1 for update`,[studentId,timetableVersionId]);
+    if(started.length)throw Object.assign(new Error('A future Class already has classroom evidence; repair requires a formal schedule change.'),{code:'TEACHING_D09_SPACING_REPAIR_STARTED_CLASS',status:409});
+  }
   async function approveTimetableUsing(tx,{studentId,timetableVersionId}){
     const {rows}=await q(tx,`select * from public.teaching_timetable_versions where student_id=$1 and timetable_version_id=$2 for update`,[studentId,timetableVersionId]);
     const timetable=rows?.[0]||null;
     if(!timetable){ const e=new Error('Timetable version not found.'); e.status=404; e.code='TEACHING_D09_TIMETABLE_NOT_FOUND'; throw e; }
     if(['SUPERSEDED','STALE'].includes(timetable.timetable_state)){ const e=new Error('A stale/superseded timetable cannot be activated.'); e.status=409; e.code='TEACHING_D09_TIMETABLE_STALE'; throw e; }
     if(timetable.timetable_state!=='APPROVED'){
+      const {rows:spacingSlots}=await q(tx,'select * from public.teaching_timetable_slots where student_id=$1 and timetable_version_id=$2',[studentId,timetableVersionId]);
+      assertClassSpacing(spacingSlots,spacingSlots[0]?.timezone||timetable.timezone||'UTC',{now:clock().toISOString()});
       await q(tx,`update public.teaching_timetable_versions set timetable_state='SUPERSEDED'
         where student_id=$1 and semester_id=$2 and timetable_version_id<>$3
           and timetable_state in ('PROPOSED','EDITED_PROPOSAL','APPROVED')`,
@@ -611,7 +626,7 @@ function createD09SchedulingRepository({query,withTransaction,randomUUID,clock=(
   }
   return Object.freeze({
     assertReady,listSemesters,latestDefaultSemester,getSchedulingContext,getSchedulingContextUsing,assertContextCurrentUsing,attachCourseToSemester,saveScheduleInputsUsing,saveProposalUsing,
-    latestTimetable,latestApprovedTimetable,latestBackgroundTimetableBuild,getScheduleReview,listCalendar,approveTimetableUsing,markCurrentTimetableStaleUsing,suspendCourseClassesUsing,materializeApprovedTimetableUsing,
+    assertSpacingRepairCurrentUsing,latestTimetable,latestApprovedTimetable,latestBackgroundTimetableBuild,getScheduleReview,listCalendar,approveTimetableUsing,markCurrentTimetableStaleUsing,suspendCourseClassesUsing,materializeApprovedTimetableUsing,
   });
 }
 module.exports={createD09SchedulingRepository};

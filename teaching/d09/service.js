@@ -217,6 +217,7 @@ function createD09Service({repository,transactionalMutation,randomUUID,clock=()=
         }));
         const admissionContext=Object.freeze({
           ...authoritativeContext,
+          fixedAuthoritySlots:Object.freeze(fixedAuthoritySlots),
           courses:Object.freeze((authoritativeContext.courses||[]).filter((bundle)=>admissionCourseIds.has(String(bundle.course?.course_id||'')))),
           blocks:Object.freeze([...(authoritativeContext.blocks||[]),...authorityBlocks]),
         });

@@ -123,7 +123,7 @@ function renderBlock(item){
     case 'code':card.append(add($('pre','tc-code'),$('code','',c.text||'')));break;
     case 'worked_solution':(c.steps||[]).forEach((step,i)=>card.append(add($('div','tc-step'),$('span','',String(i+1).padStart(2,'0')),$('p','',step))));break;
     case 'graph':case 'data':card.append(graphBlock(c));break;
-    case 'image':case 'diagram':{const img=$('img','tc-visual');img.src=c.src;img.alt=c.alt||`${label.toLowerCase()} shown on the Class Board`;img.loading='lazy';card.append(img);break;}
+    case 'image':case 'diagram':{const img=$('img','tc-visual');img.src=c.src;img.alt=c.alt||`${label.toLowerCase()} shown on the Class Board`;img.loading='lazy';img.addEventListener('error',()=>{img.remove();card.append($('p','tc-empty-copy',c.fallback?.text||c.alt||'This visual could not be loaded.'));},{once:true});card.append(img);if(c.visualAuthority==='ILLUSTRATIVE')card.append($('small','tc-empty-copy','Illustration — use the Teacher’s explanation for exact facts.'));break;}
     case 'comparison':{const pair=$('div','tc-comparison');(c.columns||[]).forEach((col)=>pair.append(add($('div',''),$('strong','',col.title||''),$('p','',col.text))));card.append(pair);break;}
     case 'annotation':card.append($('p','tc-annotation',c.label||''));break;
   }

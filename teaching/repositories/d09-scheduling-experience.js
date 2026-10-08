@@ -10,8 +10,8 @@ function createD09SchedulingRepository(options = {}) {
 
   async function saveProposalUsing(tx, args = {}) {
     const context = args.planningContext || args.context || {};
-    const naturalized = naturalizeScheduleResult(context, args.result, { source: args.source || 'AUTOMATIC' });
-    const result = normalizeReservePlacement(context, naturalized, { source: args.source || 'AUTOMATIC' });
+    const naturalized = args.source==='SYSTEM_SPACING_REPAIR'?args.result:naturalizeScheduleResult(context, args.result, { source: args.source || 'AUTOMATIC' });
+    const result = args.source==='SYSTEM_SPACING_REPAIR'?naturalized:normalizeReservePlacement(context, naturalized, { source: args.source || 'AUTOMATIC' });
     return base.saveProposalUsing(tx, { ...args, result });
   }
 

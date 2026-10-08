@@ -1,5 +1,6 @@
 'use strict';
 
+const {hasSpacingViolation,repairSpacing}=require('./spacing-repair');
 const { computeSchedule } = require('./scheduler');
 const { buildPreparationEvent } = require('../preparation/events');
 const { TEACHING_EVENTS } = require('../events/names');
@@ -80,16 +81,18 @@ function decorateD09Service(base, {
     const classFacts = scheduleClassFacts(scopedSlots, review.serverNow || serverNow());
     const elapsedSlotCount = scopedSlots.filter((slot) => Date.parse(slot.endsAt) <= Date.parse(review.serverNow || serverNow())).length;
     const selectedCourseActive=String(review.requestedCourse?.lifecycleState||'DRAFT')==='ACTIVE';
+    const spacingViolation=Boolean(review.timetable?.state==='APPROVED'&&hasSpacingViolation(review.slots||[],review.semester?.timezone||review.requestedCourse?.timezone||'UTC',review.serverNow||serverNow()));
     const recoveryRequired = Boolean(
       selectedCourseActive &&
       review.timetable &&
       review.timetable.state === 'APPROVED' &&
-      classFacts.futureClassCount === 0
+      (classFacts.futureClassCount === 0 || spacingViolation)
     );
     return Object.freeze({
       ...review,
       scheduleIntegrity: Object.freeze({
         ...classFacts,
+        spacingViolation,
         elapsedSlotCount,
         recoveryRequired,
         reserveOnly: Boolean(scopedSlots.length && classFacts.classCount === 0),
@@ -108,18 +111,19 @@ function decorateD09Service(base, {
     if (String(context.course.lifecycle_state) !== 'ACTIVE') {
       throw fail('Timetable system-failure recovery is only for an Active Course.', 'TEACHING_D09_RECOVERY_ACTIVE_ONLY');
     }
-    const latest = await repository.latestTimetable(user.id, context.semester.semester_id);
+    const latest = await (repository.latestApprovedTimetable||repository.latestTimetable)(user.id, context.semester.semester_id);
     const nowIso = serverNow();
     const existingFacts = scheduleClassFacts(slotsForCourse(latest.slots || [], courseId), nowIso);
-    if (existingFacts.futureClassCount > 0) return getScheduleReview(user, courseId);
+    const spacingViolation=hasSpacingViolation(latest.slots||[],context.semester.timezone,nowIso);
+    if (existingFacts.futureClassCount > 0&&!spacingViolation) return getScheduleReview(user, courseId);
     if (!instructionalUnits(context).length) {
       throw fail('This Course has no instructional Learning Units to recover.', 'TEACHING_D09_RECOVERY_NO_INSTRUCTION_REQUIRED', 409);
     }
-    context = await prepareInstructionalLoads(user, courseId, context);
+    if(!spacingViolation)context = await prepareInstructionalLoads(user, courseId, context);
     const derived = planningContextAt(context, nowIso);
-    const result = computeSchedule(derived, { now: nowIso });
+    const result = spacingViolation?repairSpacing(derived,latest,nowIso):computeSchedule(derived, { now: nowIso });
     const classFacts = scheduleClassFacts(slotsForCourse(result.schedule, courseId), nowIso);
-    if (result.outcome !== 'FEASIBLE' || classFacts.futureClassCount <= 0 || classFacts.elapsedClassCount > 0) {
+    if (result.outcome !== 'FEASIBLE' || classFacts.futureClassCount <= 0 || (!spacingViolation&&classFacts.elapsedClassCount > 0)) {
       throw fail('KIWI cannot safely repair this timetable inside the remaining semester capacity.', 'TEACHING_D09_SYSTEM_RECOVERY_INFEASIBLE', 422, {
         outcome: result.outcome,
         reasons: result.reasons || [],
@@ -127,12 +131,15 @@ function decorateD09Service(base, {
       });
     }
     const recovered = await commitWithPpl(async (tx) => {
+      if(spacingViolation){
+        await repository.assertSpacingRepairCurrentUsing(tx,{studentId:user.id,semesterId:context.semester.semester_id,timetableVersionId:latest.timetable.timetable_version_id});
+      }
       const saved = await repository.saveProposalUsing(tx, {
         studentId: user.id,
         courseId,
         context,
         result,
-        source: 'SYSTEM_FAILURE_RECOVERY',
+        source: spacingViolation?'SYSTEM_SPACING_REPAIR':'SYSTEM_FAILURE_RECOVERY',
       });
       const approved = await repository.approveTimetableUsing(tx, {
         studentId: user.id,
@@ -172,7 +179,7 @@ function decorateD09Service(base, {
       if (!context.semester) throw fail('Save the semester and availability before repairing a timetable.', 'TEACHING_D09_SEMESTER_REQUIRED');
       const latest = await repository.latestTimetable(user.id, context.semester.semester_id);
       const existingFacts = scheduleClassFacts(slotsForCourse(latest.slots || [], courseId), serverNow());
-      if (existingFacts.futureClassCount <= 0) {
+      if (existingFacts.futureClassCount <= 0 || hasSpacingViolation(latest.slots||[],context.semester.timezone,serverNow())) {
         return recoverSystemInvalidTimetable(user, courseId, context);
       }
       throw fail('This active Course already has a current future timetable. Use the formal Request workflow for schedule changes.', 'TEACHING_D09_ACTIVE_TIMETABLE_CHANGE_REQUIRES_REQUEST');

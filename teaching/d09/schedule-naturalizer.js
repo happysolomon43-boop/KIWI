@@ -1,6 +1,7 @@
 'use strict';
 
 const scheduler = require('./scheduler');
+const {spacingAllowed}=require('./class-spacing');
 const { digest } = require('./contracts');
 
 const PREFERRED_INTERCLASS_GAP_MINUTES = 180;
@@ -213,6 +214,7 @@ function cadenceSettings(context, schedule) {
 }
 
 function naturalizeScheduleResult(context, result, { source = 'AUTOMATIC' } = {}) {
+  if(result?.policy?.activeAuthorityPreserved||['PREACTIVATION_EDIT','FORMAL_REQUEST_APPLIED'].includes(source))return result;
   if (!result || result.outcome === 'INFEASIBLE' || !Array.isArray(result.schedule)) return result;
   if (!Number.isFinite(Number(result.metrics?.stableSlotsRetained))) return result;
   const classSlots = result.schedule.filter((slot) => slot.kind === 'CLASS');
@@ -267,6 +269,7 @@ function naturalizeScheduleResult(context, result, { source = 'AUTOMATIC' } = {}
           if (Date.parse(end) > Date.parse(piece.end)) continue;
           if (hardDeadline && Date.parse(end) > Date.parse(hardDeadline)) continue;
           if (conflictsWithClassBlock(context, courseId, start, end)) continue;
+          if(!spacingAllowed(start,end,placed,timeZone))continue;
           const localDate = scheduler.dateKey(new Date(start), timeZone);
           const score = scoreCandidate({
             start,

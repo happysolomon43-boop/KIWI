@@ -292,11 +292,15 @@ async function renderRequestCenter(focusRequestId=null){
 
   try{
     const items=await kiwiApiRequest('/teaching/requests');
-    count.textContent=items.length+' total';
+    const terminalStates=new Set(['APPLIED','CLOSED','REJECTED','WITHDRAWN']);
+    const past=items.filter((item)=>terminalStates.has(item.state))
+      .sort((a,b)=>Date.parse(b.updatedAt||b.createdAt||0)-Date.parse(a.updatedAt||a.createdAt||0)).slice(0,5);
+    const visible=items.filter((item)=>!terminalStates.has(item.state)).concat(past);
+    count.textContent=visible.length+' shown · '+past.length+' past';
     if(!items.length){
       const empty=el('div','teaching-empty');empty.append(el('strong','','No formal Requests yet.'),el('div','','When you ask KIWI to change an active academic commitment, its Request history will appear here.'));list.append(empty);
     }else{
-      items.forEach((item)=>list.append(requestCard(item)));
+      visible.forEach((item)=>list.append(requestCard(item)));
     }
     if(focusRequestId){
       const target=[...list.children].find((node)=>node.dataset.requestId===String(focusRequestId));
