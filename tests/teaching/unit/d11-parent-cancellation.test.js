@@ -48,7 +48,7 @@ function fake({lifecycle='CANCELLED',courseLifecycle='ACTIVE',timetableState='SU
     if(q.includes('select student_id,target_ref'))return {rows:[{student_id:'s',target_ref:'c'}]};
     if(q.includes('from public.teaching_classes where'))return {rows:[{...parent.klass,lifecycle_state:lifecycle}]};
     if(q.includes('from public.teaching_courses where'))return {rows:[{...parent.course,lifecycle_state:courseLifecycle}]};
-    if(q.includes('from public.teaching_timetable_versions where'))return {rows:[{...parent.timetable,timetable_state}]};
+    if(q.includes('from public.teaching_timetable_versions where'))return {rows:[{...parent.timetable,timetable_state:timetableState}]};
     if(q.includes('from public.teaching_course_plans where'))return {rows:[{...parent.plan,version_no:planVersion}]};
     if(q.includes('from teaching_preparation.workspaces where workspace_id=$1 for update'))return {rows:[data]};
     if(q.includes('from public.teaching_class_sessions'))return {rows:hasActiveSession?[{one:1}]:[]};
