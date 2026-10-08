@@ -1,27 +1,5 @@
--- #305: durable, scoped, version-specific revocations created in the SAME
--- transaction as owner mutations, without relying on individual callers.
--- A resumed Course/new Plan version is not cancelled by an earlier lease.
-CREATE TABLE IF NOT EXISTS teaching_runtime.academic_authority_revocations (
-  revocation_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  student_id text NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
-  owner_kind text NOT NULL CHECK(owner_kind IN ('COURSE','CLASS','COURSE_PLAN','LESSON_BLUEPRINT','TIMETABLE','PREPARATION_WORKSPACE')),
-  owner_ref text NOT NULL,
-  authority_version text NOT NULL,
-  reason_code text NOT NULL CHECK(length(reason_code) BETWEEN 1 AND 100),
-  revoked_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE(student_id,owner_kind,owner_ref,authority_version)
-);
-CREATE INDEX IF NOT EXISTS teaching_academic_revocations_scope_idx
- ON teaching_runtime.academic_authority_revocations(student_id,owner_kind,owner_ref,authority_version);
-ALTER TABLE teaching_runtime.academic_authority_revocations ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON teaching_runtime.academic_authority_revocations FROM PUBLIC,anon,authenticated;
-GRANT SELECT,INSERT ON teaching_runtime.academic_authority_revocations TO service_role;
-COMMENT ON TABLE teaching_runtime.academic_authority_revocations IS
- 'Immutable parent authority revocations. Exact old version only; new/resumed versions remain eligible. No prompts, model output, tokens, or student content.';
-
--- AFTER UPDATE runs inside the authoritative owner's transaction, so an
--- academic revocation cannot be committed independently of its parent change.
--- This includes mutations made by D09, D10, D11, and future trusted owners.
+-- Idempotent D05 hotfix for early integration installs. Promoting an
+-- unapproved plan, blueprint or timetable must not poison its new authority.
 CREATE OR REPLACE FUNCTION teaching_runtime.record_parent_authority_revocation()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
 SET search_path=pg_catalog AS $$
@@ -88,22 +66,3 @@ BEGIN
   ON CONFLICT (student_id,owner_kind,owner_ref,authority_version) DO NOTHING;
   RETURN NEW;
 END $$;
-
-DROP TRIGGER IF EXISTS kiwi_revoke_old_course_authority ON public.teaching_courses;
-CREATE TRIGGER kiwi_revoke_old_course_authority AFTER UPDATE ON public.teaching_courses
-FOR EACH ROW EXECUTE FUNCTION teaching_runtime.record_parent_authority_revocation();
-DROP TRIGGER IF EXISTS kiwi_revoke_old_class_authority ON public.teaching_classes;
-CREATE TRIGGER kiwi_revoke_old_class_authority AFTER UPDATE ON public.teaching_classes
-FOR EACH ROW EXECUTE FUNCTION teaching_runtime.record_parent_authority_revocation();
-DROP TRIGGER IF EXISTS kiwi_revoke_old_course_plan_authority ON public.teaching_course_plans;
-CREATE TRIGGER kiwi_revoke_old_course_plan_authority AFTER UPDATE ON public.teaching_course_plans
-FOR EACH ROW EXECUTE FUNCTION teaching_runtime.record_parent_authority_revocation();
-DROP TRIGGER IF EXISTS kiwi_revoke_old_lesson_blueprint_authority ON public.teaching_lesson_blueprints;
-CREATE TRIGGER kiwi_revoke_old_lesson_blueprint_authority AFTER UPDATE ON public.teaching_lesson_blueprints
-FOR EACH ROW EXECUTE FUNCTION teaching_runtime.record_parent_authority_revocation();
-DROP TRIGGER IF EXISTS kiwi_revoke_old_timetable_authority ON public.teaching_timetable_versions;
-CREATE TRIGGER kiwi_revoke_old_timetable_authority AFTER UPDATE ON public.teaching_timetable_versions
-FOR EACH ROW EXECUTE FUNCTION teaching_runtime.record_parent_authority_revocation();
-DROP TRIGGER IF EXISTS kiwi_revoke_old_preparation_workspace_authority ON teaching_preparation.workspaces;
-CREATE TRIGGER kiwi_revoke_old_preparation_workspace_authority AFTER UPDATE ON teaching_preparation.workspaces
-FOR EACH ROW EXECUTE FUNCTION teaching_runtime.record_parent_authority_revocation();
