@@ -7,7 +7,7 @@ const {registerD14Runtime}=require('../../../teaching/d14/runtime');
 const {TEACHING_EVENTS}=require('../../../teaching/events/names');
 const {RECONCILIATION_DISPOSITIONS}=require('../../../teaching/runtime/constants');
 const root=path.join(__dirname,'../../..');
-const context=()=>({classRow:{class_id:'class1',course_id:'course1',schedule_version:2,course_lifecycle_state:'ACTIVE',course_state_version:5,lifecycle_state:'SCHEDULED',source_timetable_state:'APPROVED'},plan:{course_plan_id:'plan1',version_no:1},blueprint:{lesson_blueprint_id:'lesson1',blueprint_state:'VALIDATED'},session:{class_session_id:'session1',state_version:7,lifecycle_state:'ACTIVE',instructional_substate:'INSTRUCTION'}});
+const context=()=>({classRow:{class_id:'class1',course_id:'course1',schedule_version:2,course_lifecycle_state:'ACTIVE',course_state_version:5,lifecycle_state:'SCHEDULED',source_timetable_state:'APPROVED'},plan:{course_plan_id:'plan1',version_no:1},blueprint:{lesson_blueprint_id:'lesson1',version_no:3,blueprint_state:'VALIDATED'},session:{class_session_id:'session1',state_version:7,lifecycle_state:'ACTIVE',instructional_substate:'INSTRUCTION'}});
 const help=()=>({help_request_id:'help1',interaction_id:'question1',class_session_id:'session1',controller_version:7,attempts:1});
 function fixture({question=help(),model={decision:'ANSWER_NOW',teacherMessage:'A heavier object requires more force for the same acceleration.',reason:''},mode='INSTRUCTION',publishError=null,helpIntelligence=null}={}){
   const finishes=[],publishes=[],claims=[];
@@ -42,6 +42,11 @@ test('D14 publishes validated in-Class answer through current versioned Teacher 
   assert.equal(result.status,'ANSWERED');assert.equal(publishes.length,1);assert.equal(finishes.length,0);
   assert.equal(publishes[0].expectedControllerVersion,7);
   assert.equal(publishes[0].helpRequestId,'help1');
+  assert.equal(publishes[0].expectedScheduleVersion,2);
+  assert.equal(publishes[0].expectedCourseStateVersion,5);
+  assert.equal(publishes[0].expectedPlanId,'plan1');
+  assert.equal(publishes[0].expectedPlanVersion,1);
+  assert.equal(publishes[0].expectedBlueprintVersion,3);
   assert.equal(publishes[0].idempotencyKey,'d14-help-answer:help1');
 });
 test('D14 defers strategically instead of interrupting and bounds repeated deferrals',async()=>{

@@ -159,6 +159,10 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
         message:result.teacherMessage,idempotencyKey:'d14-help-answer:'+helpRequestId,helpRequestId,
         expectedBlueprintId:ctx.blueprint?.lesson_blueprint_id||null,
         expectedBlueprintVersion:ctx.blueprint?.version_no==null?null:Number(ctx.blueprint.version_no),
+        expectedScheduleVersion:ctx.classRow.schedule_version,
+        expectedCourseStateVersion:ctx.classRow.course_state_version,
+        expectedPlanId:ctx.plan?.course_plan_id||null,
+        expectedPlanVersion:ctx.plan?.version_no==null?null:Number(ctx.plan.version_no),
       });
       return {accepted:true,status:'ANSWERED',helpRequestId,communicationId:published.communication_id};
     }catch(error){

@@ -104,7 +104,7 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
   async function assertCurrentTeachingAuthority(tx,studentId,classId){
     const {rows}=await tx.query(
       "select c.lifecycle_state as class_state,co.lifecycle_state as course_state,"+
-      "tv.timetable_state as timetable_state,c.schedule_version,c.source_timetable_version_id"+
+      "tv.timetable_state as timetable_state,c.schedule_version,c.source_timetable_version_id,c.course_id,co.state_version course_state_version"+
       " from public.teaching_classes c"+
       " join public.teaching_courses co on co.course_id=c.course_id and co.student_id=c.student_id"+
       " join public.teaching_timetable_versions tv on tv.timetable_version_id=c.source_timetable_version_id"+
@@ -121,17 +121,24 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
     }
     return current;
   }
-  async function publishTeacherTurn({studentId,classId,expectedControllerVersion,message,blocks=[],idempotencyKey,helpRequestId=null,expectedBlueprintId=null,expectedBlueprintVersion=null}){
+  async function publishTeacherTurn({studentId,classId,expectedControllerVersion,message,blocks=[],idempotencyKey,helpRequestId=null,expectedBlueprintId=null,expectedBlueprintVersion=null,expectedScheduleVersion=null,expectedCourseStateVersion=null,expectedPlanId=null,expectedPlanVersion=null}){
     const {validateBlock}=require('../d14/board');
     if(typeof message!=='string'||!message.trim()||message.length>5000||!Array.isArray(blocks)||blocks.length>30)throw Object.assign(new Error('Teacher turn invalid.'),{code:'TEACHING_D14_TEACHER_TURN_INVALID',status:422});
     const safe=blocks.map(validateBlock);
     return withTransaction(async(tx)=>{
       const existing=await tx.query('select * from public.teaching_teacher_communications where student_id=$1 and idempotency_key=$2',[studentId,idempotencyKey]);
       if(existing.rows[0])return existing.rows[0];
-      await assertCurrentTeachingAuthority(tx,studentId,classId);
+      const parent=await assertCurrentTeachingAuthority(tx,studentId,classId);
       const locked=await tx.query('select * from public.teaching_class_sessions where student_id=$1 and class_id=$2 for update',[studentId,classId]);const session=locked.rows[0];
       if(!session||session.lifecycle_state!=='ACTIVE'||Number(session.state_version)!==Number(expectedControllerVersion)||['ASSESSMENT','CLASSWORK','BREAK','INTERRUPTED'].includes(session.instructional_substate))throw Object.assign(new Error('Teacher turn targets stale or restricted Class state.'),{code:'TEACHING_D14_TEACHER_TURN_STALE',status:409});
       if(helpRequestId){
+        const failHelpStale=()=>{throw Object.assign(new Error('Classroom authority changed before help could publish.'),{code:'TEACHING_D14_HELP_STALE',status:409});};
+        if(String(parent.schedule_version)!==String(expectedScheduleVersion)
+          ||String(parent.course_state_version)!==String(expectedCourseStateVersion))failHelpStale();
+        const {rows:currentPlans=[]}=await tx.query("select course_plan_id,version_no from public.teaching_course_plans where student_id=$1 and course_id=$2 and plan_state<>'SUPERSEDED' order by version_no desc limit 1 for share",[studentId,parent.course_id]);
+        const currentPlan=currentPlans[0]||null;
+        if(String(currentPlan?.course_plan_id||'')!==String(expectedPlanId||'')
+          ||String(currentPlan?.version_no??'')!==String(expectedPlanVersion??''))failHelpStale();
         const {rows:currentBlueprintRows=[]}=await tx.query('select lesson_blueprint_id,version_no from public.teaching_lesson_blueprints where student_id=$1 and class_id=$2 order by version_no desc limit 1 for share',[studentId,classId]);
         const currentBlueprint=currentBlueprintRows[0]||null;
         if(String(currentBlueprint?.lesson_blueprint_id||'')!==String(expectedBlueprintId||'')||String(currentBlueprint?.version_no??'')!==String(expectedBlueprintVersion??''))throw Object.assign(new Error('Lesson blueprint changed before help could publish.'),{code:'TEACHING_D14_HELP_STALE',status:409});

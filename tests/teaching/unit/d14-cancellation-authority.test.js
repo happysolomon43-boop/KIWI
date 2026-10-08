@@ -104,3 +104,21 @@ test('Classroom snapshot and early entry refuse revoked timetable authority',asy
   ctx.session=null;
   await assert.rejects(d14.enter({id:'u'},'c'),{code:'TEACHING_D14_CLASS_TIMETABLE_SUPERSEDED'});
 });
+
+test('atomic raised-hand publication rejects a rescheduled Class or revised parent Course even if Controller version still matches',async()=>{
+  for(const parent of [
+    {class_state:'SCHEDULED',course_state:'ACTIVE',timetable_state:'APPROVED',course_id:'co',schedule_version:3,course_state_version:5},
+    {class_state:'SCHEDULED',course_state:'ACTIVE',timetable_state:'APPROVED',course_id:'co',schedule_version:2,course_state_version:6},
+  ]){
+    const {repo,statements}=classroomFake(parent);
+    await assert.rejects(repo.publishTeacherTurn({
+      studentId:'u',classId:'c',expectedControllerVersion:2,helpRequestId:'help1',
+      expectedScheduleVersion:2,expectedCourseStateVersion:5,
+      expectedPlanId:'plan1',expectedPlanVersion:1,
+      expectedBlueprintId:'blueprint1',expectedBlueprintVersion:1,
+      message:'This obsolete Teacher answer must never publish.',
+      idempotencyKey:'d14-help-answer:help1',
+    }),{code:'TEACHING_D14_HELP_STALE',status:409});
+    assert.ok(!statements.some(x=>x.sql.includes('insert into public.teaching_teacher_communications')));
+  }
+});
