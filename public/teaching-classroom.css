@@ -136,3 +136,8 @@
 .tc-sheet-form textarea{font-size:16px;line-height:1.5;min-height:110px}
 @media(max-width:699px){.tc-raise-hand{min-height:48px;top:37%;font-size:11px;padding:10px 9px;max-width:112px}}
 @media(forced-colors:active){.tc-raise-hand{border:2px solid ButtonText;background:ButtonFace;color:ButtonText}}
+
+.tc-help-status{display:block;margin-top:6px;font-size:11px;font-weight:700;color:#a5dac0}
+.tc-help-reason{margin-top:5px;color:#a9c6b5;font-size:12px;line-height:1.55}
+.tc-raise-hand[data-help-status="RAISED"],.tc-raise-hand[data-help-status="PROCESSING"],.tc-raise-hand[data-help-status="DEFERRED"]{border-color:#c1efce}
+.tc-raise-hand[data-help-status="ANSWERED"]{box-shadow:0 0 0 2px rgba(174,244,200,.2),0 12px 42px #0008}

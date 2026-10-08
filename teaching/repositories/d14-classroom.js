@@ -155,6 +155,13 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
       if(['JOIN','ASK_TEACHER','NEED_HELP'].includes(kind))await assertCurrentTeachingAuthority(tx,studentId,classId);
       const current=await tx.query('select class_session_id,state_version,lifecycle_state from public.teaching_class_sessions where student_id=$1 and class_id=$2 for update',[studentId,classId]);
       if(session && (current.rows[0]?.class_session_id!==session.class_session_id||Number(current.rows[0]?.state_version)!==Number(session.state_version)))throw Object.assign(new Error('Class changed. Reload before acting.'),{status:409,code:'TEACHING_D14_STALE_CONTROLLER'});
+      if(['ASK_TEACHER','NEED_HELP'].includes(kind)){
+        // The session row above is locked, serializing concurrent student
+        // submissions across workers. Keep one raised hand in flight.
+        const {rows:recent=[]}=await tx.query("select status,created_at from public.teaching_classroom_help_requests where student_id=$1 and class_id=$2 order by created_at desc limit 1",[studentId,classId]);
+        if(recent[0]&&(['RAISED','PROCESSING','DEFERRED'].includes(recent[0].status)||Date.now()-Date.parse(recent[0].created_at)<12000))
+          throw Object.assign(new Error('A raised hand is still being reviewed. Please wait for the Teacher before asking again.'),{code:'TEACHING_D14_HELP_ALREADY_PENDING',status:429});
+      }
       const {rows}=await tx.query('insert into public.teaching_classroom_interactions(interaction_id,student_id,class_id,class_session_id,controller_version,interaction_kind,body,idempotency_key) values($1,$2,$3,$4,$5,$6,$7,$8) returning *',[randomUUID(),studentId,classId,session?.class_session_id||null,session?.state_version||null,kind,body,idempotencyKey]);
       if(!['ASK_TEACHER','NEED_HELP'].includes(kind))return rows[0];
       if(!outboxStore?.appendUsing)throw Object.assign(new Error('Durable raised-hand worker unavailable.'),{code:'TEACHING_D14_HELP_WORKER_UNAVAILABLE',status:503});

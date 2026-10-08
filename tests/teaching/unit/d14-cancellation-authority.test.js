@@ -13,6 +13,7 @@ function classroomFake(parent={class_state:'CANCELLED',course_state:'ACTIVE',tim
     if(sql.includes('from public.teaching_classes c')&&sql.includes('for share of c,co'))return {rows:[parent]};
     if(sql.includes('from public.teaching_class_sessions where student_id=$1 and class_id=$2 for update'))
       return {rows:[{class_session_id:'session',state_version:2,lifecycle_state:'ACTIVE',instructional_substate:'INSTRUCTION'}]};
+    if(sql.includes('select status,created_at from public.teaching_classroom_help_requests'))return {rows:[]};
     if(sql.includes('insert into public.teaching_classroom_help_requests'))return {rows:[]};
     if(sql.includes('insert into public.teaching_teacher_communications')||sql.includes('insert into public.teaching_classroom_interactions'))
       return {rows:[{interaction_id:'interaction'}]};

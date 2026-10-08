@@ -224,13 +224,14 @@ function syncSheet(){
   if(!messages.length)log.replaceChildren($('p','tc-sheet-help','Your raised-hand questions and confirmed Teacher replies will appear here.'));
   else log.replaceChildren(...messages);
   if(stick)log.scrollTop=log.scrollHeight;
-  const allowed=Boolean(state.snapshot.teacherMessagingAllowed)&&!state.reviewOnly;
+  const outstanding=(state.snapshot.helpRequests||[]).some(item=>['RAISED','PROCESSING','DEFERRED'].includes(item.status));
+  const allowed=Boolean(state.snapshot.teacherMessagingAllowed)&&!state.reviewOnly&&!outstanding;
   const form=state.sheet.querySelector('.tc-teacher-form');
   if(form)form.hidden=!allowed;
   const help=state.sheet.querySelector('.tc-teacher-limits');
-  if(help)help.textContent=allowed
-    ?'A raised hand is saved for the Teacher. The current Classroom does not yet guarantee an automatic AI reply.'
-    :'Raising your hand is unavailable while this Class is closed, paused, or in a protected activity.';
+  if(help)help.textContent=outstanding
+    ?'Your hand is raised. The Teacher is processing your question; wait for the decision before asking another.'
+    :allowed?'The Teacher will decide whether to answer now, briefly defer, or explain why a question cannot be answered.':'You can review earlier questions, but cannot raise your hand during this protected or inactive activity.';
 }
 function openSheet(kind){
   if(!state.snapshot||!state.host||!['notebook','teacher'].includes(kind))return;
