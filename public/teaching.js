@@ -1024,6 +1024,10 @@ function renderCourseIntake() {
 }
 
 function renderActiveTeachingView() {
+  // Independently owned Calendar / Record / Work views render through their
+  // registered navigation action. Delayed Course hydration must NEVER replace
+  // their DOM with the Overview. Restoring navigation calls onSelect explicitly.
+  if (activeTeachingView === 'navigation') return;
   if (activeTeachingView === 'intake') renderCourseIntake();
   else if (activeTeachingView === 'course') renderCourseWorkspace();
   else renderTeachingOverview();
