@@ -134,16 +134,6 @@ function renderBoard(s){
   if(scene.title)panel.append($('h3','tc-scene-title',scene.title));
   const blocks=$('div','tc-board-blocks');scene.items.forEach((item)=>blocks.append(renderBlock(item)));panel.append(blocks);return panel;
 }
-function renderNotebook(s){
-  const panel=$('section','tc-notebook');add(panel,add($('div','tc-panel-head'),add($('div',''),$('div','tc-eyebrow','YOUR OWN RECORD'),$('h2','','Notebook'))));
-  if(!s.notebookAllowed){panel.append(notice('Notebook unavailable','This controlled activity does not permit your notes.'));return panel;}
-  if(state.reviewOnly){panel.append(notice('Read-only history','Notebook entries remain available, but reviewing this Class cannot change its record.'));s.notebook.forEach((entry)=>panel.append(add($('article','tc-note'),$('small','',entry.source_kind==='BOARD_REFERENCE'?'SAVED FROM BOARD':'PERSONAL NOTE'),$('p','',entry.content))));return panel;}
-  const form=$('form','tc-note-form');const input=$('textarea','');input.placeholder='Write a thought, question or connection…';input.maxLength=10000;input.setAttribute('aria-label','Notebook entry');
-  const submit=button('Save note',()=>{},'tc-button tc-button--solid');submit.type='submit';
-  form.addEventListener('submit',(event)=>{event.preventDefault();if(input.value.trim())act('notebook',{content:input.value.trim()});});add(form,input,submit);panel.append(form);
-  const list=$('div','tc-notes');if(!s.notebook.length)list.append($('p','tc-empty-copy','Your notes are yours. Save an explanation from the Board or write your own.'));
-  s.notebook.forEach((entry)=>list.append(add($('article','tc-note'),$('small','',entry.source_kind==='BOARD_REFERENCE'?'SAVED FROM BOARD':'PERSONAL NOTE'),$('p','',entry.content))));panel.append(list);return panel;
-}
 function renderWorkspace(s){
   const panel=$('section','tc-workspace');add(panel,add($('div','tc-panel-head'),add($('div',''),$('div','tc-eyebrow','YOUR SPACE'),$('h2','',s.modeKey==='INDEPENDENT_PRACTICE'?'Work independently':'Student Workspace'))));
   if(state.reviewOnly){panel.append(notice('Past Class record','Review the Board, summary and Notebook without creating a new attendance interaction.'));return panel;}
@@ -239,7 +229,7 @@ function openSheet(kind){
         save.disabled=cancel.disabled=true;input.readOnly=true;status.textContent='Saving note…';
         try{
           await kiwiApiRequest('/teaching/classes/'+encodeURIComponent(classId)+'/notebook',{method:'POST',body:{content,idempotencyKey:key}});
-          if(classId===state.classId){closeSheet();await fetchSnapshot();}
+          if(classId===state.classId){closeSheet();await fetchSnapshot().catch(()=>{});}
         }catch(error){status.textContent=error.message||'Could not confirm saving. Retry safely with the same note.';}
         finally{save.disabled=cancel.disabled=false;input.readOnly=false;}
       });
