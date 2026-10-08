@@ -63,10 +63,11 @@ function createD23Service({d07,d08,d09,d10,d14,d16,d19,d20,d21,d22,clock=()=>new
       coursesPromise,d09.getCalendar(user,{from,to,currentTimeZone}),assessmentsPromise,
     ]);
     const courseTitleById=new Map(courses.map((course)=>[idOf(course),courseTitle(course)]));
+    const subjectNameById=new Map(courses.map((course)=>[idOf(course),course.subject_name||course.subjectName||null]));
     const eventById=new Map(),conflictedIds=new Set();
     const addEvent=(candidate)=>{
       if(!candidate)return;
-      const event=Object.freeze({...candidate,courseTitle:candidate.courseTitle||courseTitleById.get(String(candidate.courseId||''))||'Course'});
+      const event=Object.freeze({...candidate,courseTitle:candidate.courseTitle||courseTitleById.get(String(candidate.courseId||''))||'Course',subjectName:subjectNameById.get(String(candidate.courseId||''))||null});
       if(conflictedIds.has(event.id))return;
       const existing=eventById.get(event.id);
       if(!existing){eventById.set(event.id,event);return;}

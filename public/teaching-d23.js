@@ -78,7 +78,15 @@ function todayCard(label, item) {
   if (!item) return null;
   const node = $('button', 'teaching-today-card'); node.type = 'button';
   const when = item.dueAt || item.startsAt || item.changedAt || null;
-  node.append($('span', 'teaching-today-card__label', label), $('strong', '', item.title || human(item.kind) || 'Teaching item'), $('small', '', when ? dateTime(when) : human(item.kind)));
+  const isClass = String(item.kind || '').toUpperCase() === 'CLASS';
+  const linkedCourse = isClass ? courses.getCourse?.(item.courseId) : null;
+  const className = isClass ? displayCourseName(item.courseTitle || linkedCourse?.title, item.subjectName || 'Teaching Class') : null;
+  node.append($('span', 'teaching-today-card__label', label), $('strong', '', className || item.title || human(item.kind) || 'Teaching item'));
+  if (isClass) {
+    const subject = String(item.subjectName || linkedCourse?.subject_name || '').trim();
+    node.append($('small', '', subject && subject.toLowerCase() !== className.toLowerCase() ? `Teaching class · ${subject}` : 'Teaching class'));
+  }
+  node.append($('small', '', when ? dateTime(when) : human(item.kind)));
   node.addEventListener('click', () => {
     const kind = String(item.kind || '').toUpperCase();
     if (kind === 'WORK') nav.open('work');
