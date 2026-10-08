@@ -2,6 +2,7 @@
 
 const express = require('express');
 const crypto = require('node:crypto');
+const { createAdminClassroomWalkthroughRouter } = require('./admin-classroom-walkthrough');
 
 const ATTEST_PATH = '/api/teaching/internal/classroom-test/attest';
 const KEY_HEADER = 'x-kiwi-classroom-test-key';
@@ -100,7 +101,7 @@ function sandboxConfiguration(env) {
     return target.origin;
   } catch (_) { return null; }
 }
-function createAdminClassroomTestRouter({query,env=process.env,fetchImpl=globalThis.fetch}={}) {
+function createAdminClassroomTestRouter({query,withTransaction=null,classroomService=null,env=process.env,fetchImpl=globalThis.fetch}={}) {
   if(typeof query!=='function'||typeof fetchImpl!=='function') throw new TypeError('Admin Classroom test requires query and fetch.');
   const router=express.Router();
   router.use(async (req,res,next)=>{
@@ -145,6 +146,9 @@ function createAdminClassroomTestRouter({query,env=process.env,fetchImpl=globalT
       },execution:'NORMAL_KIWI_CLASSROOM'});
     }catch(_){return res.status(503).json({code:'CLASSROOM_TEST_SOURCE_UNAVAILABLE'});}
   });
+  if(typeof withTransaction==='function' && classroomService?.listClasses) {
+    router.use('/walkthrough',createAdminClassroomWalkthroughRouter({query,withTransaction,classroomService,env}));
+  }
   router.get('/access',(_req,res)=>{
     res.setHeader('Cache-Control','no-store');
     res.json({admin:true,feature:'classroom-test',isolationRequired:true});
