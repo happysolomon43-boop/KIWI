@@ -24,13 +24,15 @@ test('Late preparation is available only in an actual recoverable live Class',()
   assert.equal(eligibility(15).allowed,true);
   assert.equal(eligibility(0).allowed,true);
   assert.equal(eligibility(-1).allowed,false);
-  assert.equal(eligibility(21).allowed,false);
+  assert.equal(eligibility(21).allowed,true);
+  assert.equal(eligibility(44).allowed,true);
+  assert.equal(eligibility(46).allowed,false);
   assert.equal(eligibility(75).allowed,false);
   assert.equal(eligibility(1,{session:{lifecycle_state:'ACTIVE'}}).allowed,false);
   assert.equal(eligibility(1,{classRow:{lifecycle_state:'CANCELLED'}}).allowed,false);
   assert.equal(eligibility(1,{classRow:{source_timetable_state:'SUPERSEDED'}}).allowed,false);
   assert.equal(eligibility(1,{classRow:{course_lifecycle_state:'PAUSED'}}).allowed,false);
-  assert.ok(MAX_LATE_START_MS<=20*60*1000);
+  assert.ok(MAX_LATE_START_MS<=45*60*1000);
   assert.ok(MIN_TEACHING_REMAINING_MS>=20*60*1000);
 });
 
