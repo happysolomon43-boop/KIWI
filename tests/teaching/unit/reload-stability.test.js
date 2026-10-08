@@ -14,7 +14,7 @@ test('Teaching production document keeps the established shell and does not load
   assert.doesNotMatch(html, /teaching-d23-live\.(?:js|css)/);
   assert.doesNotMatch(html, /class="d23-shell"/);
   assert.match(html, /id="teachingApp"/);
-  assert.match(html, /src="\/teaching\.js\?v=20261008-live-reliability-1"/);
+  assert.match(html, /src="\/teaching\.js\?v=20261008-classroom-sheets-1"/);
 });
 
 test('Teaching browser assets revalidate and exhausted analysis cannot remain active', () => {
@@ -76,4 +76,20 @@ test('native D23 information module extends the established shell and cannot cre
   assert.match(d23, /buildPrimaryDock\(\)/);
   assert.doesNotMatch(d23, /d23-shell|renderToday\(|renderCourses\(|d23-mobile-dock/);
   assert.doesNotMatch(d23, /document\.body\.replaceChildren/);
+});
+
+
+test('delayed Course hydration never overwrites an independently owned Calendar view',()=>{
+  const vm=require('node:vm');
+  const source=read('public/teaching.js');
+  const first=source.indexOf('function renderActiveTeachingView() {');
+  const last=source.indexOf('\nasync function loadTeachingWorkspace()',first);
+  assert.ok(first>0&&last>first);
+  const calls=[];
+  const context={activeTeachingView:'navigation',renderTeachingOverview:()=>calls.push('overview'),renderCourseIntake:()=>calls.push('intake'),renderCourseWorkspace:()=>calls.push('course')};
+  vm.runInNewContext(source.slice(first,last)+';renderActiveTeachingView();',context);
+  assert.deepEqual(calls,[]);
+  context.activeTeachingView='course';vm.runInNewContext('renderActiveTeachingView();',context);
+  context.activeTeachingView='overview';vm.runInNewContext('renderActiveTeachingView();',context);
+  assert.deepEqual(calls,['course','overview']);
 });
