@@ -348,7 +348,24 @@ function createD11Service({
     }
     const output=result?.validatedResult?.output;
     if(!result?.accepted || !output) {
-      fail('Lesson Planner did not produce an accepted provisional Blueprint.','TEACHING_D11_BLUEPRINT_NOT_ACCEPTED',422);
+      // A schema/domain validation rejection is already a final provisional
+      // decision after D05's own validation retry plus D11's single distinct
+      // repair. Replaying the same durable PPL event only reuses rejected
+      // idempotency keys and cannot improve the candidate.
+      const error=new Error('Lesson Planner did not produce an accepted provisional Blueprint.');
+      error.code='TEACHING_D11_BLUEPRINT_NOT_ACCEPTED';
+      error.status=422;
+      if(result?.validationFailure?.kind==='VALIDATION_REJECTION'
+        ||result?.validationFailure?.stage==='schema'
+        ||result?.validationFailure?.stage==='domain'){
+        error.retryable=false;
+        error.validationFailure=Object.freeze({
+          kind:'VALIDATION_REJECTION',
+          reason:result.validationFailure.reason||'TEACHING_D11_BLUEPRINT_INVALID',
+          fieldPath:result.validationFailure.fieldPath||null,
+        });
+      }
+      throw error;
     }
     const validation=validateLessonBlueprintProposal(output,{
       learningUnits:context.learningUnits,
