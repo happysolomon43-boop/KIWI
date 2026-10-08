@@ -169,6 +169,122 @@ function renderWorkspace(s){
   if(['GUIDED_PRACTICE','INDEPENDENT_PRACTICE'].includes(s.modeKey))actions.append(button("I'm ready",()=>act('interactions',{kind:'READY'}),'tc-button tc-button--quiet'));
   panel.append(actions);return panel;
 }
+
+function closeSheet({restore=true}={}){
+  if(!state.sheet)return;
+  const focus=state.sheetFocus;
+  state.sheet.remove();
+  state.sheet=null;state.sheetKind=null;state.sheetFocus=null;state.sheetKey=null;
+  const root=state.host?.querySelector('.tc-shell');
+  if(root)root.inert=false;
+  if(restore&&focus?.isConnected)focus.focus({preventScroll:true});
+}
+function syncSheet(){
+  if(state.sheetKind!=='teacher'||!state.sheet||!state.snapshot)return;
+  const log=state.sheet.querySelector('.tc-conversation');
+  if(!log)return;
+  const stick=log.scrollHeight-log.scrollTop-log.clientHeight<65;
+  const entries=Array.isArray(state.snapshot.teacherConversation)?state.snapshot.teacherConversation:[];
+  const messages=entries.map(item=>{
+    const row=$('article','tc-turn');row.dataset.role=item.role||'STUDENT';
+    const who=item.role==='TEACHER'?(state.snapshot.identity?.teacher_name||'AI Teacher'):'You';
+    const stamp=item.sentAt?new Date(item.sentAt).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):'';
+    row.append($('span','tc-turn-meta',who+(stamp?' · '+stamp:'')),$('p','',item.message||''));
+    return row;
+  });
+  if(!messages.length)log.replaceChildren($('p','tc-sheet-help','Your questions and published Teacher replies will appear here.'));
+  else log.replaceChildren(...messages);
+  if(stick)log.scrollTop=log.scrollHeight;
+  const allowed=Boolean(state.snapshot.teacherMessagingAllowed)&&!state.reviewOnly;
+  const form=state.sheet.querySelector('.tc-teacher-form');
+  if(form)form.hidden=!allowed;
+  const help=state.sheet.querySelector('.tc-teacher-limits');
+  if(help)help.textContent=allowed
+    ?'Messages are recorded for the AI Teacher. Replies appear when the lesson controller publishes them; an immediate answer is not guaranteed.'
+    :'Messaging is read-only while this Class is closed, paused, or in a protected activity.';
+}
+function openSheet(kind){
+  if(!state.snapshot||!state.host||!['notebook','teacher'].includes(kind))return;
+  if(state.sheet){if(state.sheetKind===kind)return;closeSheet({restore:false});}
+  const trigger=document.activeElement;
+  const shade=$('div','tc-sheet');
+  const backdrop=button('',()=>closeSheet(),'tc-sheet-backdrop');backdrop.setAttribute('aria-label','Close this panel');
+  const dialog=$('section','tc-sheet-dialog');dialog.setAttribute('role','dialog');dialog.setAttribute('aria-modal','true');
+  dialog.setAttribute('aria-labelledby','tc-sheet-title');
+  const top=$('div','tc-sheet-heading');
+  const title=kind==='notebook'?'Notebook':'Message AI Teacher';
+  const label=kind==='notebook'?'YOUR PRIVATE NOTES':'CLASS CONVERSATION';
+  const headline=$('h2','',title);headline.id='tc-sheet-title';
+  top.append(add($('div',''),$('div','tc-eyebrow',label),headline),button('×',()=>closeSheet(),'tc-sheet-close'));
+  dialog.append(top);
+  if(kind==='notebook'){
+    const list=$('div','tc-sheet-notes');
+    const items=state.snapshot.notebook||[];
+    if(!items.length)list.append($('p','tc-sheet-help','You have not saved notes for this Class yet.'));
+    items.forEach(item=>list.append(add($('article','tc-sheet-note'),$('small','',item.source_kind==='BOARD_REFERENCE'?'Saved from Board':'Personal note'),$('p','',item.content||''))));
+    dialog.append(list);
+    if(state.snapshot.notebookAllowed&&!state.reviewOnly){
+      const form=$('form','tc-sheet-form');
+      const input=$('textarea');input.rows=5;input.maxLength=10000;input.placeholder='Write what you want to remember…';input.setAttribute('aria-label','Notebook entry');
+      const status=$('p','tc-sheet-status');status.setAttribute('role','status');
+      const save=button('Save note',()=>{},'tc-button tc-button--solid');save.type='submit';
+      const cancel=button('Cancel',()=>closeSheet(),'tc-button tc-button--quiet');
+      form.addEventListener('submit',async(event)=>{
+        event.preventDefault();
+        const content=input.value.trim();
+        if(!content){status.textContent='Write something before saving.';return;}
+        if(save.disabled)return;
+        const classId=state.classId;state.sheetKey ||= crypto.randomUUID();
+        const key=state.sheetKey;
+        save.disabled=cancel.disabled=true;input.readOnly=true;status.textContent='Saving note…';
+        try{
+          await kiwiApiRequest('/teaching/classes/'+encodeURIComponent(classId)+'/notebook',{method:'POST',body:{content,idempotencyKey:key}});
+          if(classId===state.classId){closeSheet();await fetchSnapshot();}
+        }catch(error){status.textContent=error.message||'Could not confirm saving. Retry safely with the same note.';}
+        finally{save.disabled=cancel.disabled=false;input.readOnly=false;}
+      });
+      form.append(input,status,add($('div','tc-sheet-footer'),cancel,save));dialog.append(form);
+      window.queueMicrotask(()=>{if(state.sheet===shade)input.focus({preventScroll:true});});
+    }else dialog.append($('p','tc-sheet-help','Notebook editing is disabled in this activity. Saved entries are read-only.'));
+  }else{
+    const log=$('div','tc-conversation');log.setAttribute('role','log');log.setAttribute('aria-label','Teacher message history');
+    const limits=$('p','tc-sheet-help tc-teacher-limits');
+    const form=$('form','tc-sheet-form tc-teacher-form');
+    const type=$('select');type.setAttribute('aria-label','Message type');
+    type.append(new Option('Ask a question','ASK_TEACHER'),new Option('I need help','NEED_HELP'));
+    const input=$('textarea');input.rows=4;input.maxLength=2000;input.placeholder='Ask about the current lesson…';input.setAttribute('aria-label','Your message to AI Teacher');
+    const status=$('p','tc-sheet-status');status.setAttribute('role','status');
+    const send=button('Send message',()=>{},'tc-button tc-button--solid');send.type='submit';
+    const cancel=button('Cancel',()=>closeSheet(),'tc-button tc-button--quiet');
+    form.addEventListener('submit',async(event)=>{
+      event.preventDefault();
+      const body=input.value.trim(),kind=type.value;
+      if(!body){status.textContent='Write a message before sending.';return;}
+      if(!state.snapshot?.teacherMessagingAllowed||state.reviewOnly){status.textContent='Messaging is not permitted in this Class state.';return;}
+      if(send.disabled)return;
+      const classId=state.classId;state.sheetKey ||= crypto.randomUUID();
+      const key=state.sheetKey;
+      send.disabled=cancel.disabled=type.disabled=true;input.readOnly=true;status.textContent='Recording message…';
+      try{
+        const result=await kiwiApiRequest('/teaching/classes/'+encodeURIComponent(classId)+'/interactions',{method:'POST',body:{kind,body,idempotencyKey:key}});
+        if(classId===state.classId){
+          input.value='';state.sheetKey=null;
+          status.textContent=result.status==='RECORDED_FOR_TEACHER'?'Delivered to Class record. Replies appear when published.':'Message recorded.';
+          await fetchSnapshot();
+        }
+      }catch(error){status.textContent=error.message||'Delivery unconfirmed. Retry to send the same message safely.';}
+      finally{send.disabled=cancel.disabled=type.disabled=false;input.readOnly=false;}
+    });
+    form.append(type,input,status,add($('div','tc-sheet-footer'),cancel,send));
+    dialog.append(log,limits,form);
+    window.queueMicrotask(()=>{if(state.sheet===shade)(form.hidden?dialog.querySelector('.tc-sheet-close'):input).focus({preventScroll:true});});
+  }
+  shade.append(backdrop,dialog);
+  state.sheet=shade;state.sheetKind=kind;state.sheetFocus=trigger;
+  const root=state.host.querySelector('.tc-shell');if(root)root.inert=true;
+  state.host.append(shade);
+  syncSheet();
+}
 function renderControls(s){const details=$('details','tc-controls');if(state.reviewOnly)return details;details.append($('summary','','Class controls'));
   const items=$('div','tc-controls__items');[['Request short break','BREAK_REQUEST'],['Request early dismissal','EARLY_DISMISSAL_REQUEST'],['Report technical issue','TECHNICAL_ISSUE']].forEach(([label,kind])=>items.append(button(label,()=>act('interactions',{kind}),'tc-button tc-button--quiet')));
   details.append(items);if(!s.controlsEnabled)details.hidden=true;return details;}
