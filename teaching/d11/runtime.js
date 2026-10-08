@@ -309,8 +309,12 @@ function registerD11Runtime({
       if(Number(context.classRow.schedule_version)!==Number(event.payload?.schedule_version ?? event.aggregate_version)) {
         return {disposition:RECONCILIATION_DISPOSITIONS.SUPERSEDED,reason:'CLASS_SCHEDULE_VERSION_CHANGED'};
       }
-      if(String(context.classRow.course_lifecycle_state)!=='ACTIVE'||String(context.classRow.lifecycle_state)==='CANCELLED') {
-        return {disposition:RECONCILIATION_DISPOSITIONS.SUPERSEDED,reason:'CLASS_OR_COURSE_NOT_ACTIVE'};
+      if(String(context.classRow.course_lifecycle_state)!=='ACTIVE'
+        ||String(context.classRow.lifecycle_state)!=='SCHEDULED'
+        ||String(context.classRow.source_timetable_state)!=='APPROVED'
+        ||(event.payload?.timetable_version_id != null
+          && String(event.payload.timetable_version_id)!==String(context.classRow.source_timetable_version_id||''))) {
+        return {disposition:RECONCILIATION_DISPOSITIONS.SUPERSEDED,reason:'CLASS_COURSE_OR_TIMETABLE_NOT_CURRENT'};
       }
       if(context.session) return {disposition:RECONCILIATION_DISPOSITIONS.ALREADY_SATISFIED,reason:'CONTROLLER_ALREADY_STARTED'};
       if(Date.now()>=Date.parse(context.classRow.scheduled_end_at)) {

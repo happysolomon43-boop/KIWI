@@ -62,6 +62,30 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
   }
   async function latestTeacherMessage(studentId,classId){const {rows}=await query("select communication_id,message,created_at from public.teaching_teacher_communications where student_id=$1 and class_id=$2 and visibility='STUDENT' order by created_at desc limit 1",[studentId,classId]);return rows[0]||null;}
   async function firstEntry(studentId,classId){const {rows}=await query("select created_at from public.teaching_classroom_interactions where student_id=$1 and class_id=$2 and interaction_kind='JOIN' order by created_at limit 1",[studentId,classId]);return rows[0]||null;}
+  // Classroom intent and Teacher publication must never outlive the authority
+  // of their Course/Class/timetable. Hold the parent locks in the SAME
+  // transaction as message persistence, so a cancellation racing an in-flight
+  // Teacher model result cannot publish after its Class is withdrawn.
+  async function assertCurrentTeachingAuthority(tx,studentId,classId){
+    const {rows}=await tx.query(
+      "select c.lifecycle_state as class_state,co.lifecycle_state as course_state,"+
+      "tv.timetable_state as timetable_state,c.schedule_version,c.source_timetable_version_id"+
+      " from public.teaching_classes c"+
+      " join public.teaching_courses co on co.course_id=c.course_id and co.student_id=c.student_id"+
+      " join public.teaching_timetable_versions tv on tv.timetable_version_id=c.source_timetable_version_id"+
+      " and tv.student_id=c.student_id"+
+      " where c.student_id=$1 and c.class_id=$2 for share of c,co,tv",
+      [studentId,classId]
+    );
+    const current=rows?.[0];
+    if(!current||current.class_state!=='SCHEDULED'||current.course_state!=='ACTIVE'
+      ||current.timetable_state!=='APPROVED'){
+      const error=new Error('Classroom publishing stopped because Class parent authority changed.');
+      error.code='TEACHING_D14_PARENT_AUTHORITY_REVOKED';
+      error.status=409;error.retryable=false;throw error;
+    }
+    return current;
+  }
   async function publishTeacherTurn({studentId,classId,expectedControllerVersion,message,blocks=[],idempotencyKey}){
     const {validateBlock}=require('../d14/board');
     if(typeof message!=='string'||!message.trim()||message.length>5000||!Array.isArray(blocks)||blocks.length>30)throw Object.assign(new Error('Teacher turn invalid.'),{code:'TEACHING_D14_TEACHER_TURN_INVALID',status:422});
@@ -69,6 +93,7 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
     return withTransaction(async(tx)=>{
       const existing=await tx.query('select * from public.teaching_teacher_communications where student_id=$1 and idempotency_key=$2',[studentId,idempotencyKey]);
       if(existing.rows[0])return existing.rows[0];
+      await assertCurrentTeachingAuthority(tx,studentId,classId);
       const locked=await tx.query('select * from public.teaching_class_sessions where student_id=$1 and class_id=$2 for update',[studentId,classId]);const session=locked.rows[0];
       if(!session||session.lifecycle_state!=='ACTIVE'||Number(session.state_version)!==Number(expectedControllerVersion)||['ASSESSMENT','BREAK','INTERRUPTED'].includes(session.instructional_substate))throw Object.assign(new Error('Teacher turn targets stale or restricted Class state.'),{code:'TEACHING_D14_TEACHER_TURN_STALE',status:409});
       const {rows}=await tx.query("insert into public.teaching_teacher_communications(communication_id,student_id,class_id,class_session_id,controller_version,message,visibility,provenance_refs,idempotency_key) values($1,$2,$3,$4,$5,$6,'STUDENT',$7::jsonb,$8) returning *",[randomUUID(),studentId,classId,session.class_session_id,session.state_version,message.trim(),JSON.stringify([`class-session:${session.class_session_id}@${session.state_version}`]),idempotencyKey]);
@@ -91,6 +116,7 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
     return withTransaction(async(tx)=>{
       const existing=await tx.query('select * from public.teaching_classroom_interactions where student_id=$1 and idempotency_key=$2',[studentId,idempotencyKey]);
       if(existing.rows[0]){if(existing.rows[0].class_id!==classId||existing.rows[0].interaction_kind!==kind||existing.rows[0].body!==body)throw Object.assign(new Error('Conflicting interaction retry.'),{status:409,code:'TEACHING_D14_IDEMPOTENCY_CONFLICT'});return existing.rows[0];}
+      if(['JOIN','ASK_TEACHER','NEED_HELP'].includes(kind))await assertCurrentTeachingAuthority(tx,studentId,classId);
       const current=await tx.query('select class_session_id,state_version,lifecycle_state from public.teaching_class_sessions where student_id=$1 and class_id=$2 for update',[studentId,classId]);
       if(session && (current.rows[0]?.class_session_id!==session.class_session_id||Number(current.rows[0]?.state_version)!==Number(session.state_version)))throw Object.assign(new Error('Class changed. Reload before acting.'),{status:409,code:'TEACHING_D14_STALE_CONTROLLER'});
       const {rows}=await tx.query('insert into public.teaching_classroom_interactions(interaction_id,student_id,class_id,class_session_id,controller_version,interaction_kind,body,idempotency_key) values($1,$2,$3,$4,$5,$6,$7,$8) returning *',[randomUUID(),studentId,classId,session?.class_session_id||null,session?.state_version||null,kind,body,idempotencyKey]);return rows[0];

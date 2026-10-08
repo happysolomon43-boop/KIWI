@@ -457,6 +457,15 @@ function createD11LessonControllerRepository({
   } = {}) {
     const classRow = await loadClassBase(studentId, classId, tx, true);
     if (!classRow) return null;
+    // EVERY caller, including live recovery and model tasks racing a Course
+    // cancellation, must obey the same current-parent authority gate. A caller
+    // without an expected timetable ref is not exempt from this check.
+    if (classRow.lifecycle_state!=='SCHEDULED'
+      ||classRow.course_lifecycle_state!=='ACTIVE'
+      ||classRow.source_timetable_state!=='APPROVED'
+      || !Number.isFinite(Date.parse(classRow.scheduled_end_at))
+      ||(Date.parse(classRow.scheduled_end_at)<=clock().getTime()
+        && !await getSession(studentId,classId,tx,false))) return null;
     // Final locked eligibility check: a timetable may have been superseded
     // after the fanout event was published. Never create new preparation or due
     // events for a cancelled, old, already-started, or elapsed Class.
@@ -660,7 +669,38 @@ function createD11LessonControllerRepository({
     promptFamilyRef='TPF-05',
   } = {}) {
     return withTransaction(async (tx) => {
+      // Fence the final result of an already-running AI call against current
+      // Course/Class/Timetable/Plan authority under the same locks used by
+      // rescheduling. Provider requests may have been sent before cancellation;
+      // their outputs must NEVER create artifacts after an obsolete parent.
+      const klass=await loadClassBase(studentId,classId,tx,true);
+      const plan=klass?await loadCurrentPlan(studentId,klass.course_id,tx,true):null;
+      const session=klass?await getSession(studentId,classId,tx,false):null;
       const workspace = await getPreparationWorkspace(studentId,classId,tx,true);
+      const pre=workspace?.current_authoritative_input_bundle_ref
+        ?(await tx.query(
+          'select preconditions from teaching_preparation.authoritative_input_bundles where input_bundle_id=$1 and workspace_id=$2',
+          [workspace.current_authoritative_input_bundle_ref,workspace.workspace_id]
+        )).rows?.[0]?.preconditions:null;
+      const stillCurrent=Boolean(klass&&plan&&workspace&&pre
+        &&klass.lifecycle_state==='SCHEDULED'
+        &&klass.course_lifecycle_state==='ACTIVE'
+        &&klass.source_timetable_state==='APPROVED'
+        &&Date.parse(klass.scheduled_start_at)>clock().getTime()
+        &&!session
+        &&workspace.lifecycle_state==='ACTIVE'
+        &&String(pre.course_state_version)===String(klass.course_state_version)
+        &&String(pre.class_schedule_version)===String(klass.schedule_version)
+        &&String(pre.timetable_version_id||'')===String(klass.source_timetable_version_id||'')
+        &&String(pre.course_plan_id)===String(plan.course_plan_id)
+        &&String(pre.course_plan_version)===String(plan.version_no));
+      if(!stillCurrent){
+        const error=new Error('Lesson preparation parent authority changed before AI output capture.');
+        error.code='TEACHING_D11_PREPARATION_PARENT_SUPERSEDED';
+        error.retryable=false;
+        error.status=409;
+        throw error;
+      }
       if (!workspace || !workspace.current_authoritative_input_bundle_ref) {
         const error = new Error('D11 preparation workspace/input bundle is required before prepared artifact capture.');
         error.code = 'TEACHING_D11_PPL_WORKSPACE_REQUIRED';
@@ -802,7 +842,18 @@ function createD11LessonControllerRepository({
       throw error;
     }
     const plan = await loadCurrentPlan(expected.studentId, classRow.course_id, tx, true);
+    // Take a shared lock on the timetable authority, not just on its Class
+    // projection. A D10 supersession cannot commit between this final
+    // validation and the validated Blueprint insert.
+    const {rows:timetableRows}=await tx.query(
+      'select timetable_state from public.teaching_timetable_versions where student_id=$1 and timetable_version_id=$2 for share',
+      [expected.studentId,classRow.source_timetable_version_id]
+    );
     const mismatches = [];
+    if (classRow.lifecycle_state!=='SCHEDULED') mismatches.push('CLASS_NOT_SCHEDULED');
+    if (classRow.course_lifecycle_state!=='ACTIVE') mismatches.push('COURSE_NOT_ACTIVE');
+    if (classRow.source_timetable_state!=='APPROVED'||timetableRows?.[0]?.timetable_state!=='APPROVED')
+      mismatches.push('TIMETABLE_NOT_APPROVED');
     if (String(classRow.course_lifecycle_state) !== String(expected.courseLifecycleState)) mismatches.push('COURSE_LIFECYCLE');
     if (String(classRow.course_state_version) !== String(expected.courseStateVersion)) mismatches.push('COURSE_VERSION');
     if (String(classRow.schedule_version) !== String(expected.classScheduleVersion)) mismatches.push('CLASS_SCHEDULE_VERSION');
@@ -974,6 +1025,12 @@ function createD11LessonControllerRepository({
     const existing = await getSession(studentId,classId,tx,true);
     if (existing) return Object.freeze({ session:existing, inserted:false });
     const plan = await loadCurrentPlan(studentId,classRow.course_id,tx,true);
+    // Close the supersession race even when the timetable changed without
+    // touching the Class row's schedule_version.
+    const approvedTimetable=await tx.query(
+      'select timetable_state from public.teaching_timetable_versions where student_id=$1 and timetable_version_id=$2 for share',
+      [studentId,classRow.source_timetable_version_id]
+    );
     let blueprint = await latestBlueprint(studentId,classId,tx,true);
     if (!plan) {
       const error = new Error('Current Course Plan is required before Controller start.');
@@ -994,8 +1051,13 @@ function createD11LessonControllerRepository({
       error.status = 409;
       throw error;
     }
-    if (classRow.course_lifecycle_state !== 'ACTIVE' || classRow.lifecycle_state === 'CANCELLED') {
-      const error = new Error('Class/Course is not eligible for live Controller start.');
+    if (classRow.course_lifecycle_state !== 'ACTIVE'
+      || classRow.lifecycle_state !== 'SCHEDULED'
+      || classRow.source_timetable_state !== 'APPROVED'
+      || approvedTimetable.rows?.[0]?.timetable_state !== 'APPROVED'
+      || clock().getTime()<Date.parse(classRow.scheduled_start_at)
+      || clock().getTime()>=Date.parse(classRow.scheduled_end_at)) {
+      const error = new Error('Class/Course/approved timetable is not eligible for new live Controller start.');
       error.code = 'TEACHING_D11_CLASS_NOT_ACTIVE';
       error.status = 409;
       throw error;
