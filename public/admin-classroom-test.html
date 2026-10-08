@@ -6,7 +6,7 @@
   <meta name="robots" content="noindex,nofollow">
   <meta name="theme-color" content="#08140e">
   <title>Admin Classroom | KIWI</title>
-  <link rel="stylesheet" href="/teaching-classroom.css?v=20261009-direct-preview">
+  <link rel="stylesheet" href="/teaching-classroom.css?v=20261009-sequential-1">
   <style>
     :root{color-scheme:dark;--font-body:Inter,system-ui,-apple-system,sans-serif;--font-display:var(--font-body);--font-mono:ui-monospace,monospace;--teaching-muted:#b8cfbf;--teaching-border:rgba(148,221,174,.24);--teaching-accent:#a6edc0}
     *{box-sizing:border-box}
@@ -32,9 +32,25 @@
     .admin-page .tc-class-card{gap:18px}
     .admin-page .tc-class-card>div:first-child{min-width:0}
     #classroom-mount{min-height:60px}
+    .admin-walkthrough-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+    .admin-walkthrough-heading h2{font-size:clamp(1.35rem,4vw,1.7rem);margin:0}
+    .admin-review-meter{display:block;width:100%;height:11px;accent-color:#a2ecc0;margin:17px 0 24px}
+    .admin-step-list{display:grid;gap:12px}
+    .admin-step{padding:17px 19px;background:#0c1912;border:1px solid #2b4a35;border-radius:17px}
+    .admin-step--current{background:#183023;border-color:#9bdbb0}
+    .admin-step--reviewed{border-color:#386947}
+    .admin-step-top{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap}
+    .admin-step h3{font-size:clamp(.98rem,3vw,1.15rem);margin:6px 0 0}
+    .admin-step-badge{font-size:.78rem;font-weight:750;color:#b7d8be;border:1px solid #3b6248;padding:7px 10px;border-radius:100px}
+    .admin-step--current .admin-step-badge{color:#d4f7df;border-color:#68ae7c}
+    .admin-step-actions{display:flex;gap:9px;flex-wrap:wrap}
+    .admin-action--quiet{background:transparent;color:#d1e7d5;border:1px solid #5a8968}
+    .admin-action--live{background:#e4d3a0;color:#392b13}
+    .admin-walkthrough-footer{display:flex;justify-content:space-between;align-items:center;gap:15px;flex-wrap:wrap;margin-top:24px}
+    .admin-completed{padding:13px 16px;margin-bottom:18px;border:1px solid #72b48b;border-radius:12px;background:#183d2a;color:#d0f4dc;line-height:1.5}
     [hidden]{display:none!important}
     :focus-visible{outline:3px solid #97dba8;outline-offset:3px}
-    @media(max-width:620px){.admin-page .tc-class-card{flex-direction:column;align-items:stretch}.admin-page .tc-class-actions{justify-content:stretch}.admin-page .tc-class-actions button{flex:1}.admin-panel{padding:16px}}
+    @media(max-width:620px){.admin-panel{padding:16px}.admin-step{padding:15px}.admin-step-actions button{flex:1}.admin-review-meter{margin-bottom:18px}}
   </style>
 </head>
 <body>
@@ -44,7 +60,7 @@
       <a class="admin-back" href="/teaching.html">← Teaching</a>
     </header>
     <h1>Test Classroom</h1>
-    <p class="admin-lede">Connected to your existing KIWI Classroom. Preview a lesson right now, or join a scheduled class when it opens.</p>
+    <p class="admin-lede">Go through PHY101 lessons one by one using KIWI’s existing Classroom. Review each Class, mark the test review complete, and continue directly to the next.</p>
     <section class="admin-panel" aria-label="Connected KIWI course">
       <div class="admin-course-head">
         <div>
@@ -56,16 +72,16 @@
       </div>
       <p id="status" role="status" aria-live="polite">Connecting to KIWI Classroom…</p>
       <div class="admin-notice">
-        <strong>Preview</strong> is read-only and does not join the class or mark attendance. <strong>Enter Classroom</strong> uses KIWI's real class and will record actual participation when the scheduled class is open.
+        <strong>Join test review</strong> opens KIWI's genuine Classroom in read-only mode, including any lesson content already published. <strong>Complete test review</strong> unlocks the next lesson; it does not academically complete the Class. <strong>Join real Class</strong> is available only during the scheduled Class and can record attendance.
       </div>
     </section>
     <section class="admin-panel" id="classroom-panel" aria-label="Existing KIWI classroom" hidden>
       <div id="classroom-mount"></div>
     </section>
-    <p class="admin-muted" id="course-help">No separate sandbox or duplicate class is required. Existing timetable rules remain in effect.</p>
+    <p class="admin-muted" id="course-help">Test reviews persist independently. This is a sequential review of real KIWI Classes—not a simulation that starts future AI lessons or changes their official times.</p>
   </main>
   <script src="/kiwi-runtime-config.js"></script>
-  <script src="/kiwi-api-client.js?v=20261009-direct-preview"></script>
-  <script type="module" src="/admin-classroom-test.js?v=20261009-direct-preview"></script>
+  <script src="/kiwi-api-client.js?v=20261009-sequential-1"></script>
+  <script type="module" src="/admin-classroom-test.js?v=20261009-sequential-1"></script>
 </body>
 </html>
