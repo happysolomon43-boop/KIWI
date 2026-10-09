@@ -145,14 +145,21 @@ function createD11LessonControllerRepository({
     const classRow = await loadClassBase(studentId, classId, runner, false);
     if (!classRow) return null;
     const plan = await loadCurrentPlan(studentId, classRow.course_id, runner, false);
-    const [learningUnits, learningUnitDependencies, planPrerequisites, blueprint, session, workspace] = await Promise.all([
-      loadLearningUnits(studentId, plan?.course_plan_id, runner),
-      loadLearningUnitDependencies(studentId, plan?.course_plan_id, runner),
-      loadPlanPrerequisites(studentId, plan?.course_plan_id, runner),
-      latestBlueprint(studentId, classId, runner, false),
-      getSession(studentId, classId, runner, false),
-      getPreparationWorkspace(studentId, classId, runner, false),
-    ]);
+    // In a transaction all calls use a single pg Client; schedule queries
+    // serially to avoid concurrent client.query calls. Outside a transaction
+    // the pool supports parallel reads and remains unchanged.
+    const readers=[
+      ()=>loadLearningUnits(studentId, plan?.course_plan_id, runner),
+      ()=>loadLearningUnitDependencies(studentId, plan?.course_plan_id, runner),
+      ()=>loadPlanPrerequisites(studentId, plan?.course_plan_id, runner),
+      ()=>latestBlueprint(studentId, classId, runner, false),
+      ()=>getSession(studentId, classId, runner, false),
+      ()=>getPreparationWorkspace(studentId, classId, runner, false),
+    ];
+    const results=runner
+      ?await (async()=>{const acc=[];for(const read of readers)acc.push(await read());return acc;})()
+      :await Promise.all(readers.map(read=>read()));
+    const [learningUnits,learningUnitDependencies,planPrerequisites,blueprint,session,workspace]=results;
     return Object.freeze({ classRow, plan, learningUnits, learningUnitDependencies, planPrerequisites, blueprint, session, workspace });
   }
 
@@ -1429,12 +1436,15 @@ function createD11LessonControllerRepository({
         [studentId,ids]);
       const sourceHasSession=(sessionRows.rows||[]).some(row=>row.class_id===fromClassId);
       const targetHasSession=(sessionRows.rows||[]).some(row=>row.class_id===toClassId);
-      const [oldSlotQuery,newSlotQuery]=await Promise.all([
-        tx.query('select * from public.teaching_timetable_slots where student_id=$1 and timetable_slot_id=$2',
-          [studentId,source.source_timetable_slot_id]),
-        tx.query('select * from public.teaching_timetable_slots where student_id=$1 and timetable_slot_id=$2',
-          [studentId,target.source_timetable_slot_id]),
-      ]);
+      // A PostgreSQL transaction is ONE client: never concurrently call
+      // client.query() (deprecated and unsafe on pg@9). Keep the locked
+      // authority reads on the same transaction in a fixed order.
+      const oldSlotQuery=await tx.query(
+        'select * from public.teaching_timetable_slots where student_id=$1 and timetable_slot_id=$2',
+        [studentId,source.source_timetable_slot_id]);
+      const newSlotQuery=await tx.query(
+        'select * from public.teaching_timetable_slots where student_id=$1 and timetable_slot_id=$2',
+        [studentId,target.source_timetable_slot_id]);
       const oldSlot=oldSlotQuery.rows?.[0],newSlot=newSlotQuery.rows?.[0];
       const already=await latestBlueprint(studentId,toClassId,tx,true);
       if(already)return Object.freeze({mode:'ALREADY_PREPARED',reason:'TARGET_BLUEPRINT_EXISTS'});
@@ -1491,7 +1501,7 @@ function createD11LessonControllerRepository({
           await tx.query(`
             update teaching_runtime.event_outbox set status='CANCELLED',
               last_error_code='TEACHING_D11_BLUEPRINT_ALREADY_INHERITED',
-              next_attempt_at=null,updated_at=now()
+              updated_at=now()
             where aggregate_id=$1 and event_type like 'teaching.preparation.%'
               and status in ('PENDING','RETRY_WAIT')
           `,[targetWorkspace.workspace_id]);
@@ -1549,16 +1559,27 @@ function createD11LessonControllerRepository({
         // inherited as finalized without a fresh owner commit.
         const stages=['SKELETON','STRUCTURED','CANDIDATE'];
         const index=Math.min(2,Math.max(0,stages.indexOf(decision.sourceMaturity||'SKELETON')));
+        // Record the validated draft's new current version, not the previous
+        // workspace version from before artifact capture. Every maturity
+        // transition is CAS-fenced and must actually commit.
+        let expectedWorkspaceVersion=Number(copy.workspace.state_version);
         for(let i=1;i<=index;i++){
           const from=stages[i-1],to=stages[i];
-          evaluateWorkspaceTransition({
+          const decisionForStage=evaluateWorkspaceTransition({
             currentLifecycle:'ACTIVE',currentMaturity:from,nextMaturity:to,
             gateResults:[{id:'d11-inherited-artifact-new-authority-validated',passed:true}],
             routePosture:to==='CANDIDATE'?'strong_design':'bounded_interpretive',
           });
-          await tx.query(
-            "update teaching_preparation.workspaces set maturity_stage=$2,state_version=state_version+1,updated_at=now() where workspace_id=$1 and maturity_stage=$3",
-            [prep.workspace.workspace_id,to,from]);
+          const advanced=await tx.query(
+            "update teaching_preparation.workspaces set maturity_stage=$2,state_version=state_version+1,updated_at=now()"+
+            " where workspace_id=$1 and maturity_stage=$3 and state_version=$4 and lifecycle_state='ACTIVE' returning state_version",
+            [prep.workspace.workspace_id,decisionForStage.nextMaturity,from,expectedWorkspaceVersion]);
+          if(advanced.rows?.length!==1){
+            const e=new Error('Validated inherited PPL maturity changed before commit.');
+            e.code='TEACHING_D11_PPL_INHERITANCE_VERSION_CONFLICT';
+            e.status=409;throw e;
+          }
+          expectedWorkspaceVersion=Number(advanced.rows[0].state_version);
         }
       }
       await tx.query(`
