@@ -86,3 +86,11 @@ test('reading scale and edge tab are accessibility controls, not academic or sch
   assert.match(ui,/openSheet\('teacher'\)/);
   assert.match(css,/@media\(prefers-reduced-motion:reduce\)/);
 });
+
+test('mobile Board scenes are vertically stacked and keep D14 history restrictions',()=>{
+  assert.match(ui,/matchMedia/);
+  assert.match(ui,/tc-board-scene-list/);
+  assert.match(ui,/if\(!s\.boardHistoryAllowed\)/);
+  assert.match(css,/\.tc-board-scene-list\{display:grid/);
+  assert.match(css,/\.tc-board-scene \+ \.tc-board-scene/);
+});
