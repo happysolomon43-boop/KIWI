@@ -41,7 +41,7 @@ test('a timed-out initial Classroom read keeps the same dialog and offers a retr
   const host=h.doc.body.children.at(-1);
   assert.equal(host.tag,'div');
   assert.equal(host.children[0].children[0].textContent,'Connecting to your Class');
-  assert.match(host.children[0].children[1].textContent,/has not been cancelled or interrupted/);
+  assert.match(host.children[0].children[1].textContent,/A timeout does not itself end or interrupt a Class/);
   assert.ok(host.children.some(x=>x.children.some?.(c=>c.textContent==='Try again')));
   assert.equal(h.timers.size,2,'polling survives an initial timeout');
   assert.equal(h.requests.filter(x=>x.endpoint.endsWith('/classroom')).length,1);
