@@ -21,7 +21,9 @@ test('Admin walkthrough uses existing KIWI D14 Classroom, not an isolated fake o
 test('Read-only reviewed Classes never create a real JOIN; live entry keeps authoritative time check',()=>{
   const classroom=code('teaching-classroom.js');
   assert.match(classroom,/async function open\(classId,\{reviewOnly=false,onReviewComplete=null\}/);
-  assert.match(classroom,/if\(!reviewOnly&&state\.snapshot\?\.controller\?\.lifecycleState==='ACTIVE'\)/);
+  assert.match(classroom,/if\(!state\.reviewOnly&&data\.controller\?\.lifecycleState==='ACTIVE'&&!data\.hasEntered\)/);
+  assert.match(classroom,/state\.reviewOnly\s*\|\|state\.snapshot\?\.controller\?\.lifecycleState!=='ACTIVE'/);
+  assert.match(classroom,/if\(state\.host!==host\|\|state\.classId!==classId/);
   assert.match(classroom,/state\.onReviewComplete=classroomTestMode&&reviewOnly/);
   assert.match(classroom,/onReviewComplete:handler/);
   assert.match(classroom,/enter\.disabled=!item\.can_enter/);
