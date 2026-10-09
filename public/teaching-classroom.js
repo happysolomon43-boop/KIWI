@@ -75,6 +75,14 @@ function classroomFeedback(message) {
   const region=state.host?.querySelector('.tc-message');
   if(region)region.replaceChildren($('span','',message));
 }
+function isUntouchedRouteHeldController(controller) {
+  if(controller?.lifecycleState!=='INTERRUPTED'
+    ||controller?.instructionalSubstate!=='INTERRUPTED'
+    ||controller?.lessonBlueprintId||controller?.resumeInstructionalSubstate)return false;
+  const progress=controller.progressState||{};
+  return ['completed_segment_refs','completed_objective_refs','evidence_event_refs',
+    'independent_evidence_objective_refs'].every(k=>Array.isArray(progress[k])&&progress[k].length===0);
+}
 async function recoverPreparedLesson(classId) {
   const base='/teaching/classes/'+encodeURIComponent(classId);
   let current=await kiwiApiRequest(base+'/controller');
@@ -84,7 +92,8 @@ async function recoverPreparedLesson(classId) {
     // is the normal post-handoff state, not a missing preparation.
     && (!current?.preparation || ['FINALIZED','HANDED_OFF'].includes(current.preparation.lifecycleState));
   if(ready())return;
-  if(current?.controller)throw new Error('The Class has already started. Refresh its saved Controller.');
+  if(current?.controller&&!isUntouchedRouteHeldController(current.controller))
+    throw new Error('This Class has already started academic work. It cannot use late Blueprint recovery.');
   for(let step=1;step<=3;step++){
     if(state.classId!==classId||!state.host)throw new Error('Classroom was closed during preparation.');
     classroomFeedback('Preparing your real KIWI lesson · '+step+' of 3. The AI Teacher is validating the Lesson Blueprint…');
@@ -102,6 +111,23 @@ async function controllerAction(path,body={}){
   if(state.busy)return;state.busy=true;
   const classId=state.classId;
   try{
+    if(path==='recover-and-resume'){
+      await recoverPreparedLesson(classId);
+      const current=await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(classId)}/controller`);
+      const controller=current?.controller;
+      if(!current?.blueprint?.currentForAuthoritativeContext
+        ||!controller?.lessonBlueprintId
+        ||controller?.lifecycleState!=='INTERRUPTED'
+        ||controller?.instructionalSubstate!=='INTERRUPTED'
+        ||controller?.resumeInstructionalSubstate!=='OPENING')
+        throw new Error('KIWI could not verify a ready interrupted session for safe recovery.');
+      classroomFeedback('Resuming the validated KIWI lesson…');
+      await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(classId)}/controller/transition`,{
+        method:'POST',body:{toState:'OPENING',expectedVersion:controller.stateVersion}
+      });
+      await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(classId)}/classroom/enter`,{method:'POST',body:{}});
+      await fetchAfterAction();return;
+    }
     if(path==='start')await recoverPreparedLesson(classId);
     classroomFeedback(path==='start'?'Starting the validated live Class…':'Updating the Class…');
     await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(classId)}/controller/${path}`,{method:'POST',body});
@@ -307,7 +333,7 @@ function renderWorkspace(s){
   if(s.modeKey==='BREAK'){panel.append(notice('A proper pause','Teaching is paused. You can step away and return when the break ends.','tc-break'));return panel;}
   if(s.modeKey==='ASSESSMENT'){panel.append(notice('Assessment in progress','Assessment rules and responses are controlled by the formal assessment interface. Classroom resources are restricted.','tc-assessment'));return panel;}
   if(s.modeKey==='CLOSURE'){panel.append(notice('Class is complete','Review the Summary, your Notebook and permitted Board scenes below.'));return panel;}
-  if(s.modeKey==='INTERRUPTED'){panel.append(notice('Class paused safely','Your work is preserved. Continue from the saved teaching state when you are ready; a KIWI-caused interruption is never negative academic evidence.','tc-error'));if(s.interruption?.canResume)panel.append(button('Resume Class',()=>controllerAction('transition',{toState:s.interruption.resumeState,expectedVersion:s.controller.stateVersion}),'tc-button tc-button--solid'));return panel;}
+  if(s.modeKey==='INTERRUPTED'){panel.append(notice('Class paused safely','Your work is preserved. Continue from the saved teaching state when you are ready; a KIWI-caused interruption is never negative academic evidence.','tc-error'));if(isUntouchedRouteHeldController(s.controller))panel.append(button('Prepare & Resume Lesson',()=>controllerAction('recover-and-resume'),'tc-button tc-button--solid'));else if(s.interruption?.canResume)panel.append(button('Resume Class',()=>controllerAction('transition',{toState:s.interruption.resumeState,expectedVersion:s.controller.stateVersion}),'tc-button tc-button--solid'));return panel;}
   if(s.modeKey==='INDEPENDENT_PRACTICE')panel.append(notice('Productive silence','Take the time you need within the activity. Your teacher does not need a message from you to continue.'));
   if(s.objective)panel.append(add($('div','tc-objective'),$('small','','CURRENT OBJECTIVE'),$('p','',s.objective)));
   if(s.entry?.veryLate)panel.append(notice('A shorter Class today',`${s.entry.lateMinutes} minutes after the scheduled start · ${s.entry.minutesRemaining} minutes remain. The core objective needs a safe replanning decision; completion is not assumed.`, 'tc-error'));
