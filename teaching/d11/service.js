@@ -17,6 +17,7 @@ const {
 const { TEACHING_EVENTS } = require('../events/names');
 const { buildPreparationEvent } = require('../preparation/events');
 const {preparationReviewDueAt,shouldDeferPreparation}=require('./preparation-window');
+const {lateStartRecoveryEligibility}=require('./late-start-recovery');
 const {
   evaluateWorkspaceTransition,
   evaluateFinalizationReadiness,
@@ -140,7 +141,7 @@ function createD11Service({
   function publicContext(context, now = clock()) {
     if (!context) return null;
     const time=classTimeEnvelope({
-      scheduledStartAt:context.classRow.scheduled_start_at,
+      scheduledStartAt:recoveryStart||context.classRow.scheduled_start_at,
       scheduledEndAt:context.classRow.scheduled_end_at,
       overtimeCeilingAt:context.session?.overtime_ceiling_at || null,
       serverNow:now,
@@ -313,10 +314,12 @@ function createD11Service({
     });
   }
 
-  async function preparationStep(user,classId,{requestKey=randomUUID()}={}) {
+  async function preparationStep(user,classId,{requestKey=randomUUID(),allowLateStartRecovery=false}={}) {
     assertModelRoute();
     let context=await repository.getClassContext(user.id,classId);
     assertClassPlanningEligible(context);
+    if(allowLateStartRecovery && !lateStartRecoveryEligibility({classRow:context.classRow,session:context.session,now:clock()}).allowed)
+      fail('Late Lesson recovery is outside its authorized live Class window.','TEACHING_D11_LATE_RECOVERY_NOT_ALLOWED',409);
     const prep=await repository.ensurePreparationWorkspace({studentId:user.id,classId,correlationId:requestKey});
     context=await repository.getClassContext(user.id,classId);
     const workspace=prep?.workspace || context.workspace;
@@ -330,8 +333,12 @@ function createD11Service({
     const routePosture=ROUTE_FOR_TARGET[target];
     const preparation=await buildPreparationMetadata(context,prep,target,routePosture,requestKey);
     const signals=await repository.getPlanningSignals(user.id,context.classRow);
+    // Model designs to the *remaining* live window; authoritative class timestamps
+    // and versioned preparation dependencies stay unchanged in persistence.
+    const recoveryStart=allowLateStartRecovery?clock().toISOString():null;
+    const planningContext=recoveryStart?{...context,classRow:{...context.classRow,scheduled_start_at:recoveryStart}}:context;
     let result=await intelligence.planLesson({
-      context,signals,requestKey,preparation,reservePolicy,
+      context:planningContext,signals,requestKey,preparation,reservePolicy,
     });
     // A rejected model result cannot be repaired by replaying the same D05
     // idempotency key. Exactly one distinct, bounded correction execution may
@@ -342,7 +349,7 @@ function createD11Service({
       && failure?.repairable==='MODEL_RETRY'){
       const repairKey=requestKey+':blueprint-schema-repair-1';
       result=await intelligence.planLesson({
-        context,signals,requestKey:repairKey,reservePolicy,
+        context:planningContext,signals,requestKey:repairKey,reservePolicy,
         repairFeedback:Object.freeze({reason:failure.reason,fieldPath:failure.fieldPath||null}),
         preparation:Object.freeze({...preparation,repair_attempt:1,idempotency_key:repairKey,correlation_id:requestKey}),
       });
@@ -381,6 +388,7 @@ function createD11Service({
     const artifact=await repository.recordPreparationArtifact({
       studentId:user.id,classId,blueprint:validation.value,
       capabilityId:'teaching.lesson.pre_class_lesson_planning',promptFamilyRef:'TPF-05',
+      allowLateStartRecovery,
     });
     const refreshedBeforeTransition=await repository.getClassContext(user.id,classId);
     const candidateReadiness=target==='PRE_LOCK_READY'
@@ -454,10 +462,16 @@ function createD11Service({
 
   async function prepareLesson(user,classId,input={}) {
     assertModelRoute();
+    const allowLateStartRecovery=input.allowLateStartRecovery===true;
+    if(allowLateStartRecovery){
+      const context=await repository.getClassContext(user.id,classId);
+      const eligibility=lateStartRecoveryEligibility({classRow:context?.classRow,session:context?.session,now:clock()});
+      if(!eligibility.allowed)fail('Late Lesson recovery is unavailable: '+eligibility.reason,'TEACHING_D11_LATE_RECOVERY_NOT_ALLOWED',409);
+    }
     const maxSteps=Math.max(1,Math.min(Number(input.maxSteps) || 3,3));
     let result=null;
     for(let i=0;i<maxSteps;i+=1) {
-      result=await preparationStep(user,classId,{requestKey:randomUUID()});
+      result=await preparationStep(user,classId,{requestKey:randomUUID(),allowLateStartRecovery});
       if(result.done) break;
     }
     return result;
@@ -551,8 +565,13 @@ function createD11Service({
     if(!context.session && now.getTime()>=new Date(context.classRow.scheduled_end_at).getTime()) {
       fail('An elapsed Class cannot start a new live Controller. Review its record instead.','TEACHING_D11_CLASS_WINDOW_EXPIRED',409);
     }
-    const prep=await repository.ensurePreparationWorkspace({studentId:user.id,classId,correlationId:sourceEventRef || null});
-    context=await repository.getClassContext(user.id,classId);
+    // After final PPL handoff the workspace is intentionally omitted from
+    // getClassContext. Re-seeding a new SKELETON here would discard the
+    // perfectly current validated Blueprint and block the real start.
+    const alreadyHandedOff=blueprintCurrentForContext(context)&&!context.workspace;
+    const prep=alreadyHandedOff?null
+      :await repository.ensurePreparationWorkspace({studentId:user.id,classId,correlationId:sourceEventRef || null});
+    context=alreadyHandedOff?context:await repository.getClassContext(user.id,classId);
     const workspaceReady=!context.workspace || ['FINALIZED','HANDED_OFF'].includes(String(context.workspace.lifecycle_state));
     const bindBlueprint=Boolean(
       context.blueprint &&

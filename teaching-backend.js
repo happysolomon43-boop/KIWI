@@ -642,7 +642,7 @@ function createTeachingRouter({
       catch (error) { sendError(res, error, 'Failed to load Teaching Controller state.'); }
     });
     router.post('/classes/:id/lesson-blueprint/prepare', requireD11Ready, async (req, res) => {
-      try { res.status(201).json(await lessonControllerService.prepareLesson(req.user, req.params.id)); }
+      try { res.status(201).json(await lessonControllerService.prepareLesson(req.user, req.params.id, req.body || {})); }
       catch (error) { sendError(res, error, 'Lesson Blueprint preparation failed safely.'); }
     });
     router.post('/classes/:id/controller/start', requireD11Ready, async (req, res) => {

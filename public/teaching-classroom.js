@@ -71,10 +71,50 @@ async function act(path,body){
   catch(error){state.host?.querySelector('.tc-message')?.replaceChildren($('span','',error.message||'That action could not be completed.'));}
   finally{state.busy=false;}
 }
+function classroomFeedback(message) {
+  const region=state.host?.querySelector('.tc-message');
+  if(region)region.replaceChildren($('span','',message));
+}
+async function recoverPreparedLesson(classId) {
+  const base='/teaching/classes/'+encodeURIComponent(classId);
+  let current=await kiwiApiRequest(base+'/controller');
+  const ready=()=>current?.blueprint?.currentForAuthoritativeContext===true
+    // Handed-off PPL workspaces are intentionally absent from D11's active
+    // workspace projection. Absence alongside a current validated Blueprint
+    // is the normal post-handoff state, not a missing preparation.
+    && (!current?.preparation || ['FINALIZED','HANDED_OFF'].includes(current.preparation.lifecycleState));
+  if(ready())return;
+  if(current?.controller)throw new Error('The Class has already started. Refresh its saved Controller.');
+  for(let step=1;step<=3;step++){
+    if(state.classId!==classId||!state.host)throw new Error('Classroom was closed during preparation.');
+    classroomFeedback('Preparing your real KIWI lesson · '+step+' of 3. The AI Teacher is validating the Lesson Blueprint…');
+    const result=await kiwiApiRequest(base+'/lesson-blueprint/prepare',{
+      method:'POST',body:{allowLateStartRecovery:true,maxSteps:1},timeoutMs:130000
+    });
+    current=result?.context||await kiwiApiRequest(base+'/controller');
+    if(ready())return;
+    if(result?.done)break;
+  }
+  current=await kiwiApiRequest(base+'/controller');
+  if(!ready())throw new Error('KIWI has not validated a current Lesson Blueprint. Your lesson is safe; retry preparation while this Class remains open.');
+}
 async function controllerAction(path,body={}){
   if(state.busy)return;state.busy=true;
-  try{await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(state.classId)}/controller/${path}`,{method:'POST',body});await fetchAfterAction();}
-  catch(error){state.host?.querySelector('.tc-message')?.replaceChildren($('span','',error.message||'The Class could not continue.'));}
+  const classId=state.classId;
+  try{
+    if(path==='start')await recoverPreparedLesson(classId);
+    classroomFeedback(path==='start'?'Starting the validated live Class…':'Updating the Class…');
+    await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(classId)}/controller/${path}`,{method:'POST',body});
+    if(path==='start')await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(classId)}/classroom/enter`,{method:'POST',body:{}});
+    await fetchAfterAction();
+  }
+  catch(error){
+    const code=error?.code||'';
+    const hint=code==='TEACHING_D11_MODEL_ROUTE_UNQUALIFIED'
+      ?'The KIWI teaching-model route is not currently qualified. The Class cannot be fabricated or force-started.'
+      :error?.message||'The Class could not continue. Retry before its scheduled end.';
+    classroomFeedback(hint);
+  }
   finally{state.busy=false;}
 }
 async function fetchAfterAction(){const data=await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(state.classId)}/classroom`);data._receivedAt=Date.now();if(!state.reviewOnly&&state.scene>=Math.max(0,(state.snapshot?.board?.length||0)-1))state.scene=Math.max(0,(data.board?.length||0)-1);state.snapshot=data;render();}
@@ -82,7 +122,7 @@ async function open(classId,{reviewOnly=false,onReviewComplete=null}={}){
   const opener=document.activeElement;close({restore:false});state.returnFocus=opener;state.classId=classId;state.reviewOnly=reviewOnly;state.onReviewComplete=classroomTestMode&&reviewOnly&&typeof onReviewComplete==='function'?onReviewComplete:null;state.host=$('div','tc-overlay');state.host.setAttribute('role','dialog');state.host.setAttribute('aria-modal','true');state.host.setAttribute('aria-label',classroomTestMode?'KIWI existing Classroom — admin review':'KIWI Classroom');
   document.body.append(state.host);document.body.classList.add('tc-active');state.host.append(notice('Opening Classroom','Connecting to the current Class record…'));
   state.host.addEventListener('keydown',trapClassroomFocus);state.host.tabIndex=-1;state.host.focus();
-  try{if(!reviewOnly)await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(classId)}/classroom/enter`,{method:'POST',body:{}});await fetchSnapshot();state.host.querySelector('h1')?.focus?.({preventScroll:true});state.interval=setInterval(updateClocks,1000);state.refresh=setInterval(()=>fetchSnapshot().catch(()=>{state.host?.querySelector('.tc-connection')?.replaceChildren($('span','','Reconnecting to Class…'));}),12000);}
+  try{await fetchSnapshot();if(!reviewOnly&&state.snapshot?.controller?.lifecycleState==='ACTIVE'){await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(classId)}/classroom/enter`,{method:'POST',body:{}});await fetchSnapshot();}state.host.querySelector('h1')?.focus?.({preventScroll:true});state.interval=setInterval(updateClocks,1000);state.refresh=setInterval(()=>fetchSnapshot().catch(()=>{state.host?.querySelector('.tc-connection')?.replaceChildren($('span','','Reconnecting to Class…'));}),12000);}
   catch(error){state.host.replaceChildren(notice('Classroom unavailable',error.message||'Please try again.','tc-error'),button('Return to Course',close,'tc-button tc-button--solid'));}
 }
 function trapClassroomFocus(event){
@@ -257,8 +297,8 @@ function renderWorkspace(s){
     if(s.modeKey==='UNSTARTED_PAST'){
       panel.append(notice('Historical Class','This Class has passed without an active lesson Controller. It cannot be restarted or joined as a live Class.'));
     }else if(s.canStartClass){
-      panel.append(notice('Start available',schedule+' KIWI can recover the lesson if its scheduled start event was delayed.'));
-      panel.append(button('Start Class',()=>controllerAction('start'),'tc-button tc-button--solid'));
+      panel.append(notice('Start available',schedule+' KIWI will validate or recover the Lesson Blueprint before starting. Preparation may take a few minutes.'));
+      panel.append(button('Prepare & Start Class',()=>controllerAction('start'),'tc-button tc-button--solid'));
     }else{
       panel.append(notice('Scheduled Class',schedule+' Start Class will become available at the authoritative start time.'));
     }
