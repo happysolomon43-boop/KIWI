@@ -126,6 +126,7 @@ test('Denied PPL admission never starts central model inference or erases usage'
   const source=fs.readFileSync(path.resolve(__dirname,'../../../teaching/d28/runtime-service.js'),'utf8');
   assert.match(source,/where disposition in \('OWNER_AUTHORIZED_BOUNDED_WORK'/);
   assert.match(source,/if\(!decision\.modelCallAllowed\)/);
+  assert.match(source,/totalTokens:Math\.max\(12000,Math\.min\(60000,Math\.ceil\(state\.totalTokens\/Math\.max\(1,state\.modelCalls\)\)\)\)/);
   assert.match(source,/modelCalls:decision\.modelCallAllowed\?1:0/);
   const adapter=fs.readFileSync(path.resolve(__dirname,'../../../teaching/orchestrator/ai-adapter.js'),'utf8');
   assert.ok(adapter.indexOf('await d28.governPplInvocation')<adapter.indexOf('await aiBoundary.execute'));
