@@ -173,3 +173,73 @@ test('D11 SQL adoption remains atomic, owner-scoped, version-fenced and auditabl
  assert.match(section,/BLUEPRINT_INHERITED_REVALIDATED/);
  assert.doesNotMatch(section,/update public\.teaching_class_sessions|update public\.teaching_attendance_records/);
 });
+
+test('D11 transactional repository really copies a newly versioned Blueprint and no attendance/session',async()=>{
+ const {createD11LessonControllerRepository}=require('../../../teaching/repositories/d11-lesson-controller');
+ const operations=[];
+ let cloned=null,sequence=0;
+ const original={...source,course_lifecycle_state:'ACTIVE',source_timetable_state:'SUPERSEDED'};
+ const replacement={...target,source_request_id:'reschedule-01'};
+ const lookup=async(sql,args=[])=>{
+   operations.push({sql,args});
+   if(sql.includes('select class_id from public.teaching_classes')&&sql.includes('for update'))
+     return {rows:[{class_id:'new-phy101'},{class_id:'old-phy101'}]};
+   if(sql.includes('from public.teaching_classes c')&&sql.includes('join public.teaching_courses')){
+     const v=args[1]==='old-phy101'?original:replacement;
+     assert.equal(args[0],'student-1');
+     return {rows:[v]};
+   }
+   if(sql.includes('from public.teaching_course_plans'))return {rows:[plan]};
+   if(sql.includes('from public.teaching_class_sessions'))return {rows:[]};
+   if(sql.includes('from public.teaching_timetable_slots')){
+     return {rows:[args[1]==='old-slot'?sourceSlot:targetSlot]};
+   }
+   if(sql.includes('from public.teaching_lesson_blueprints')&&sql.includes('blueprint_state in'))
+     return {rows:[blueprint]};
+   if(sql.includes('from public.teaching_lesson_blueprints')&&sql.includes("blueprint_state='VALIDATED'"))
+     return {rows:cloned?[cloned]:[]};
+   if(sql.includes('from teaching_preparation.workspaces'))return {rows:[]};
+   if(sql.includes('from public.teaching_learning_units'))return {rows:learningUnits};
+   if(sql.includes('select timetable_state from public.teaching_timetable_versions'))
+     return {rows:[{timetable_state:'APPROVED'}]};
+   if(sql.includes('coalesce(max(version_no),0)+1 as next_version'))
+     return {rows:[{next_version:1}]};
+   if(sql.includes('insert into public.teaching_lesson_blueprints')){
+     assert.equal(args[2],'new-phy101');
+     assert.equal(args[3],'course-plan-1');
+     assert.equal(args[10],3);
+     assert.equal(args[11],13);
+     assert.equal(args[12],'timetable-13');
+     const metadata=JSON.parse(args[14]),provenance=JSON.parse(args[15]);
+     assert.equal(metadata.inheritance_validation,'PASS');
+     assert.equal(provenance.source_class_id,'old-phy101');
+     assert.equal(provenance.governing_request_id,'reschedule-01');
+     cloned={lesson_blueprint_id:args[0],student_id:args[1],class_id:args[2],blueprint_state:'VALIDATED'};
+     return {rows:[cloned]};
+   }
+   if(sql.includes('insert into public.teaching_academic_audit_log')){
+     assert.equal(args[2],'new-phy101');
+     assert.equal(args[4],'reschedule-01');
+     const md=JSON.parse(args[9]);
+     assert.equal(md.model_calls,0);
+     return {rows:[]};
+   }
+   throw Error('Unexpected D11 inheritance SQL: '+sql);
+ };
+ const repo=createD11LessonControllerRepository({
+   query:lookup,withTransaction:async fn=>fn({query:lookup}),
+   randomUUID:()=> 'new-id-'+(++sequence),
+   clock:()=>new Date('2026-11-01T10:00:00Z')
+ });
+ const input={studentId:'student-1',fromClassId:'old-phy101',toClassId:'new-phy101',requestId:'reschedule-01'};
+ const inherited=await repo.inheritRescheduledPreparation(input);
+ assert.equal(inherited.mode,'INHERIT_VALIDATED_BLUEPRINT');
+ assert.equal(inherited.originClassId,'old-phy101');
+ assert.ok(cloned?.lesson_blueprint_id);
+ assert.ok(operations.some(x=>x.sql.includes('order by class_id for update')));
+ assert.ok(operations.some(x=>x.sql.includes('for share')));
+ assert.ok(operations.every(x=>!/update public.teaching_class_sessions|update public.teaching_attendance_records/.test(x.sql)));
+ const again=await repo.inheritRescheduledPreparation(input);
+ assert.equal(again.mode,'ALREADY_PREPARED');
+ assert.equal(operations.filter(x=>x.sql.includes('insert into public.teaching_lesson_blueprints')).length,1);
+});
