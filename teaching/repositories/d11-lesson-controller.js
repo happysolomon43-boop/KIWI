@@ -1418,6 +1418,10 @@ function createD11LessonControllerRepository({
       const source=await loadClassBase(studentId,fromClassId,tx);
       const target=await loadClassBase(studentId,toClassId,tx);
       if(!source||!target)return Object.freeze({mode:'FRESH_PREPARATION',reason:'CLASS_NOT_FOUND'});
+      const {rows:governingRows=[]}=await tx.query(
+        'select request_id,student_id,course_id,request_type,target_ref,target_version_ref,applied_at from public.teaching_requests where request_id=$1 and student_id=$2 for share',
+        [requestId,studentId]);
+      const approvedRequest=governingRows[0]||null;
       const original=await loadCurrentPlan(studentId,source.course_id,tx);
       if(!original)return Object.freeze({mode:'FRESH_PREPARATION',reason:'COURSE_PLAN_MISSING'});
       const sessionRows=await tx.query(
@@ -1462,7 +1466,7 @@ function createD11LessonControllerRepository({
       const decision=evaluateLessonInheritance({
         source,target,plan:original,sourceSlot:oldSlot,targetSlot:newSlot,
         sourceBlueprint,sourcePreparation,learningUnits,sourceHasSession,targetHasSession,
-        now:clock(),requestId,
+        now:clock(),requestId,approvedRequest,
       });
       if(decision.mode==='FRESH_PREPARATION')return decision;
       if(decision.mode!=='INHERIT_VALIDATED_BLUEPRINT'
