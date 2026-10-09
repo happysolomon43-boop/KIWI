@@ -82,7 +82,7 @@ function evaluateLessonInheritance({
     return blocked('SLOT_AUTHORITY_CHANGED');
   const units=v=>Array.isArray(v)?[...v].map(String).sort():[];
   const oldUnits=units(sourceSlot.learning_unit_refs),newUnits=units(targetSlot.learning_unit_refs);
-  if(JSON.stringify(oldUnits)!==JSON.stringify(newUnits))return blocked('LESSON_SCOPE_CHANGED');
+  if(!oldUnits.length||JSON.stringify(oldUnits)!==JSON.stringify(newUnits))return blocked('LESSON_SCOPE_CHANGED');
   const start=Date.parse(target.scheduled_start_at),end=Date.parse(target.scheduled_end_at);
   const origStart=Date.parse(source.scheduled_start_at),origEnd=Date.parse(source.scheduled_end_at);
   const tick=now instanceof Date?now.getTime():Date.parse(now);
