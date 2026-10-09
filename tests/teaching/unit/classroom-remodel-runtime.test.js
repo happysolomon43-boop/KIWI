@@ -16,7 +16,8 @@ test('preparation intelligence validates all three roles, commits generation bef
  assert.deepEqual(await intelligence.author(args),outputs.author);assert.deepEqual(await intelligence.author(args),outputs.author);assert.equal(calls,1);
  await intelligence.coordinator({...args,operationKey:'op:guidance',producer:f.producer('guide'),chapter:f.chapter(),plan:f.plan()});
  await intelligence.presenter({...args,operationKey:'op:presenter',producer:f.producer('opening'),chapter:f.chapter(),guide:f.guide(),directive:f.directive()});
- assert.equal(calls,3);for(const r of requests){assert.equal(r.commit,false);assert.equal(r.candidatePromptBinding.runtimeAuthorized,false);assert.equal(r.academicInput.legacy_controller_output_contract.placement,'artifacts.controller_blueprint');}
+ const originalSource=outputs.author.artifacts.chapter.units[0].elements[0].source_refs;outputs.author.artifacts.chapter.units[0].elements[0].source_refs=['forged-source@9'];await assert.rejects(()=>intelligence.author({...args,operationKey:'forged-source'}));assert.equal(stored.has('forged-source'),false);outputs.author.artifacts.chapter.units[0].elements[0].source_refs=originalSource;
+ assert.equal(calls,4);for(const r of requests){assert.equal(r.commit,false);assert.equal(r.candidatePromptBinding.runtimeAuthorized,false);assert.equal(r.academicInput.legacy_controller_output_contract.placement,'artifacts.controller_blueprint');}
  await assert.rejects(()=>intelligence.author({...args,requirements:{...requirements,scope:{version:'changed'}}}),{code:'CLASSROOM_GENERATION_OPERATION_STALE'});
  const broken=createClassroomPreparationIntelligence({orchestrator:{execute:async request=>{const bad=author();delete bad.artifacts.controller_blueprint;delete bad.completion.controller_blueprint;const result=await request.schemaValidator(bad);assert.equal(result.ok,false);return {accepted:false,rejectionReason:result.reason};}}});
  await assert.rejects(()=>broken.author(args),{code:'CLASSROOM_CONTROLLER_BLUEPRINT_REQUIRED'});
@@ -28,4 +29,16 @@ test('independent review rejects missing provenance, same-route review and fixtu
  await assert.rejects(()=>createClassroomIndependentReviewService(args).reviewArtifact(input),{code:'CLASSROOM_REVIEW_ROUTE_NOT_QUALIFIED'});
  await assert.rejects(()=>createClassroomIndependentReviewService({...args,candidateProvenanceReader:async()=>({routeKey:'review-route',modelIdentifier:'fixture',executionId:'e1'})}).reviewArtifact(input),{code:'CLASSROOM_REVIEW_INDEPENDENCE_COLLAPSED'});
  await assert.rejects(()=>createClassroomIndependentReviewService({...args,candidateProvenanceReader:async()=>null}).reviewArtifact(input),{code:'CLASSROOM_GENERATION_PROVENANCE_MISSING'});assert.equal(calls,0);
+});
+
+test('real D11 owner requires independent review, current authority and retained Blueprint validation before commit',async()=>{
+ const {createD11Service}=require('../../../teaching/d11/service');let commits=0;const current=f.clone(context);current.classRow.course_state_version=1;current.classRow.lifecycle_state='SCHEDULED';current.classRow.source_timetable_version_id='tt1';let saved=null;
+ const repository={getClassContext:async()=>({...current,blueprint:saved}),commitClassroomBlueprint:async input=>{commits++;saved={lesson_blueprint_id:'FIXTURE_BLUEPRINT',validation_metadata:input.validationMetadata};return {blueprint:saved};}};
+ const service=createD11Service({repository,withTransaction:async fn=>fn({}),dueEventStore:{enqueueUsing(){}},outboxStore:{appendUsing(){}},preparationRepository:{}});
+ const input={context:current,chapter:{artifact_version_id:'chapter1'},plan:{artifact_version_id:'plan1'},authorOutput:author(),requirements,review:{accepted:true,independent:true,routeQualified:true,contentHashes:['FIXTURE_CHAPTER_HASH','FIXTURE_PLAN_HASH']},operationKey:'owner-op'};
+ await assert.rejects(()=>service.acceptClassroomBlueprint({...input,review:{accepted:true,independent:false,routeQualified:true}}),{code:'CLASSROOM_D11_REVIEW_REQUIRED'});assert.equal(commits,0);
+ const stale=f.clone(current);stale.classRow.schedule_version=2;await assert.rejects(()=>service.acceptClassroomBlueprint({...input,context:stale}),{code:'CLASSROOM_D11_AUTHORITY_CHANGED'});assert.equal(commits,0);
+ const wrong=author();wrong.artifacts.controller_blueprint.objectives[0].learning_unit_ref='not-authorized';await assert.rejects(()=>service.acceptClassroomBlueprint({...input,authorOutput:wrong}));assert.equal(commits,0);
+ assert.equal((await service.acceptClassroomBlueprint(input)).lesson_blueprint_id,'FIXTURE_BLUEPRINT');assert.equal(commits,1);await service.acceptClassroomBlueprint(input);assert.equal(commits,1);
+ await assert.rejects(()=>service.acceptClassroomBlueprint({...input,chapter:{artifact_version_id:'changed'}}),{code:'CLASSROOM_D11_IDEMPOTENCY_CONFLICT'});
 });

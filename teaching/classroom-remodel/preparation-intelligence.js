@@ -18,7 +18,12 @@ function createClassroomPreparationIntelligence({orchestrator,repository,d11Repo
   const validate=async output=>{
    const result=await schema.validate(output);if(!result.ok)return result;
    try {
-    if(role==='author'&&output.artifacts.chapter){validateDepth(output.artifacts.chapter,requirements.depth);if(previousChapter?.completeness==='partial')validateContinuation(previousChapter,output.artifacts.chapter);if(previousChapter?.completeness==='complete'&&hash(previousChapter)!==hash(output.artifacts.chapter))fail('CLASSROOM_REUSED_CHAPTER_CHANGED');}
+    if(role==='author'&&output.artifacts.chapter){validateDepth(output.artifacts.chapter,requirements.depth);
+     const allowedUnits=new Set(context.learningUnits.map(u=>u.learning_unit_id));
+     const allowedSources=new Set((requirements.sourceMaterial||[]).flatMap(s=>[s.sourceRef,s.sourceRef+'@'+s.version]));
+     if(requirements.scope?.ref&&output.artifacts.chapter.scope_ref!==requirements.scope.ref)fail('CLASSROOM_CHAPTER_SCOPE_REFERENCE_MISMATCH');
+     for(const unit of output.artifacts.chapter.units){if([...unit.objective_refs,...unit.prerequisite_refs].some(r=>!allowedUnits.has(r.id)))fail('CLASSROOM_CHAPTER_OBJECTIVE_OUTSIDE_AUTHORITY');for(const element of unit.elements)if(!element.source_refs.length||element.source_refs.some(ref=>!allowedSources.has(ref)))fail('CLASSROOM_CHAPTER_SOURCE_OUTSIDE_AUTHORITY');}
+     if(previousChapter?.completeness==='partial')validateContinuation(previousChapter,output.artifacts.chapter);if(previousChapter?.completeness==='complete'&&hash(previousChapter)!==hash(output.artifacts.chapter))fail('CLASSROOM_REUSED_CHAPTER_CHANGED');}
     if(role==='author'&&output.status==='ok'){
      const legacy=output.artifacts.controller_blueprint;if(!legacy)fail('CLASSROOM_CONTROLLER_BLUEPRINT_REQUIRED');
      const checked=validateLessonBlueprintProposal(legacy,{learningUnits:context.learningUnits,scheduledStartAt:context.classRow.scheduled_start_at,scheduledEndAt:context.classRow.scheduled_end_at,...(requirements.reservePolicy?{reservePolicy:requirements.reservePolicy}:{})});

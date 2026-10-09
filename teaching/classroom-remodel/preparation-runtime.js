@@ -16,7 +16,7 @@ function createClassroomPreparationRuntime({query,withTransaction,randomUUID,d11
   getRequirements:async context=>{
    if(typeof requirementsReader!=='function')fail('CLASSROOM_APPROVED_PREPARATION_CONFIG_MISSING');
    const requirements=await requirementsReader(context);
-   if(!requirements?.version||!requirements?.adoptionRef||!requirements.scope?.version||!Array.isArray(requirements.sourceMaterial)||!requirements.sourceMaterial.length||!requirements.numericPolicy?.version)fail('CLASSROOM_APPROVED_PREPARATION_CONFIG_MISSING');
+   if(!requirements?.version||!requirements?.adoptionRef||!requirements.scope?.version||!requirements.scope?.ref||!Array.isArray(requirements.sourceMaterial)||!requirements.sourceMaterial.length||!requirements.numericPolicy?.version)fail('CLASSROOM_APPROVED_PREPARATION_CONFIG_MISSING');
    if(requirements.sourceMaterial.some(s=>s.protected===true||!s.version||!s.sourceRef))fail('CLASSROOM_SOURCE_AUTHORITY_INVALID');
    const signals=await d11Repository.getPlanningSignals(context.classRow.student_id,context.classRow);
    return {...requirements,signals,verifiedHistory:{priorClassFacts:signals.priorClassFacts||[],teacherNotes:signals.teacherNotes||[],missingHistoryIsNegativeEvidence:false}};
