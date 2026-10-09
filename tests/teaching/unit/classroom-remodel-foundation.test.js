@@ -7,8 +7,43 @@ const schemas=require('../../../teaching/classroom-remodel/mode-schemas');
 const g=require('../../../teaching/classroom-remodel/candidate-governance');
 const {buildInventory}=require('../../../scripts/build-classroom-remodel-inventory');
 const copy=x=>JSON.parse(JSON.stringify(x));
+test('legacy adapters preserve D07 diagnostic fields and execute original scope validators',async()=>{
+ const a=require('../../../teaching/classroom-remodel/legacy-consumer-adapter');
+ const request=require('../../../teaching/d07/intelligence').diagnosticRequest({course:{course_id:'c1',state_version:1},requirement:{targets:['lu1']},audit:{curriculum_audit_id:'a1'}});
+ const payload={purpose:'Verify prior knowledge',targets:['lu1'],opportunities:[{id:'o1'},{id:'o2'}],critical_criteria:[{target:'lu1',criterion:'Explain'}],non_graded:true};
+ const extension=await a.wrapLegacyConsumer({request,payload,mode:'design_check'});assert.deepEqual(await a.unwrapLegacyConsumer({request,extension}),payload);assert.equal(extension.acceptance,'CANDIDATE_NOT_COMMITTED');
+ const tampered=copy(extension);tampered.payload.targets=['lu2'];await assert.rejects(()=>a.unwrapLegacyConsumer({request,extension:tampered}));
+ await assert.rejects(()=>a.wrapLegacyConsumer({request,payload:{...payload,targets:['lu2']},mode:'design_check'}));
+ await assert.rejects(()=>a.wrapLegacyConsumer({request,payload,mode:'coordinate_lesson'}));
+});
+test('legacy profile and fresh verification extensions retain D12 detailed schemas and state guards',async()=>{
+ const a=require('../../../teaching/classroom-remodel/legacy-consumer-adapter');const d=require('../../../teaching/d12/intelligence');
+ const context={classRow:{class_id:'c1',student_id:'s1',course_lifecycle_state:'ACTIVE',course_state_version:1,schedule_version:1},session:{class_session_id:'session1',state_version:2},plan:{course_plan_id:'p1',version_no:1}};
+ const learningUnit={learning_unit_id:'lu1',metadata:{}};
+ const request=d.profileClassificationRequest({context,learningUnit,subjectTemplate:{}});
+ const payload={status:'ok',review_required:false,review_reasons:[],profile:{learning_unit_ref:'lu1',knowledge_type:'mixed',primary_student_actions:['explain'],answer_space:'multiple_valid_approaches',representations:['text']},uncertainties:[]};
+ const extension=await a.wrapLegacyConsumer({request,payload,mode:'prepare_guidance'});assert.deepEqual(await a.unwrapLegacyConsumer({request,extension}),payload);
+ const bad=copy(payload);bad.profile.learning_unit_ref='other';await assert.rejects(()=>a.wrapLegacyConsumer({request,payload:bad,mode:'prepare_guidance'}));
+ const fresh=d.freshVerificationRequest({context,learningUnit,evaluation:{evaluation_id:'e1'},verificationDirective:{}});
+ const freshPayload={status:'ok',input_state_reference:'class-session:session1@2',decision_question:'Independent support?',verification_directive:{reuse_policy:'fresh_equivalent_required'},review_required:false,review_reasons:[],verification_plan:{},selection:{candidate_ref:'new1'},uncertainties:[],handoff:[]};
+ const wrapped=await a.wrapLegacyConsumer({request:fresh,payload:freshPayload,mode:'design_check'});assert.deepEqual(await a.unwrapLegacyConsumer({request:fresh,extension:wrapped}),freshPayload);
+ await assert.rejects(()=>a.wrapLegacyConsumer({request:fresh,payload:{...freshPayload,input_state_reference:'class-session:session1@1'},mode:'design_check'}));
+});
 const ref=(anchor=null,version='1',kind='chapter')=>({kind,id:'chapter1',version,anchor});
 const chapter=()=>({id:'chapter1',version:'1',scope_ref:'scope1@1',title:'Force',completeness:'complete',validation:'validated',units:[{anchor:'U01',title:'Meaning',objective_refs:[],prerequisite_refs:[],designation:'essential',treatment:'scheduled',elements:[{anchor:'U01.P01',type:'paragraph',text:'Force changes motion through acceleration.',asset_ref:null,alt_text:null,source_refs:['source1@1']}]}],continuation:null,prior_version:null,remaps:[]});
+test('candidate canonical alias and all 22 capability modes resolve without runtime authority',()=>{
+ const r=require('../../../teaching/classroom-remodel/candidate-registry');
+ const family=r.resolveCandidateFamily('TPF-5/8');assert.equal(family.canonicalId,'TPF-21');assert.equal(family.runtimeAuthorized,false);
+ for(const binding of require('../../../teaching/classroom-remodel/migration-proposal.v1.json').bindings)for(const mode of binding.modes){const resolved=r.resolveCandidateBinding({familyId:'TPF-5/8',mode,capabilityId:binding.capabilityId});assert.equal(resolved.runtimeAuthorized,false);assert.equal(typeof resolved.schema.validate,'function');}
+ assert.throws(()=>r.assertRuntimeActivation(),{code:'CLASSROOM_CANDIDATE_ACTIVATION_PROHIBITED'});
+ assert.throws(()=>r.resolveCandidateBinding({familyId:'TPF-21',mode:'prepare_guidance',capabilityId:'unknown'}));
+});
+test('public snapshots exclude unreleased teacher output and retain accepted messages',()=>{
+ const d=require('../../../teaching/classroom-remodel/domain-contracts');
+ const snapshot={schema_version:'1',session_id:'s1',class_id:'c1',controller_version:1,delivery_version:1,delivery_epoch:1,control_epoch:1,server_time:'2026-10-09T21:00:00Z',cursor:1,chapter_ref:ref(),permitted_actions:[],delivery_state:'READY',conversation:[{id:'e1',sequence:1,role:'teacher',type:'portion',text:'Explain force',source_refs:[],status:'PREPARED',occurred_at:'2026-10-09T21:00:00Z'}],active_task:null};
+ assert.throws(()=>d.projectSnapshot(snapshot));snapshot.conversation[0].status='RELEASED';assert.equal(d.projectSnapshot(snapshot).conversation.length,1);
+ snapshot.conversation[0].role='student';snapshot.conversation[0].status='ACCEPTED';assert.equal(d.projectSnapshot(snapshot).conversation[0].status,'ACCEPTED');snapshot.private_criteria='secret';assert.throws(()=>d.projectSnapshot(snapshot));
+});
 const directive=()=>({academic_mode:'teaching',instructional_purpose:'Explain force',approved_action:'explain',target_competence_or_question:'objective1',allowed_interaction_kinds:['explanation'],assistance_ceiling:'full_instruction',current_assistance_state:'none',evidence_intent:'instruction_only',restrictions:[],expected_student_action:'none',current_learning_stage:'unknown',presentation_span:[ref('U01.P01','1','source_element')],response_budget:1000,source_refs:[ref('U01.P01','1','source_element')],board_refs:[],task_ref:null,time_constraints:{remaining_ms:null},response_window:null,resume_at:'U01.P01',accepted_evaluation:null});
 const coordinator=(mode,status='blocked')=>({request_ref:null,task_mode:mode,input_state_reference:null,status,review_required:status!=='complete',artifacts:{},next_action:null,runtime_requests:[],issues:status==='complete'?[]:[{type:'insufficient context',scope:mode,evidence_or_missing_input:'Authoritative input not supplied',consequence:'Affected result withheld',owner:'D11',can_safely_continue:false}]});
 const state=()=>({controllerId:'controller1',lifecycle:'ACTIVE',academicState:'INSTRUCTION',deliveryState:'PRESENTING',windowState:null,conversationalRemaining:0});
@@ -24,6 +59,18 @@ test('all thirty mode descriptors accept bounded missing-context artifacts',asyn
  for(const mode of c.AUTHOR_MODES){const v={task_mode:mode,input_state_reference:null,status:'insufficient_context',review_required:true,review_reasons:['Missing authoritative input'],completion:{},provenance:{},artifacts:{},handoff:[]};assert.equal((await schemas.getModeSchema('author',mode).validate(v)).ok,true);v.status='ok';assert.equal((await schemas.getModeSchema('author',mode).validate(v)).ok,false);}
  for(const mode of c.PRESENTER_MODES){const v={task_mode:mode,input_state_reference:null,status:'insufficient_context',review_required:true,provenance:{},interaction:{instructional_purpose:null,portions:[],silence:false,expects_student_response:false,expected_response_kind:null,preparation_completion:'blocked',stop_reason:'missing directive'},board:[],policy:{},content_integrity:{validation_status:'not_applicable',checkable_content_generated:false},teacher_correction:{},continuity:{},uncertainties:['Missing directive'],handoff:[]};assert.equal((await schemas.getModeSchema('presenter',mode).validate(v)).ok,true);v.status='ok';assert.equal((await schemas.getModeSchema('presenter',mode).validate(v)).ok,false);}
  assert.throws(()=>schemas.getModeSchema('coordinator','invented_mode'));
+});
+test('all ten author modes validate complete and partial artifacts with bound plans',async()=>{
+ const ch=chapter();
+ const artifacts={chapter:ch,unit_map:[ref('U01','1','chapter_unit')],teaching_plan:{id:'p1',version:'1',chapter_ref:ref(),objectives:[],phases:[{purpose:'Explain',source_refs:[ref('U01.P01','1','source_element')],minutes:8,kind:'instruction'}],time_ledger:{usable_minutes:10,reserve_minutes:2,accounting_basis:'Fixture duration, not adopted policy'},remediation_branches:[],carry_forward:[]},learning_trajectory:{current_stage:'unknown',evidence_goals:[],next_stage_requirements:[]},homework_proposal:{assign:false,purpose:'No assignment needed',student_tasks:[],private:{}},preparation_update:{dependency_refs:[],required_stages:[],pending_artifacts:[]},closure_or_replan:{preserved_work:[],carry_forward:[],current_position:'U01.P01'}};
+ for(const mode of c.AUTHOR_MODES){
+  const v={task_mode:mode,input_state_reference:'controller1@1',status:'ok',review_required:false,review_reasons:[],completion:{},provenance:{},artifacts:{},handoff:[]};
+  for(const key of schemas.REQUIRED_AUTHOR[mode]){v.completion[key]='complete';v.artifacts[key]=copy(artifacts[key]);}
+  const schema=schemas.getModeSchema('author',mode,{chapter:ch});assert.equal((await schema.validate(v)).ok,true,mode);
+  const partial=copy(v);partial.status='validation_needed';partial.review_required=true;partial.review_reasons=['Awaiting independent validation'];for(const key of Object.keys(partial.completion))if(key!=='chapter')partial.completion[key]='partial';assert.equal((await schema.validate(partial)).ok,true,mode);
+  const blocked={...v,status:'insufficient_context',review_required:true,review_reasons:['Missing source'],completion:{},artifacts:{}};assert.equal((await schema.validate(blocked)).ok,true,mode);
+  if(v.artifacts.teaching_plan){v.artifacts.teaching_plan.time_ledger.usable_minutes=0;assert.equal((await schema.validate(v)).ok,false,mode);}
+ }
 });
 test('coordinator exactly nine fields, closed status and no implicit official outcomes',()=>{const v=coordinator('coordinate_lesson');c.validateCoordinator(v);assert.throws(()=>c.validateCoordinator({...v,extra:'hidden'}));assert.throws(()=>c.validateCoordinator({...v,status:'ok'}));v.artifacts.progress={mastery_state:'secure'};assert.throws(()=>c.validateCoordinator(v));});
 test('complete routing preserves exactly one disposition per accepted message',()=>{const v=coordinator('handle_message','complete');const d={message_ref:'m1',question_or_unit_ref:'U01',reason:'Clarify the supplied term',grouping_refs:[],classification:'clarification request',disposition:'queue',response_timing:'at a suitable teaching pause',acknowledgement_status:'requested',reply_delivery_status:'not_delivered',difficulty_resolution:'unresolved',basis:'explicit fact',evidence_refs:['m1']};v.artifacts.message_dispositions=[d];c.validateCoordinator(v,{messageRefs:['m1']});assert.throws(()=>c.validateCoordinator(v,{messageRefs:['m1','m2']}));v.artifacts.message_dispositions.push(d);assert.throws(()=>c.validateCoordinator(v,{messageRefs:['m1']}));});

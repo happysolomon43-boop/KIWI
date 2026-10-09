@@ -1,0 +1,99 @@
+{
+  "version": "classroom-remodel-checkpoint.v1",
+  "recordedAt": "2026-10-09",
+  "branch": "feat/classroom-remodel-delivery-1",
+  "implementationCommit": "54834e4bf0edb552acf204e5a36fd8237133f200",
+  "testedTree": "f3bd3ea91a2f965fbcee977fafcc843e6152ee03",
+  "pr": "https://github.com/happysolomon43-boop/KIWI/pull/329",
+  "prState": "OPEN_DRAFT",
+  "baseline": "a77aec6fbd49b89a4538610e434151e2f5fb8cde",
+  "delivery": 1,
+  "acceptance": "IN_PROGRESS_NOT_COMPLETE",
+  "completed": [
+    "All five required documents read in full and preserved unchanged with byte-pinned inputs",
+    "Current main and Render deployment baseline verified; production Supabase migration history and Class session columns inspected",
+    "Machine-derived 3/7/12 inventory covering 22 migrated and retained 05/08/20 capabilities",
+    "Inactive reconciled author, coordinator and Presenter prompt candidates with source/body hashes",
+    "Initial mode/reference/chapter/plan/directive/artifact/domain validators, public projections and separate result semantics",
+    "Subordinate composite-state guards and confirmed-message-effect checks",
+    "Versioned policy definitions with missing fields blocking only dependent capabilities",
+    "Existing D11/D12 assistance ceiling mapping preserved",
+    "Session pinning and rollback disposition contracts",
+    "Dedicated candidate fixture CI"
+  ],
+  "effectiveVersions": {
+    "registry": "1.3",
+    "promptManifest": "1.4",
+    "contracts": "classroom-contracts.v1",
+    "statePolicy": "classroom-state-policy.v1",
+    "domainContracts": "classroom-domain.v1",
+    "candidatePrompts": {
+      "author": "TPF-05 v2.0 candidate",
+      "coordinator": "TPF-21 v1.0 proposal; TPF-5/8 alias",
+      "presenter": "TPF-08 v2.0 candidate"
+    },
+    "coordinatorRegistration": "PROPOSED_NOT_FROZEN",
+    "runtimeActivation": "INACTIVE"
+  },
+  "migrationsApplied": [],
+  "infrastructureMutations": [],
+  "legacyRetirement": [],
+  "validation": {
+    "localFullSuite": {
+      "tests": 1633,
+      "pass": 1633,
+      "fail": 0,
+      "skip": 0
+    },
+    "foundationSuite": {
+      "tests": 25,
+      "pass": 25
+    },
+    "webBuild": "PASS",
+    "legacyBodyCatalogRegistryIntegrity": "PASS",
+    "publishedTreeEqualsTestedTree": true,
+    "firstPublishedCommitCI": {
+      "commit": "5c0c2e80e569f6fd771fd27d396b583cf908166b",
+      "workflows": 34,
+      "passed": 34
+    },
+    "currentCommitCI": "CHECK_GITHUB_RUNS_BEFORE_CLAIMING_PASS",
+    "liveProviderEvidence": "NOT_RUN",
+    "newDatabaseTransactionTests": "NOT_IMPLEMENTED",
+    "browserAccessibilityChecks": "NOT_RUN"
+  },
+  "topology": {
+    "api": {
+      "host": "Render",
+      "workspace": "tea-d7ooajt8nd3s739ko2tg",
+      "service": "srv-d7p3k9gsfn5c73bh7rv0",
+      "deployment": "dep-db4a3np7lnhs7390lvdg",
+      "commit": "a77aec6fbd49b89a4538610e434151e2f5fb8cde"
+    },
+    "database": {
+      "production": "nqdwifqskxkblgdgeutn",
+      "integration": "kmymmwujhotqxtoamyur",
+      "migrationsObservedThrough": "20261008233038"
+    },
+    "vercel": "No KIWI project identified in either connected account; repository has static Vercel config; no ownership assumed"
+  },
+  "remaining": [
+    "Canonical candidate registration through existing body/catalog/registry/governance rather than proposal-only identity",
+    "Complete specialized legacy-shaped consumer adapters and output schema equivalence tests",
+    "Complete positive/missing/partial/blocked fixtures and semantic domain validation for all thirty modes",
+    "Complete mode-specific confirmation, reference and public/private guards before runtime invocation",
+    "Adopt successor manifest/count/hash and historical-reader qualification without changing active legacy bindings",
+    "Finish required domain schema and owner/configuration adoption records",
+    "Delivery 1 acceptance gate must pass before Delivery 2"
+  ],
+  "nextUnfinishedAction": "Implement inactive canonical coordinator registration and compatible legacy consumer/schema adapters; start with D07 targeted diagnostic, D12 profile/fresh-verification and D11 author output bindings.",
+  "compatibility": {
+    "legacySessions": "Unaffected; existing active contracts retained",
+    "newSessionAdmission": "Not mounted",
+    "routes": "Manifest only; not Express registered",
+    "rollback": "Candidate code is unmounted; no new persisted runtime records; future pinned-session rollback contract fixture-tested only"
+  },
+  "externalBlockers": [],
+  "deliveries2Through8": "NOT_STARTED; dependency gate not passed",
+  "scenarios1Through44": "NOT_QUALIFIED; foundational fixtures are only partial support for scenarios 39 and 40"
+}
