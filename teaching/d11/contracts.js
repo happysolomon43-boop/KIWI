@@ -99,7 +99,13 @@ function nonEmpty(value, field) {
 function integer(value, field, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
   const n = Number(value);
   if (!Number.isInteger(n) || n < min || n > max) {
-    fail(field + ' must be an integer between ' + min + ' and ' + max + '.', 'TEACHING_D11_NUMBER_INVALID', 400);
+    // A model repair can use this STATIC field identifier, never the supplied
+    // value or dynamic class/student content. Public validation whitelists it.
+    const error=new Error(field + ' must be an integer between ' + min + ' and ' + max + '.');
+    error.code='TEACHING_D11_NUMBER_INVALID';
+    error.status=400;
+    error.fieldPath=field;
+    throw error;
   }
   return n;
 }
@@ -319,6 +325,10 @@ const D11_SAFE_BLUEPRINT_FIELDS=new Set([
   'objective.id','objective.learning_unit_ref','objective.label',
   'segment.id','segment.kind',
   'objective.evidence_descriptor_targets','segment.learning_evidence_descriptor',
+  // Static numeric-only field labels let the ONE authorized D11 repair
+  // correct its real defect without exposing model output or academic data.
+  'objective.minimum_safe_minutes','segment.planned_minutes',
+  'segment.minimum_safe_minutes','adaptive_reserve_minutes',
 ]);
 function validateLessonBlueprintProposal(output, context) {
   try {
