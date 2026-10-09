@@ -65,7 +65,10 @@ test('Classroom first reads the real session before JOIN, and prepares validated
   assert.match(ui,/current\?\.blueprint\?\.currentForAuthoritativeContext===true/);
   assert.match(ui,/!current\?\.preparation/);
   assert.match(ui,/if\(path==='start'\)await recoverPreparedLesson\(classId\)/);
-  assert.match(ui,/try\{await fetchSnapshot\(\);if\(!reviewOnly&&state\.snapshot\?\.controller/);
+  assert.match(ui,/const data=await fetchSnapshot\(\)/);
+  assert.match(ui,/if\(!state\.reviewOnly&&data\.controller\?\.lifecycleState==='ACTIVE'&&!data\.hasEntered\)/);
+  assert.match(ui,/await joinCurrentClass\(classId,host\)/);
+  assert.match(ui,/if\(path==='start'\)await recoverPreparedLesson\(classId\)/);
   assert.doesNotMatch(ui,/try\{if\(!reviewOnly\)await kiwiApiRequest\(`\/teaching\/classes/);
   assert.match(ui,/if\(path==='start'\)await kiwiApiRequest\(/);
 });

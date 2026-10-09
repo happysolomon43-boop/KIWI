@@ -171,7 +171,7 @@ async function load(){
         openSection(){}
       });
       window.KIWI_CLASSROOM_TEST_MODE='LIVE_COURSE';
-      await import('/teaching-classroom.js?v=20261009-sequential-1');
+      await import('/teaching-classroom.js?v=20261009-mobile-classroom-recovery-1');
     }
     if(typeof classroomSection?.openClassroom!=='function')
       throw new Error('KIWI Classroom could not load.');

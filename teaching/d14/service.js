@@ -66,7 +66,7 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
       resumeState:source.session.resume_instructional_substate||'INSTRUCTION',canResume:Boolean(source.session.resume_instructional_substate),
     }:null;
     return Object.freeze({class:d11.class,controller:d11.controller,time:d11.time,serverNow:serverNow.toISOString(),identity:identity||{course_title:'Course',teacher_name:'KIWI Teacher'},
-      mode:MODES[mode]||(mode==='UNSTARTED_PAST'?'Class did not start':mode==='START_DELAYED'?'Start pending':'Before Class'),modeKey:mode,focus:true,objective,teacherMessage:teacherMessage?.message||null,entry,interruption,
+      mode:MODES[mode]||(mode==='UNSTARTED_PAST'?'Class did not start':mode==='START_DELAYED'?'Start pending':'Before Class'),modeKey:mode,focus:true,objective,teacherMessage:teacherMessage?.message||null,entry,interruption,hasEntered:Boolean(firstEntry),
       canStartClass:!source.session&&currentTime>=starts&&currentTime<ends&&source.classRow.lifecycle_state!=='CANCELLED'&&source.classRow.course_lifecycle_state==='ACTIVE'
         &&source.classRow.source_timetable_state!=='SUPERSEDED',
       requiredMaterials:Array.isArray(source.blueprint?.blueprint_payload?.required_materials)?source.blueprint.blueprint_payload.required_materials.map(String).slice(0,12):[],

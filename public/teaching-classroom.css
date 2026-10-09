@@ -162,3 +162,57 @@
 .tc-review-actions{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px;max-width:min(100%,340px)}
 .tc-review-actions .tc-button{white-space:normal;text-align:center;min-height:43px}
 @media(max-width:699px){.tc-review-actions{grid-column:1/-1;width:100%;max-width:none;justify-content:stretch}.tc-review-actions .tc-button{flex:1;min-width:125px}}
+
+
+/* D14 mobile reading accessibility and non-destructive reconnect.
+   Overlay is the single vertical scroller: frequent snapshots must preserve
+   its position; any secondary horizontal regions retain native touch scroll. */
+.tc-overlay{overflow-x:hidden;overflow-y:auto;overscroll-behavior-y:contain;-webkit-overflow-scrolling:touch}
+.tc-reconnect-actions{display:flex;gap:10px;flex-wrap:wrap;padding:0 22px;margin:16px 0}
+.tc-reconnect-detail{padding:0 22px;color:#b6d5c1;font-size:13px;line-height:1.5}
+.tc-connection-wait{margin:18px 22px 0;max-width:620px}
+.tc-connection{display:flex;flex-wrap:wrap;align-items:center;gap:10px;left:12px;right:auto;bottom:calc(14px + env(safe-area-inset-bottom));z-index:7;max-width:min(420px,calc(100vw - 24px));background:#173627;border-color:rgba(189,238,205,.38);color:#d8f6e2;font-size:12px;line-height:1.45;box-shadow:0 8px 28px #0008}
+.tc-connection .tc-button{min-height:40px;padding:8px 12px;font-size:12px}
+.tc-reading-controls{display:inline-flex;align-items:center;gap:3px;padding:3px;border:1px solid rgba(183,233,199,.22);border-radius:12px;background:rgba(11,32,23,.65);white-space:nowrap}
+.tc-reading-control{display:grid;place-items:center;min-width:40px;min-height:40px;border:0;border-radius:9px;background:transparent;color:#e2fae9;font-size:14px;font-weight:750;cursor:pointer}
+.tc-reading-control:hover:not(:disabled),.tc-reading-control:focus-visible{background:rgba(171,237,199,.15)}
+.tc-reading-control:disabled{opacity:.36;cursor:default}
+.tc-teacher p{font-size:calc(15px * var(--tc-reading-scale,1))}
+.tc-board-item p{font-size:calc(16px * var(--tc-reading-scale,1));overflow-wrap:anywhere}
+.tc-step p{font-size:calc(14px * var(--tc-reading-scale,1))}
+.tc-code code{font-size:calc(13px * var(--tc-reading-scale,1))}
+.tc-math{font-size:clamp(18px,calc(28px * var(--tc-reading-scale,1)),39px)}
+.tc-objective p,.tc-comparison p,.tc-note p{font-size:calc(15px * var(--tc-reading-scale,1));overflow-wrap:anywhere}
+.tc-board-empty p,.tc-empty-copy{font-size:calc(13px * var(--tc-reading-scale,1))}
+.tc-reading-control:focus-visible{outline:2px solid #c5f8df;outline-offset:2px}
+/* The raised-hand control is a narrow, usable edge tab at rest. Hover and
+   keyboard focus reveal its label, while touch always opens the same sheet. */
+.tc-raise-hand{width:44px;min-width:44px;max-width:none;height:54px;min-height:48px;gap:8px;overflow:hidden;white-space:nowrap;justify-content:flex-start;right:max(0px,env(safe-area-inset-right));padding:0 10px;box-shadow:0 4px 18px #0007;transition:width .18s ease,background .18s ease}
+.tc-raise-hand__icon{display:block;flex:none;font-size:21px;line-height:1}
+.tc-raise-hand__label{display:block;flex:none;opacity:0;width:0;overflow:hidden;font-size:11px}
+.tc-raise-hand:hover,.tc-raise-hand:focus-visible{width:137px;background:#d8ffe9}
+.tc-raise-hand:hover .tc-raise-hand__label,.tc-raise-hand:focus-visible .tc-raise-hand__label{width:auto;opacity:1}
+@media(max-width:699px){
+ .tc-board,.tc-workspace{overflow-wrap:anywhere}
+ .tc-panel-head{align-items:flex-start}
+ .tc-panel-tools{max-width:100%}
+ .tc-reading-controls{gap:0}
+ .tc-reading-control{min-width:36px;min-height:40px}
+ .tc-raise-hand{top:37%;width:42px;min-width:42px;max-width:none;min-height:50px;height:52px;padding:0 8px}
+ .tc-raise-hand:hover,.tc-raise-hand:focus-visible{width:42px}
+ .tc-raise-hand:hover .tc-raise-hand__label,.tc-raise-hand:focus-visible .tc-raise-hand__label{width:0;opacity:0}
+ .tc-teacher p{font-size:calc(13px * var(--tc-reading-scale,1))}
+ .tc-board-item p{font-size:calc(16px * var(--tc-reading-scale,1))}
+ .tc-connection{left:10px;bottom:calc(10px + env(safe-area-inset-bottom))}
+}
+@media(prefers-reduced-motion:reduce){.tc-raise-hand{transition:none!important}}
+@media(forced-colors:active){.tc-reading-controls,.tc-reading-control,.tc-raise-hand,.tc-connection{border:1px solid ButtonText}}
+
+/* A mobile Board is a vertically browsable sequence of permitted lesson
+   scenes; native page scroll remains available for the entire Class. */
+.tc-board-scene-list{display:grid;gap:18px}
+.tc-board-scene{min-width:0;scroll-margin-block-start:12px}
+.tc-board-scene + .tc-board-scene{padding-top:18px;border-top:1px solid rgba(185,229,198,.17)}
+.tc-board-scene__number{margin-bottom:12px;color:#92cfae;font:700 10px/1.5 var(--font-mono,monospace);letter-spacing:.12em}
+.tc-board-scene .tc-board-blocks{display:grid;gap:14px}
+@media(max-width:699px){.tc-board-scene-list{gap:22px}.tc-board-scene + .tc-board-scene{padding-top:22px}}
