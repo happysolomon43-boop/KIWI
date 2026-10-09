@@ -85,7 +85,7 @@ function createD11LessonControllerRepository({
   async function loadLearningUnits(studentId, planId, runner = null) {
     if (!planId) return [];
     const { rows } = await q(runner,
-      "select * from public.teaching_learning_units where student_id=$1 and course_plan_id=$2 order by sequence_no,learning_unit_id",
+      "select * from public.teaching_learning_units where student_id=$1 and course_plan_id=$2 order by created_at,learning_unit_id",
       [studentId, planId]
     );
     return rows || [];
@@ -907,6 +907,13 @@ function createD11LessonControllerRepository({
     return Object.freeze({ ok:mismatches.length===0, reason:mismatches.length?'STALE_LIVE_CONTEXT':null, mismatches:Object.freeze(mismatches), context });
   }
 
+  async function commitClassroomBlueprint({studentId,classId,expected,blueprint,validationMetadata,generationProvenance}) {
+    return withTransaction(async tx=>{
+      const artifact=await recordPreparationArtifactUsing(tx,{studentId,classId,blueprint,capabilityId:'teaching.lesson.pre_class_lesson_planning',promptFamilyRef:'TPF-05@2.0'});
+      return saveBlueprintUsing(tx,{studentId,classId,expected,blueprint,validationMetadata:{...validationMetadata,ppl_artifact_version_id:artifact.artifact.artifact_version_id},generationProvenance,preparationRef:artifact.artifact.artifact_version_id});
+    });
+  }
+
   async function saveBlueprint({
     studentId,
     classId,
@@ -1643,6 +1650,7 @@ function createD11LessonControllerRepository({
     assertContextCurrentUsing,
     assertLiveContextCurrent,
     saveBlueprint,
+    commitClassroomBlueprint,
     saveBlueprintUsing,
     latestBlueprint,
     getSession,

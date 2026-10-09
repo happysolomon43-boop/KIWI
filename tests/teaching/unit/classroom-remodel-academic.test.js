@@ -1,0 +1,63 @@
+'use strict';
+const test=require('node:test');const assert=require('node:assert/strict');
+const a=require('../../../teaching/classroom-remodel/academic-artifacts');
+const f=require('../fixtures/classroom-remodel-academic');
+test('subject-specific fixture depth checks concept, equation, passage and code requirements',()=>{
+ for(const [subject,type]of [['concept','example'],['equation','equation'],['passage','passage'],['code','code']]){const chapter=f.chapter(subject);const context={requiredUnits:['U01'],requiredElements:[{unit:'U01',type,purpose:'Subject-specific independent-study content'}]};const result=a.prepareArtifact({kind:'chapter',payload:chapter,context});assert.equal(result.components.length,3);assert.equal(result.publicPayload.units[0].objective_refs,undefined);assert.equal(result.publicPayload.units[0].elements.length,2);chapter.units[0].elements=chapter.units[0].elements.filter(e=>e.type!==type);assert.throws(()=>a.prepareArtifact({kind:'chapter',payload:chapter,context}));}
+});
+test('partial continuation preserves every completed unit by canonical hash and stable identity',()=>{
+ const prior=f.chapter();prior.completeness='partial';prior.continuation={candidate_id:prior.id,candidate_version:prior.version,last_complete_unit:'U01',remaining_units:['U02'],preserved_hashes:a.unitHashes(prior),next_task:'Write U02 without rewriting U01'};
+ const next=f.clone(prior);next.completeness='complete';next.continuation=null;const u=f.clone(next.units[0]);u.anchor='U02';u.elements.forEach((e,i)=>e.anchor='U02.E0'+(i+1));next.units.push(u);a.validateContinuation(prior,next);
+ const changed=f.clone(next);changed.units[0].elements[0].text='Compressed summary';assert.throws(()=>a.validateContinuation(prior,changed));const stale=f.clone(next);stale.version='2';assert.throws(()=>a.validateContinuation(prior,stale));const forged=f.clone(prior);forged.continuation.preserved_hashes.U01='0'.repeat(64);assert.throws(()=>a.validateContinuation(forged,next));
+});
+test('guidance accounts for all source elements and preserves author unit ownership',()=>{
+ const chapter=f.chapter();const guide=f.guide();a.validateGuide(guide,{chapter,essentialAnchors:['U01.E01','U01.E02']});guide.covered_refs.pop();assert.throws(()=>a.validateGuide(guide,{chapter,essentialAnchors:['U01.E02']}));const wrong=f.guide();wrong.teaching_units[0].unit_ref='local_invented_unit';assert.throws(()=>a.validateGuide(wrong,{chapter,essentialAnchors:['U01.E01']}));
+});
+test('opening preparation remains private and requires authorized checked content',()=>{
+ const context={chapter:f.chapter(),directive:f.directive(),supportedBoardOperations:[]};const result=a.prepareArtifact({kind:'opening',payload:f.opening(),context});assert.deepEqual(result.publicPayload,{});const bad=f.opening();bad.content_integrity.validation_status='validation_needed';assert.throws(()=>a.prepareArtifact({kind:'opening',payload:bad,context}));
+});
+test('unqualified preparation returns a scoped hold before invoking providers',async()=>{
+ const {createClassroomPreparationService}=require('../../../teaching/classroom-remodel/preparation-service');let calls=0;
+ const service=createClassroomPreparationService({repository:{saveCandidate(){calls++;}},d11Repository:{getClassContext(){calls++;}},preparationRepository:{getWorkspaceSnapshot(){calls++;}}});const result=await service.prepare({id:'s1'},'c1',{operationKey:'op1'});assert.equal(result.prepared,false);assert.equal(result.published,false);assert.equal(calls,0);
+});
+test('chapter reader requires the server-pinned accepted chapter and Blueprint identities',async()=>{
+ const {createClassroomPreparationService}=require('../../../teaching/classroom-remodel/preparation-service');let payloadReads=0;
+ const service=createClassroomPreparationService({repository:{saveCandidate(){},loadBinding:async()=>({schedule_version:1,course_plan_version:1,course_plan_id:'p1',chapter_artifact_id:'chapter1',lesson_blueprint_id:'blueprint1'}),loadArtifact:async()=>{payloadReads++;}},d11Repository:{getClassContext:async()=>({classRow:{schedule_version:1},plan:{version_no:1,course_plan_id:'p1'},session:{classroom_engine:'CLASSROOM_V1',classroom_chapter_artifact_id:'other',lesson_blueprint_id:'blueprint1'}})},preparationRepository:{getWorkspaceSnapshot(){}},releaseGate:async()=>({delivery1GatePassed:true,routesQualified:true,evidence:'FIXTURE'})});
+ await assert.rejects(()=>service.getPublicChapter({id:'s1'},'c1'),{code:'CLASSROOM_CHAPTER_SESSION_PIN_MISMATCH'});assert.equal(payloadReads,0);
+});
+test('chapter access is blocked on every D16/D17 protected takeover before reading artifacts',async()=>{
+ const {createClassroomPreparationService}=require('../../../teaching/classroom-remodel/preparation-service');let reads=0;
+ const session={classroom_engine:'CLASSROOM_V1',instructional_substate:'ASSESSMENT'};
+ const service=createClassroomPreparationService({repository:{saveCandidate(){},loadBinding:async()=>{reads++;}},d11Repository:{getClassContext:async()=>({session})},preparationRepository:{getWorkspaceSnapshot(){}},releaseGate:async()=>({delivery1GatePassed:true,routesQualified:true,evidence:'FIXTURE'})});
+ for(const mode of ['ASSESSMENT','CLASSWORK']){session.instructional_substate=mode;await assert.rejects(()=>service.getPublicChapter({id:'s1'},'c1'),{code:'CLASSROOM_CHAPTER_PROTECTED_MODE',status:403});}
+ assert.equal(reads,0);
+});
+test('classroom workflow preserves existing independent review requirements and canonical stage order',()=>{
+ const {preparationWorkflow}=require('../../../teaching/classroom-remodel/preparation-service');const plan=preparationWorkflow({profile_id:'fixture',version:'1',required_independent_review_stages:['Independent Validation','Whole-Artifact Review']});assert.equal(plan.stages.filter(s=>s.independent).length,2);assert.throws(()=>preparationWorkflow({profile_id:'fixture',version:'1',required_independent_review_stages:['Challenge']}));
+});
+test('preparation resumes after a provider failure without regenerating persisted chapter or guides',async()=>{
+ const {createClassroomPreparationService}=require('../../../teaching/classroom-remodel/preparation-service');const {validateAuthor}=require('../../../teaching/classroom-remodel/mode-schemas');
+ const stored=new Map();let nextId=0;const calls={author:0,coordinator:0,presenter:0};let binding=null,bindingAttempts=0,workspaceReads=0;
+ const repository={
+  loadOperation:async(s,cl,k,op)=>[...stored.values()].find(a=>a.operation_key===op&&a.artifact_kind===k)||null,
+  loadArtifact:async(s,id)=>stored.get(id)||null,
+  saveCandidate:async input=>{const existing=await repository.loadOperation(input.studentId,input.classId,input.kind,input.operationKey);if(existing)return existing;const prepared=a.prepareArtifact({kind:input.kind,payload:input.payload,context:input.context});const artifact={artifact_version_id:'fixture-artifact-'+(++nextId),class_id:input.classId,artifact_kind:input.kind,workspace_id:input.workspaceId,operation_key:input.operationKey,logical_id:input.logicalId,logical_version:input.logicalVersion,payload:input.payload,generation_context:input.generationContext||{},content_sha256:prepared.contentHash,completeness:prepared.completeness,validity_state:'CURRENT',validation_state:'CANDIDATE',dependencies:input.dependencies};stored.set(artifact.artifact_version_id,artifact);return artifact;},
+  getDependencies:async(s,id)=>stored.get(id).dependencies.map(d=>({aggregate_ref:d.ref,version_ref:d.version,dependency_artifact_version_id:d.artifactId})),
+  recordValidation:async({artifactId,receipt})=>{assert.equal(receipt.contentHash,stored.get(artifactId).content_sha256);stored.get(artifactId).validation_state='VALIDATED';},
+  bindReady:async input=>{if(++bindingAttempts===1)throw Object.assign(new Error('fixture binding outage after handoff'),{code:'FIXTURE_BINDING_FAILURE'});binding=input;return {prepared:true,published:false};},loadBinding:async()=>binding,
+ };
+ const context={classRow:{student_id:'fixture-student',class_id:'fixture-class',schedule_version:1,scheduled_start_at:'2026-10-10T10:00:00Z',lifecycle_state:'SCHEDULED',course_lifecycle_state:'ACTIVE'},plan:{course_plan_id:'fixture-plan',version_no:1}};
+ const output={task_mode:'pre_class_lesson_blueprint',input_state_reference:'fixture@1',status:'ok',review_required:false,review_reasons:[],completion:{chapter:'complete',unit_map:'complete',teaching_plan:'complete'},provenance:{},artifacts:{chapter:f.chapter(),unit_map:[f.ref('U01','chapter_unit')],teaching_plan:f.plan()},handoff:[]};validateAuthor(output);
+ const workspace={workspace_id:'fixture-workspace',current_authoritative_input_bundle_ref:'fixture-input',protected_content_class:'UNPROTECTED',student_id:'fixture-student',target_ref:'fixture-class',lifecycle_state:'ACTIVE'};
+ const service=createClassroomPreparationService({repository,d11Repository:{getClassContext:async()=>context,ensurePreparationWorkspace:async()=>{workspaceReads++;return {workspace};}},preparationRepository:{getWorkspaceSnapshot:async()=>({workspace,findings:[]})},releaseGate:async()=>({delivery1GatePassed:true,routesQualified:true,evidence:'FIXTURE_ONLY'}),getRequirements:async()=>({profile:{profile_id:'fixture',version:'1',required_independent_review_stages:['Independent Validation','Whole-Artifact Review']},depth:{requiredUnits:['U01']},dependencies:[{kind:'source',ref:'source1',version:'1',artifactId:null}],essentialAnchors:['U01.E01','U01.E02'],openingDirective:f.directive(),supportedBoardOperations:[]}),intelligence:{author:async()=>{calls.author++;return output;},coordinator:async()=>{calls.coordinator++;return {request_ref:'fixture',task_mode:'prepare_guidance',input_state_reference:'fixture@1',status:'complete',review_required:false,artifacts:{explanation_guides:f.guide()},next_action:null,runtime_requests:[],issues:[]};},presenter:async()=>{calls.presenter++;if(calls.presenter===1)throw Object.assign(new Error('fixture provider interruption'),{code:'FIXTURE_PROVIDER_FAILURE'});return f.opening();}},reviewArtifact:async({artifact})=>({accepted:true,independent:true,routeQualified:true,reviewId:'FIXTURE_ONLY',contentHash:artifact.content_sha256}),reviewWholeArtifact:async({artifacts})=>({accepted:true,independent:true,routeQualified:true,reviewId:'FIXTURE_WHOLE_ONLY',contentHashes:artifacts.map(a=>a.content_sha256)}),currentDependencyVersion:async()=> '1',assetReadiness:async()=>({ready:true}),acceptBlueprint:async()=>({lesson_blueprint_id:'FIXTURE_BLUEPRINT'}),finalizePpl:async()=>{workspace.lifecycle_state='HANDED_OFF';return {ready:true};},clock:()=>new Date('2026-10-09T20:00:00Z')});
+ await assert.rejects(()=>service.prepare({id:'fixture-student'},'fixture-class',{operationKey:'fixture-op'}),{code:'FIXTURE_PROVIDER_FAILURE'});assert.equal(stored.size,3);assert.equal(binding,null);
+ await assert.rejects(()=>service.prepare({id:'fixture-student'},'fixture-class',{operationKey:'fixture-op'}),{code:'FIXTURE_BINDING_FAILURE'});assert.equal(workspace.lifecycle_state,'HANDED_OFF');const readsBeforeRecovery=workspaceReads;
+ const result=await service.prepare({id:'fixture-student'},'fixture-class',{operationKey:'fixture-op'});assert.equal(workspaceReads,readsBeforeRecovery);assert.deepEqual(calls,{author:1,coordinator:1,presenter:2});assert.equal(stored.size,4);assert.equal(result.prepared,true);assert.equal(result.published,false);assert.equal(binding.receipt.wholeArtifactReview.reviewId,'FIXTURE_WHOLE_ONLY');
+});
+
+test('explicit chapter revisions require remaps for every changed or retired anchor',()=>{
+ const prior=f.chapter(),next=f.clone(prior);next.version='2';next.prior_version='1';next.units[0].elements[0].text='Corrected source-grounded prose';
+ assert.throws(()=>a.validateRevision(prior,next),{code:'CLASSROOM_CHANGED_ANCHOR_REMAP_REQUIRED'});
+ next.remaps=[{prior_version:'1',from:'U01',to:['U01'],reason:'Unit contains a corrected passage'},{prior_version:'1',from:'U01.E01',to:['U01.E01'],reason:'Explicit teacher correction'}];a.validateRevision(prior,next);
+ const forged=f.clone(next);forged.remaps[0].from='unknown';assert.throws(()=>a.validateRevision(prior,forged));
+});

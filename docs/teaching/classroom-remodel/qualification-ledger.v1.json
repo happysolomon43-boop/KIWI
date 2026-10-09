@@ -6,10 +6,26 @@
       "number": 1,
       "sourceRequirement": "1. **Simple concept:** concise complete chapter and proportionate explanation, no padding or mandatory check.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "supportOnly": true,
+          "sourceCommit": "980875108044e3e1af3b898df1b7525be1e22318",
+          "description": "Subject-specific concept depth fixture; independent-study readability and actual live explanation still unqualified",
+          "files": [
+            "tests/teaching/unit/classroom-remodel-academic.test.js",
+            "tests/teaching/unit/classroom-remodel-invocation.test.js",
+            "tests/teaching/unit/classroom-remodel-runtime.test.js",
+            "tests/teaching/integration/classroom-remodel-academic.test.js"
+          ]
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
-      "testedVersions": null
+      "testedVersions": {
+        "contracts": "classroom-contracts.v1",
+        "preparation": "classroom-preparation.v1",
+        "activation": "INACTIVE"
+      }
     },
     {
       "number": 2,
@@ -24,10 +40,26 @@
       "number": 3,
       "sourceRequirement": "3. **Long chapter continuation:** partial generation preserves complete units/anchors; continuation finishes without restart, duplicate or summary compression; Class cannot falsely claim readiness.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "supportOnly": true,
+          "sourceCommit": "980875108044e3e1af3b898df1b7525be1e22318",
+          "description": "Exact continuation hashes/anchors and readiness hold fixtures; live long-output continuation not observed",
+          "files": [
+            "tests/teaching/unit/classroom-remodel-academic.test.js",
+            "tests/teaching/unit/classroom-remodel-invocation.test.js",
+            "tests/teaching/unit/classroom-remodel-runtime.test.js",
+            "tests/teaching/integration/classroom-remodel-academic.test.js"
+          ]
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
-      "testedVersions": null
+      "testedVersions": {
+        "contracts": "classroom-contracts.v1",
+        "preparation": "classroom-preparation.v1",
+        "activation": "INACTIVE"
+      }
     },
     {
       "number": 4,
@@ -204,10 +236,26 @@
       "number": 23,
       "sourceRequirement": "23. **Provider stall/unknown outcome:** bounded retry/reconciliation, readable preserved lesson, no fabricated completion.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "supportOnly": true,
+          "sourceCommit": "980875108044e3e1af3b898df1b7525be1e22318",
+          "description": "Generation persistence before D05 completion and committed-artifact retry recovery fixtures; real unknown provider outcome not observed",
+          "files": [
+            "tests/teaching/unit/classroom-remodel-academic.test.js",
+            "tests/teaching/unit/classroom-remodel-invocation.test.js",
+            "tests/teaching/unit/classroom-remodel-runtime.test.js",
+            "tests/teaching/integration/classroom-remodel-academic.test.js"
+          ]
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
-      "testedVersions": null
+      "testedVersions": {
+        "contracts": "classroom-contracts.v1",
+        "preparation": "classroom-preparation.v1",
+        "activation": "INACTIVE"
+      }
     },
     {
       "number": 24,
@@ -222,19 +270,51 @@
       "number": 25,
       "sourceRequirement": "25. **Correction:** public corrected statement, chapter/Board version links, invalidated buffer and evidence recheck; no silent rewrite or student blame.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "supportOnly": true,
+          "sourceCommit": "980875108044e3e1af3b898df1b7525be1e22318",
+          "description": "Native immutable chapter versions and explicit anchor remap history; public correction/buffer invalidation belongs to later deliveries",
+          "files": [
+            "tests/teaching/unit/classroom-remodel-academic.test.js",
+            "tests/teaching/unit/classroom-remodel-invocation.test.js",
+            "tests/teaching/unit/classroom-remodel-runtime.test.js",
+            "tests/teaching/integration/classroom-remodel-academic.test.js"
+          ]
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
-      "testedVersions": null
+      "testedVersions": {
+        "contracts": "classroom-contracts.v1",
+        "preparation": "classroom-preparation.v1",
+        "activation": "INACTIVE"
+      }
     },
     {
       "number": 26,
       "sourceRequirement": "26. **Substantial replan:** TPF-05 revises only remaining work; D11 accepts current version/time; completed activity preserved.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "supportOnly": true,
+          "sourceCommit": "980875108044e3e1af3b898df1b7525be1e22318",
+          "description": "Actual D11 owner validator/state/idempotence fixtures and replacement binding CAS; live substantial replan not qualified",
+          "files": [
+            "tests/teaching/unit/classroom-remodel-academic.test.js",
+            "tests/teaching/unit/classroom-remodel-invocation.test.js",
+            "tests/teaching/unit/classroom-remodel-runtime.test.js",
+            "tests/teaching/integration/classroom-remodel-academic.test.js"
+          ]
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
-      "testedVersions": null
+      "testedVersions": {
+        "contracts": "classroom-contracts.v1",
+        "preparation": "classroom-preparation.v1",
+        "activation": "INACTIVE"
+      }
     },
     {
       "number": 27,
@@ -258,10 +338,26 @@
       "number": 29,
       "sourceRequirement": "29. **Protected takeover:** chapter/Board/Notebook/help suppressed server-side, no private stream leakage, proper work shell receives response.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "supportOnly": true,
+          "sourceCommit": "980875108044e3e1af3b898df1b7525be1e22318",
+          "description": "Native service chapter read rejects D16/D17 protected takeover before payload access; other classroom surfaces await later deliveries",
+          "files": [
+            "tests/teaching/unit/classroom-remodel-academic.test.js",
+            "tests/teaching/unit/classroom-remodel-invocation.test.js",
+            "tests/teaching/unit/classroom-remodel-runtime.test.js",
+            "tests/teaching/integration/classroom-remodel-academic.test.js"
+          ]
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
-      "testedVersions": null
+      "testedVersions": {
+        "contracts": "classroom-contracts.v1",
+        "preparation": "classroom-preparation.v1",
+        "activation": "INACTIVE"
+      }
     },
     {
       "number": 30,
@@ -348,28 +444,76 @@
       "number": 39,
       "sourceRequirement": "39. **Migration:** all 22 old capabilities plus retained 05/08/20 modes and non-classroom callers have functioning qualified routes.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "supportOnly": true,
+          "sourceCommit": "980875108044e3e1af3b898df1b7525be1e22318",
+          "description": "All 22 capability contracts traverse actual D03/D05 with synthetic provider; actual D07/D12 request factories; no qualified live replacement routes",
+          "files": [
+            "tests/teaching/unit/classroom-remodel-academic.test.js",
+            "tests/teaching/unit/classroom-remodel-invocation.test.js",
+            "tests/teaching/unit/classroom-remodel-runtime.test.js",
+            "tests/teaching/integration/classroom-remodel-academic.test.js"
+          ]
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
-      "testedVersions": null
+      "testedVersions": {
+        "contracts": "classroom-contracts.v1",
+        "preparation": "classroom-preparation.v1",
+        "activation": "INACTIVE"
+      }
     },
     {
       "number": 40,
       "sourceRequirement": "40. **Schema/enum drift:** reject invalid mode, unknown action/assistance, missing private separation, incompatible anchors or dropped fields.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "supportOnly": true,
+          "sourceCommit": "980875108044e3e1af3b898df1b7525be1e22318",
+          "description": "Closed mode/schema/anchor validators and forgery/staleness rejection fixtures; no live-provider qualification",
+          "files": [
+            "tests/teaching/unit/classroom-remodel-academic.test.js",
+            "tests/teaching/unit/classroom-remodel-invocation.test.js",
+            "tests/teaching/unit/classroom-remodel-runtime.test.js",
+            "tests/teaching/integration/classroom-remodel-academic.test.js"
+          ]
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
-      "testedVersions": null
+      "testedVersions": {
+        "contracts": "classroom-contracts.v1",
+        "preparation": "classroom-preparation.v1",
+        "activation": "INACTIVE"
+      }
     },
     {
       "number": 41,
       "sourceRequirement": "41. **Ownership/security:** cross-student IDs, asset references, cursors, receipts and task submissions fail; injected source commands remain data.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "supportOnly": true,
+          "sourceCommit": "980875108044e3e1af3b898df1b7525be1e22318",
+          "description": "Native cross-student chapter read, owned artifact FKs, RLS and zero browser DML; later message/cursor/task contracts still unqualified",
+          "files": [
+            "tests/teaching/unit/classroom-remodel-academic.test.js",
+            "tests/teaching/unit/classroom-remodel-invocation.test.js",
+            "tests/teaching/unit/classroom-remodel-runtime.test.js",
+            "tests/teaching/integration/classroom-remodel-academic.test.js"
+          ]
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
-      "testedVersions": null
+      "testedVersions": {
+        "contracts": "classroom-contracts.v1",
+        "preparation": "classroom-preparation.v1",
+        "activation": "INACTIVE"
+      }
     },
     {
       "number": 42,

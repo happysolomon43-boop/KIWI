@@ -462,6 +462,44 @@ function createD11Service({
     });
   }
 
+  // Accept remodeled preparation through the same D11 validators/repository
+  // and PPL transitions. These methods do not authorize candidate AI routes.
+  async function acceptClassroomBlueprint({context,chapter,plan,authorOutput,requirements,review,operationKey}) {
+    if(!preparationRepository||review?.accepted!==true||review.independent!==true||review.routeQualified!==true)fail('Independent classroom review is required.','CLASSROOM_D11_REVIEW_REQUIRED');
+    const studentId=context.classRow.student_id,classId=context.classRow.class_id;
+    const fresh=await repository.getClassContext(studentId,classId);assertClassPlanningEligible(fresh);
+    if(JSON.stringify(expectedFromContext(fresh))!==JSON.stringify(expectedFromContext(context)))fail('Classroom authority changed.','CLASSROOM_D11_AUTHORITY_CHANGED');
+    const proposal=authorOutput?.artifacts?.controller_blueprint;
+    const validation=validateLessonBlueprintProposal(proposal,{learningUnits:fresh.learningUnits,scheduledStartAt:fresh.classRow.scheduled_start_at,scheduledEndAt:fresh.classRow.scheduled_end_at,...(requirements.reservePolicy?{reservePolicy:requirements.reservePolicy}:{})});
+    if(!validation.ok)fail('Classroom Blueprint failed D11 validation.',validation.reason,422);
+    const academicHash=require('../classroom-remodel/academic-artifacts').hash({chapterId:chapter.artifact_version_id,planId:plan.artifact_version_id,blueprint:validation.value,reviewHashes:review.contentHashes});
+    if(fresh.blueprint?.validation_metadata?.classroom_operation_key===operationKey){
+      if(fresh.blueprint.validation_metadata.classroom_academic_hash!==academicHash)fail('Blueprint operation changed.','CLASSROOM_D11_IDEMPOTENCY_CONFLICT');
+      return fresh.blueprint;
+    }
+    const saved=await repository.commitClassroomBlueprint({studentId,classId,expected:expectedFromContext(context),blueprint:validation.value,validationMetadata:{deterministic_validation:'PASS',classroom_operation_key:operationKey,classroom_academic_hash:academicHash,classroom_chapter_artifact_id:chapter.artifact_version_id,classroom_plan_artifact_id:plan.artifact_version_id,whole_artifact_review:review},generationProvenance:{capability_id:'teaching.lesson.pre_class_lesson_planning',prompt_family_id:'TPF-05',prompt_family_version:'2.0',authority_ceiling:'T3',provisional_until_owner_commit:true}});
+    return saved.blueprint;
+  }
+  async function finalizeClassroomPreparation({context,artifacts,readiness}) {
+    if(!readiness?.ready||artifacts.some(a=>a.completeness!=='complete'))return {ready:false};
+    const fresh=await repository.getClassContext(context.classRow.student_id,context.classRow.class_id);
+    if(!fresh||fresh.session||!blueprintCurrentForContext(fresh))return {ready:false};
+    if(JSON.stringify(expectedFromContext(fresh))!==JSON.stringify(expectedFromContext(context)))return {ready:false};
+    const workspace=fresh.workspace||(await preparationRepository.getWorkspaceSnapshot(artifacts[0].workspace_id))?.workspace;if(!workspace||workspace.student_id!==context.classRow.student_id||workspace.target_ref!==context.classRow.class_id)return {ready:false};
+    const final=await currentPreparationReadiness(workspace.workspace_id,fresh,{requireBlueprint:true});if(!final?.ready)return {ready:false,blockers:final?.blockers||[]};
+    for(const maturity of ['STRUCTURED','CANDIDATE','PRE_LOCK_READY']){
+      const ws=(await preparationRepository.getWorkspaceSnapshot(workspace.workspace_id)).workspace;
+      const order=['SKELETON','STRUCTURED','CANDIDATE','PRE_LOCK_READY'];
+      if(order.indexOf(ws.maturity_stage)>=order.indexOf(maturity))continue;
+      await transitionPreparation(workspace.workspace_id,{nextMaturity:maturity,routePosture:maturity==='PRE_LOCK_READY'?'final_reconciliation':'strong_design',finalizationReadiness:final,reason:'Classroom independently reviewed artifacts advanced D11 PPL to '+maturity});
+    }
+    for(const [from,to]of [['ACTIVE','FINALIZATION_DUE'],['FINALIZATION_DUE','FINALIZED'],['FINALIZED','HANDED_OFF']]){
+      const ws=(await preparationRepository.getWorkspaceSnapshot(workspace.workspace_id)).workspace;
+      if(ws.lifecycle_state===from)await transitionPreparation(workspace.workspace_id,{nextLifecycle:to,finalizationReadiness:final,reason:'D11 classroom preparation '+to});
+    }
+    return {ready:(await preparationRepository.getWorkspaceSnapshot(workspace.workspace_id)).workspace.lifecycle_state==='HANDED_OFF',published:false};
+  }
+
   async function prepareLesson(user,classId,input={}) {
     assertModelRoute();
     const allowLateStartRecovery=input.allowLateStartRecovery===true;
@@ -1112,6 +1150,8 @@ function createD11Service({
   return Object.freeze({
     getClass,
     prepareLesson,
+    acceptClassroomBlueprint,
+    finalizeClassroomPreparation,
     preparationStep,
     handlePreparationEvent,
     replanLesson,
