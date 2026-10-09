@@ -3,6 +3,8 @@ const {enqueueInstructionUsing}=require('../d14/instruction-event');
 
 const crypto = require('node:crypto');
 const { buildClosureFactPack } = require('../d11/contracts');
+const {evaluateLessonInheritance}=require('../d11/preparation-inheritance');
+const {evaluateWorkspaceTransition}=require('../preparation/t0-handlers');
 const { TEACHING_EVENTS } = require('../events/names');
 const { EVENT_CATEGORIES } = require('../runtime/constants');
 
@@ -664,7 +666,7 @@ function createD11LessonControllerRepository({
     return withTransaction((tx) => ensurePreparationWorkspaceUsing(tx, args));
   }
 
-  async function recordPreparationArtifact({
+  async function recordPreparationArtifactUsing(tx,{
     studentId,
     classId,
     blueprint,
@@ -672,7 +674,7 @@ function createD11LessonControllerRepository({
     promptFamilyRef='TPF-05',
     allowLateStartRecovery=false,
   } = {}) {
-    return withTransaction(async (tx) => {
+    {
       // Fence the final result of an already-running AI call against current
       // Course/Class/Timetable/Plan authority under the same locks used by
       // rescheduling. Provider requests may have been sent before cancellation;
@@ -778,8 +780,13 @@ function createD11LessonControllerRepository({
         }),
         componentCount:components.length,
       });
-    });
+    }
   }
+  async function recordPreparationArtifact(args={}){
+    return withTransaction(tx=>recordPreparationArtifactUsing(tx,args));
+  }
+
+
 
   async function getPreparationArtifactPayload(studentId, classId) {
     const workspace=await getPreparationWorkspace(studentId,classId);
@@ -1397,6 +1404,145 @@ function createD11LessonControllerRepository({
     });
   }
 
+  async function inheritRescheduledPreparation({studentId,fromClassId,toClassId,requestId}={}) {
+    if(!studentId||!fromClassId||!toClassId||!requestId||fromClassId===toClassId)
+      return Object.freeze({mode:'FRESH_PREPARATION',reason:'INCOMPLETE_LINEAGE'});
+    // The D10 event is only a routing hint. Every authority check is repeated
+    // against committed DB state under one D11-owned transaction.
+    return withTransaction(async tx=>{
+      const ids=[fromClassId,toClassId].sort();
+      const {rows:locked=[]}=await tx.query(
+        'select class_id from public.teaching_classes where student_id=$1 and class_id=any($2::text[]) order by class_id for update',
+        [studentId,ids]);
+      if(locked.length!==2)return Object.freeze({mode:'FRESH_PREPARATION',reason:'CLASS_NOT_FOUND'});
+      const source=await loadClassBase(studentId,fromClassId,tx);
+      const target=await loadClassBase(studentId,toClassId,tx);
+      if(!source||!target)return Object.freeze({mode:'FRESH_PREPARATION',reason:'CLASS_NOT_FOUND'});
+      const original=await loadCurrentPlan(studentId,source.course_id,tx);
+      if(!original)return Object.freeze({mode:'FRESH_PREPARATION',reason:'COURSE_PLAN_MISSING'});
+      const sessionRows=await tx.query(
+        'select class_id from public.teaching_class_sessions where student_id=$1 and class_id=any($2::text[]) limit 1',
+        [studentId,ids]);
+      const sourceHasSession=(sessionRows.rows||[]).some(row=>row.class_id===fromClassId);
+      const targetHasSession=(sessionRows.rows||[]).some(row=>row.class_id===toClassId);
+      const [oldSlotQuery,newSlotQuery]=await Promise.all([
+        tx.query('select * from public.teaching_timetable_slots where student_id=$1 and timetable_slot_id=$2',
+          [studentId,source.source_timetable_slot_id]),
+        tx.query('select * from public.teaching_timetable_slots where student_id=$1 and timetable_slot_id=$2',
+          [studentId,target.source_timetable_slot_id]),
+      ]);
+      const oldSlot=oldSlotQuery.rows?.[0],newSlot=newSlotQuery.rows?.[0];
+      const already=await latestBlueprint(studentId,toClassId,tx,true);
+      if(already)return Object.freeze({mode:'ALREADY_PREPARED',reason:'TARGET_BLUEPRINT_EXISTS'});
+      const targetWorkspace=await getPreparationWorkspace(studentId,toClassId,tx,true);
+      if(targetWorkspace?.current_artifact_version_ref)return Object.freeze({mode:'ALREADY_PREPARED',reason:'TARGET_ARTIFACT_EXISTS'});
+      const {rows:oldBlueprints=[]}=await tx.query(
+        "select * from public.teaching_lesson_blueprints where student_id=$1 and class_id=$2 and blueprint_state in ('VALIDATED','SUPERSEDED') order by version_no desc limit 1",
+        [studentId,fromClassId]);
+      const sourceBlueprint=oldBlueprints[0]||null;
+      let sourcePreparation=null;
+      if(!sourceBlueprint){
+        const {rows:drafts=[]}=await tx.query(`
+          select a.artifact_version_id,a.validity_state,p.payload,w.maturity_stage,b.preconditions
+          from teaching_preparation.workspaces w
+          join teaching_preparation.artifact_versions a on a.workspace_id=w.workspace_id
+          join teaching_protected.prepared_artifact_payloads p on p.artifact_version_id=a.artifact_version_id
+          join teaching_preparation.authoritative_input_bundles b on b.input_bundle_id=a.input_bundle_id
+          where w.student_id=$1 and w.target_ref=$2 and w.workspace_type='LESSON_BLUEPRINT'
+            and a.student_id=$1 and p.student_id=$1 and a.artifact_kind='LESSON_BLUEPRINT'
+            and a.validity_state='CURRENT' and p.protected_content_class='UNPROTECTED'
+          order by a.created_at desc,a.version_no desc limit 1
+        `,[studentId,fromClassId]);
+        sourcePreparation=drafts[0]||null;
+      }
+      const learningUnits=await loadLearningUnits(studentId,original.course_plan_id,tx);
+      const decision=evaluateLessonInheritance({
+        source,target,plan:original,sourceSlot:oldSlot,targetSlot:newSlot,
+        sourceBlueprint,sourcePreparation,learningUnits,sourceHasSession,targetHasSession,
+        now:clock(),requestId,
+      });
+      if(decision.mode==='FRESH_PREPARATION')return decision;
+      const blueprint=decision.validatedContent;
+      let newBlueprintId=null,newArtifactId=null;
+      if(decision.mode==='INHERIT_VALIDATED_BLUEPRINT'){
+        const result=await saveBlueprintUsing(tx,{
+          studentId,classId:toClassId,expected:{
+            studentId,classId:toClassId,
+            courseLifecycleState:target.course_lifecycle_state,
+            courseStateVersion:target.course_state_version,
+            classScheduleVersion:target.schedule_version,
+            timetableVersionId:target.source_timetable_version_id,
+            coursePlanId:original.course_plan_id,coursePlanVersion:original.version_no,
+          },
+          blueprint,
+          validationMetadata:{
+            deterministic_validation:'PASS',
+            inheritance_validation:'PASS',
+            inherited_from_blueprint_id:decision.originBlueprintId,
+            reused_without_new_model_call:true,
+          },
+          generationProvenance:{
+            capability_id:'teaching.lesson.pre_class_lesson_planning',
+            prompt_family_id:'TPF-05',authority_ceiling:'T3',
+            preparation_inheritance:'REVALIDATED_SAME_DURATION',
+            source_class_id:fromClassId,source_blueprint_id:decision.originBlueprintId,
+            governing_request_id:requestId,
+          },
+          preparationRef:null,
+        });
+        newBlueprintId=result.blueprint.lesson_blueprint_id;
+      }else{
+        // Partial PPL work is a candidate, NOT a published Blueprint. Rebind
+        // artifact/bundle/component dependencies to the replacement Class.
+        const prep=await ensurePreparationWorkspaceUsing(tx,{
+          studentId,classId:toClassId,correlationId:'d11-inherit:'+requestId,
+          expectedTimetableVersionId:target.source_timetable_version_id,
+          expectedScheduleVersion:target.schedule_version,
+        });
+        if(!prep?.workspace||prep.workspace.current_artifact_version_ref)
+          return Object.freeze({mode:'FRESH_PREPARATION',reason:'TARGET_WORKSPACE_CHANGED'});
+        const copy=await recordPreparationArtifactUsing(tx,{
+          studentId,classId:toClassId,blueprint,
+        });
+        newArtifactId=copy.artifact.artifact_version_id;
+        // Every inherited stage has already undergone D11 validation against
+        // the replacement's time and Course Plan, but PRE_LOCK_READY is never
+        // inherited as finalized without a fresh owner commit.
+        const stages=['SKELETON','STRUCTURED','CANDIDATE'];
+        const index=Math.min(2,Math.max(0,stages.indexOf(sourcePreparation?.maturity_stage||'SKELETON')));
+        for(let i=1;i<=index;i++){
+          const from=stages[i-1],to=stages[i];
+          evaluateWorkspaceTransition({
+            currentLifecycle:'ACTIVE',currentMaturity:from,nextMaturity:to,
+            gateResults:[{id:'d11-inherited-artifact-new-authority-validated',passed:true}],
+            routePosture:to==='CANDIDATE'?'strong_design':'bounded_interpretive',
+          });
+          await tx.query(
+            "update teaching_preparation.workspaces set maturity_stage=$2,state_version=state_version+1,updated_at=now() where workspace_id=$1 and maturity_stage=$3",
+            [prep.workspace.workspace_id,to,from]);
+        }
+      }
+      await tx.query(`
+        insert into public.teaching_academic_audit_log(
+          audit_id,student_id,occurred_at,actor_type,actor_id,action,entity_type,entity_id,
+          authoritative_owner,state_version_ref,correlation_id,causation_id,reason,before_ref,after_ref,
+          provenance_refs,safe_metadata)
+        values($1,$2,now(),'SYSTEM',null,'lesson.preparation.revalidated_inheritance',
+          'CLASS',$3,'Teaching Controller / Lesson Planner',$4,$5,null,$6,
+          $7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb)
+      `,[
+        randomUUID(),studentId,toClassId,String(target.schedule_version),requestId,
+        decision.reason,JSON.stringify({from_class_id:fromClassId}),
+        JSON.stringify({to_class_id:toClassId,lesson_blueprint_id:newBlueprintId,artifact_version_id:newArtifactId}),
+        JSON.stringify(['class:'+fromClassId,'class:'+toClassId,'request:'+requestId]),
+        JSON.stringify({reuse_mode:decision.mode,validated_by:'D11_DETERMINISTIC',model_calls:0}),
+      ]);
+      return Object.freeze({mode:decision.mode,reason:decision.reason,
+        classId:toClassId,originClassId:fromClassId,
+        blueprintId:newBlueprintId,artifactId:newArtifactId});
+    });
+  }
+
   async function getGovernedRequest(requestId) {
     const {rows}=await query(
       "select * from public.teaching_requests where request_id=$1 limit 1",
@@ -1449,6 +1595,7 @@ function createD11LessonControllerRepository({
     persistSummary,
     persistTeacherNote,
     getGovernedRequest,
+    inheritRescheduledPreparation,
     latestSummary,
     latestTeacherNote,
   });
