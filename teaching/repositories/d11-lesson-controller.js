@@ -1537,7 +1537,7 @@ function createD11LessonControllerRepository({
         // the replacement's time and Course Plan, but PRE_LOCK_READY is never
         // inherited as finalized without a fresh owner commit.
         const stages=['SKELETON','STRUCTURED','CANDIDATE'];
-        const index=Math.min(2,Math.max(0,stages.indexOf(sourcePreparation?.maturity_stage||'SKELETON')));
+        const index=Math.min(2,Math.max(0,stages.indexOf(decision.sourceMaturity||'SKELETON')));
         for(let i=1;i<=index;i++){
           const from=stages[i-1],to=stages[i];
           evaluateWorkspaceTransition({
