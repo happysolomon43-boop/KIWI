@@ -98,11 +98,16 @@ async function fetchSnapshot(){
     data._receivedAt=Date.now();const previous=state.snapshot;
     if(!state.reviewOnly&&(!previous||state.scene>=Math.max(0,(previous.board?.length||0)-1)))state.scene=Math.max(0,(data.board?.length||0)-1);
     state.snapshot=data;
-    state.connectionMessage='';
     if(data.hasEntered)state.joinNeedsConfirmation=false;
+    if(!state.joinNeedsConfirmation)state.connectionMessage='';
     // Refreshes that only change server clocks must not re-create the reading UI.
     const comparable=(v)=>JSON.stringify({...v,serverNow:null,_receivedAt:null,entry:v?.entry?{...v.entry,minutesRemaining:null}:null});
-    if(previous&&comparable(previous)===comparable(data)){updateClocks();connectionFeedback('');return data;}
+    if(previous&&comparable(previous)===comparable(data)){
+      updateClocks();
+      // Do not discard the explicit retry JOIN action on clock-only polls.
+      if(!state.joinNeedsConfirmation)connectionFeedback('');
+      return data;
+    }
     render();return data;
   })();
   state.snapshotFlight=task;
@@ -221,8 +226,11 @@ function showConnectionRetry(host,classId,error){
   // A timed-out GET is a transport uncertainty, not a D11 Controller failure.
   // Keep the same Classroom open and allow scheduled or manual GET retries.
   if(state.snapshot){connectionFeedback('Reconnecting to the Classroom… Your current Board remains available.');return;}
-  const panel=notice('Connecting to your Class',
-    'KIWI is taking longer to respond. Your lesson has not been cancelled or interrupted. KIWI will keep trying.','tc-connection-wait');
+  const transient=error?.code==='KIWI_API_TIMEOUT'||error?.status==null||error.status>=500;
+  const panel=notice(transient?'Connecting to your Class':'Classroom access needs attention',
+    transient
+      ?'KIWI is taking longer to respond. A timeout does not itself end or interrupt a Class. KIWI will keep trying.'
+      :'KIWI could not confirm that this Class is available. This screen has not changed your academic record.','tc-connection-wait');
   const actions=add($('div','tc-reconnect-actions'),
     button('Try again',()=>connectClassroom(classId,host),'tc-button tc-button--solid'),
     button('Return to Course',()=>close(),'tc-button tc-button--quiet'));
