@@ -2,8 +2,8 @@
   "version": "classroom-remodel-checkpoint.v1",
   "recordedAt": "2026-10-09",
   "branch": "feat/classroom-remodel-delivery-1",
-  "implementationCommit": "THIS_SOURCE_COMMIT",
-  "testedTree": "THIS_SOURCE_TREE",
+  "implementationCommit": "0ea65a562091446081ee1bacd362b763f2af09d4",
+  "testedTree": "2da48f8cc830890896ccc8bbcbb9ad05898ae4fb",
   "pr": "https://github.com/happysolomon43-boop/KIWI/pull/329",
   "prState": "OPEN_DRAFT",
   "baseline": "a77aec6fbd49b89a4538610e434151e2f5fb8cde",
@@ -71,9 +71,14 @@
       "workflows": 34,
       "passed": 34
     },
-    "currentCommitCI": "PENDING",
+    "currentCommitCI": {
+      "commit": "0ea65a562091446081ee1bacd362b763f2af09d4",
+      "workflows": 34,
+      "passed": 34,
+      "fixtureEvidenceOnly": true
+    },
     "liveProviderEvidence": "NOT_RUN",
-    "newDatabaseTransactionTests": "NOT_IMPLEMENTED",
+    "newDatabaseTransactionTests": "Delivery 1 has no new migration; Delivery 2 native PostgreSQL evidence recorded separately",
     "browserAccessibilityChecks": "NOT_RUN",
     "precedingSourceCI": {
       "commit": "46bdcd1a6ced9151673a3062fa87589994a45707",
@@ -311,7 +316,7 @@
     "legacySessions": "Unaffected; existing active contracts retained",
     "newSessionAdmission": "Not mounted",
     "routes": "Manifest only; not Express registered",
-    "rollback": "Candidate code is unmounted; no new persisted runtime records; future pinned-session rollback contract fixture-tested only"
+    "rollback": "Candidate activation remains prohibited; default adapters reject candidate requests; legacy active bindings and readers preserved"
   },
   "externalBlockers": [
     "Local executor has no configured AI provider credentials; observed live-provider qualification not available",
