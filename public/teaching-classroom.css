@@ -207,3 +207,12 @@
 }
 @media(prefers-reduced-motion:reduce){.tc-raise-hand{transition:none!important}}
 @media(forced-colors:active){.tc-reading-controls,.tc-reading-control,.tc-raise-hand,.tc-connection{border:1px solid ButtonText}}
+
+/* A mobile Board is a vertically browsable sequence of permitted lesson
+   scenes; native page scroll remains available for the entire Class. */
+.tc-board-scene-list{display:grid;gap:18px}
+.tc-board-scene{min-width:0;scroll-margin-block-start:12px}
+.tc-board-scene + .tc-board-scene{padding-top:18px;border-top:1px solid rgba(185,229,198,.17)}
+.tc-board-scene__number{margin-bottom:12px;color:#92cfae;font:700 10px/1.5 var(--font-mono,monospace);letter-spacing:.12em}
+.tc-board-scene .tc-board-blocks{display:grid;gap:14px}
+@media(max-width:699px){.tc-board-scene-list{gap:22px}.tc-board-scene + .tc-board-scene{padding-top:22px}}
