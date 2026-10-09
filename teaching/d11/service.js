@@ -467,7 +467,7 @@ function createD11Service({
     const allowLateStartRecovery=input.allowLateStartRecovery===true;
     if(allowLateStartRecovery){
       const context=await repository.getClassContext(user.id,classId);
-      const eligibility=lateStartRecoveryEligibility({classRow:context?.classRow,session:context?.session,now:clock()});
+      const eligibility=lateStartRecoveryEligibility({classRow:context?.classRow,plan:context?.plan,session:context?.session,now:clock()});
       if(!eligibility.allowed)fail('Late Lesson recovery is unavailable: '+eligibility.reason,'TEACHING_D11_LATE_RECOVERY_NOT_ALLOWED',409);
     }
     const maxSteps=Math.max(1,Math.min(Number(input.maxSteps) || 3,3));
