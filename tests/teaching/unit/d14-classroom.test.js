@@ -108,7 +108,9 @@ test('Classroom UI keeps Start, Resume and LEAVE while Notebook opens as a compa
 test('Classroom history review is read-only and LEAVE retries retain the same request key',()=>{
   const source=fs.readFileSync(path.resolve(__dirname,'../../../public/teaching-classroom.js'),'utf8');
   assert.match(source,/open\(item\.class_id,\{reviewOnly:true\}\)/);
-  assert.match(source,/if\(!reviewOnly&&state\.snapshot\?\.controller\?\.lifecycleState==='ACTIVE'\)/);
+  assert.match(source,/if\(!state\.reviewOnly&&data\.controller\?\.lifecycleState==='ACTIVE'&&!data\.hasEntered\)/);
+  assert.match(source,/joinCurrentClass\(classId,host\)/);
+  assert.match(source,/if\(state\.classId!==classId\|\|state\.host!==host\|\|state\.reviewOnly/);
   assert.match(source,/state\.leaveRequestId \|\|= crypto\.randomUUID\(\)/);
   assert.match(source,/idempotencyKey:state\.leaveRequestId/);
   assert.match(source,/Close Review/);
