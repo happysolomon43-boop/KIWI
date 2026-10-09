@@ -363,6 +363,13 @@
           ]
         },
         {
+          "file": "teaching/d11/service.js",
+          "line": 480,
+          "identities": [
+            "teaching.lesson.pre_class_lesson_planning"
+          ]
+        },
+        {
           "file": "teaching/d30/ppl-qualification.js",
           "line": 22,
           "identities": [
@@ -371,7 +378,7 @@
         },
         {
           "file": "teaching/repositories/classroom-academic-artifacts.js",
-          "line": 23,
+          "line": 24,
           "identities": [
             "teaching.lesson.pre_class_lesson_planning"
           ]
@@ -385,7 +392,14 @@
         },
         {
           "file": "teaching/repositories/d11-lesson-controller.js",
-          "line": 1535,
+          "line": 912,
+          "identities": [
+            "teaching.lesson.pre_class_lesson_planning"
+          ]
+        },
+        {
+          "file": "teaching/repositories/d11-lesson-controller.js",
+          "line": 1542,
           "identities": [
             "teaching.lesson.pre_class_lesson_planning"
           ]
@@ -428,6 +442,13 @@
           ]
         },
         {
+          "file": "teaching/d11/service.js",
+          "line": 480,
+          "identities": [
+            "teaching.lesson.pre_class_lesson_planning"
+          ]
+        },
+        {
           "file": "teaching/d30/ppl-qualification.js",
           "line": 22,
           "identities": [
@@ -436,7 +457,7 @@
         },
         {
           "file": "teaching/repositories/classroom-academic-artifacts.js",
-          "line": 23,
+          "line": 24,
           "identities": [
             "teaching.lesson.pre_class_lesson_planning"
           ]
@@ -450,7 +471,14 @@
         },
         {
           "file": "teaching/repositories/d11-lesson-controller.js",
-          "line": 1535,
+          "line": 912,
+          "identities": [
+            "teaching.lesson.pre_class_lesson_planning"
+          ]
+        },
+        {
+          "file": "teaching/repositories/d11-lesson-controller.js",
+          "line": 1542,
           "identities": [
             "teaching.lesson.pre_class_lesson_planning"
           ]
@@ -1033,14 +1061,14 @@
         },
         {
           "file": "teaching/d11/service.js",
-          "line": 639,
+          "line": 677,
           "identities": [
             "teaching.lesson.live_lesson_replanning"
           ]
         },
         {
           "file": "teaching/repositories/classroom-academic-artifacts.js",
-          "line": 23,
+          "line": 24,
           "identities": [
             "teaching.lesson.live_lesson_replanning"
           ]
@@ -1070,14 +1098,14 @@
         },
         {
           "file": "teaching/d11/service.js",
-          "line": 639,
+          "line": 677,
           "identities": [
             "teaching.lesson.live_lesson_replanning"
           ]
         },
         {
           "file": "teaching/repositories/classroom-academic-artifacts.js",
-          "line": 23,
+          "line": 24,
           "identities": [
             "teaching.lesson.live_lesson_replanning"
           ]
@@ -4755,7 +4783,7 @@
         },
         {
           "file": "teaching/repositories/classroom-academic-artifacts.js",
-          "line": 23,
+          "line": 24,
           "identities": [
             "teaching.pedagogy.natural_teacher_explanation_generation"
           ]
@@ -4778,7 +4806,7 @@
         },
         {
           "file": "teaching/repositories/classroom-academic-artifacts.js",
-          "line": 23,
+          "line": 24,
           "identities": [
             "teaching.pedagogy.natural_teacher_explanation_generation"
           ]
@@ -6119,7 +6147,7 @@
       "directRuntimeReferences": [
         {
           "file": "teaching/repositories/classroom-academic-artifacts.js",
-          "line": 23,
+          "line": 24,
           "identities": [
             "teaching.pedagogy.board_instructional_content_generation"
           ]
@@ -6128,7 +6156,7 @@
       "references": [
         {
           "file": "teaching/repositories/classroom-academic-artifacts.js",
-          "line": 23,
+          "line": 24,
           "identities": [
             "teaching.pedagogy.board_instructional_content_generation"
           ]
@@ -6432,7 +6460,7 @@
       "directRuntimeReferences": [
         {
           "file": "teaching/repositories/classroom-academic-artifacts.js",
-          "line": 23,
+          "line": 24,
           "identities": [
             "teaching.scheduling.lateness_lesson_replanning"
           ]
@@ -6441,7 +6469,7 @@
       "references": [
         {
           "file": "teaching/repositories/classroom-academic-artifacts.js",
-          "line": 23,
+          "line": 24,
           "identities": [
             "teaching.scheduling.lateness_lesson_replanning"
           ]
@@ -7169,5 +7197,5 @@
     }
   ],
   "searchMethod": "Tracked UTF-8 source exact canonical and legacy alias references; compiled registry decoded through its verified reader. Absence of literal references is not proof of no dynamic/external caller.",
-  "searchFilesSha256": "e07893781289284d915f1a6f705e501a97bef8ab6a8bc2373a4dc3d283f138c5"
+  "searchFilesSha256": "a80336ce2f98e4a8de963c7913a8f86214c30f416b71b414fe1623e2e55b8767"
 }

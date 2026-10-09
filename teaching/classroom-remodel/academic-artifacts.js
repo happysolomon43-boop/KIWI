@@ -27,6 +27,14 @@ function validateDepth(chapter,{requiredUnits,requiredElements=[]}={}){
  // the separate independent review receipt, never word/paragraph counts.
  return chapter;
 }
+function validateRevision(previous,next){
+ c.validateChapter(previous);c.validateChapter(next);
+ if(previous.id!==next.id||previous.version===next.version||next.prior_version!==previous.version)c.fail('CLASSROOM_REVISION_IDENTITY_INVALID');
+ const old=new Map(previous.units.flatMap(u=>[[u.anchor,u],...u.elements.map(e=>[e.anchor,e])])),fresh=new Map(next.units.flatMap(u=>[[u.anchor,u],...u.elements.map(e=>[e.anchor,e])])),remapped=new Set();
+ for(const remap of next.remaps){if(remap.prior_version!==previous.version||!old.has(remap.from)||remapped.has(remap.from)||new Set(remap.to).size!==remap.to.length)c.fail('CLASSROOM_REMAP_SOURCE_INVALID');remapped.add(remap.from);}
+ for(const [anchor,value]of old)if((!fresh.has(anchor)||hash(value)!==hash(fresh.get(anchor)))&&!remapped.has(anchor))c.fail('CLASSROOM_CHANGED_ANCHOR_REMAP_REQUIRED');
+ return next;
+}
 function validateGuide(guide,{chapter,essentialAnchors}={}){
  c.validateCoordinator({request_ref:'guide-validation',task_mode:'prepare_guidance',input_state_reference:null,status:'complete',review_required:false,artifacts:{explanation_guides:guide},next_action:null,runtime_requests:[],issues:[]},{mode:'prepare_guidance',chapter});
  const all=new Set(chapter.units.flatMap(u=>u.elements.map(e=>e.anchor)));
@@ -43,7 +51,9 @@ function prepareArtifact({kind,payload,context={}}){
  else if(kind==='plan')c.validatePlan(payload,context.chapter);
  else if(kind==='guide'){validateGuide(payload,{...context,essentialAnchors:[]});const covered=new Set(payload.covered_refs.map(r=>r.anchor));guideCompleteness=context.declaredCompleteness||((context.essentialAnchors||[]).some(a=>!covered.has(a))?'partial':'complete');c.enumeration(guideCompleteness,['complete','partial','blocked'],'guide.completeness');if(guideCompleteness==='complete'&&(context.essentialAnchors||[]).some(a=>!covered.has(a)))c.fail('CLASSROOM_ESSENTIAL_GUIDE_MISSING');}
  else if(kind==='opening')validatePresenter(payload,context);
+ else if(kind==='generation'){if(context.role==='author')require('./mode-schemas').validateAuthor(payload,{mode:context.mode,chapter:context.chapter});else if(context.role==='coordinator')c.validateCoordinator(payload,{mode:context.mode,chapter:context.chapter});else if(context.role==='presenter')validatePresenter(payload,context);else c.fail('CLASSROOM_GENERATION_ROLE_INVALID');guideCompleteness=context.role==='coordinator'?payload.status:context.role==='presenter'?payload.interaction.preparation_completion:payload.status==='ok'?'complete':payload.artifacts.chapter?.completeness==='partial'?'partial':'blocked';}
+ else if(kind==='context'){c.validateCoordinator(payload,{mode:context.mode,chapter:context.chapter});guideCompleteness=payload.status;}
  else c.fail('CLASSROOM_ARTIFACT_KIND_INVALID');
- return {kind,payload,publicPayload,components,contentHash:hash(payload),completeness:kind==='chapter'?payload.completeness:kind==='opening'?payload.interaction.preparation_completion:kind==='guide'?guideCompleteness:'complete'};
+ return {kind,payload,publicPayload,components,contentHash:hash(payload),completeness:kind==='chapter'?payload.completeness:kind==='opening'?payload.interaction.preparation_completion:['guide','context','generation'].includes(kind)?guideCompleteness:'complete'};
 }
-module.exports={VERSION,canonical,hash,unitHashes,validateContinuation,validateDepth,validateGuide,prepareArtifact};
+module.exports={VERSION,canonical,hash,unitHashes,validateContinuation,validateRevision,validateDepth,validateGuide,prepareArtifact};

@@ -22,7 +22,7 @@ failed='Do not repeat a materially ineffective strategy without addressing its i
 def replace_once(body,old,new):
     if body.count(old)!=1:raise RuntimeError('Source amendment target drift: '+old[:70])
     return body.replace(old,new)
-manifest={'version':'classroom-prompt-candidates.v1','activation':'INACTIVE','governanceState':'PROMPT_CANDIDATE_DRAFT','workingCoordinatorAlias':'TPF-5/8','canonicalCoordinatorFamilyProposal':'TPF-21','canonicalRegistration':'PROPOSED_NOT_FROZEN','baseRegistryVersion':'1.3','baseManifestVersion':'1.4','retainedFamilies':['TPF-04','TPF-06','TPF-07','TPF-20'],'families':[]}
+manifest={'version':'classroom-prompt-candidates.v1','activation':'INACTIVE','governanceState':'PROMPT_CANDIDATE_DRAFT','workingCoordinatorAlias':'TPF-5/8','canonicalCoordinatorFamilyProposal':'TPF-21','canonicalRegistration':'CANDIDATE_REGISTERED_NOT_FROZEN','baseRegistryVersion':'1.3','baseManifestVersion':'1.4','retainedFamilies':['TPF-04','TPF-06','TPF-07','TPF-20'],'families':[]}
 for family,source in [('TPF-05','TPF_05_v2-1.md'),('TPF-21','TPF_5_8_v2-1.md'),('TPF-08','TPF-08-1.md')]:
     raw=(sources/source).read_bytes();body=raw.decode().replace('\r\n','\n')
     if family=='TPF-05':
@@ -42,6 +42,11 @@ for family,source in [('TPF-05','TPF_05_v2-1.md'),('TPF-21','TPF_5_8_v2-1.md'),(
         body=replace_once(body,'- [ ] No unapproved repeat of a failed strategy.','- [ ] Repetition purpose is recorded; a materially ineffective strategy is not repeated without addressing its cause.')
         version='2.0'
     body+=common
+    if family=='TPF-05':
+        body+='\nFor pre_class_lesson_blueprint the compatible runtime may request artifacts.controller_blueprint using the retained D11 Blueprint contract. This is an internal provisional artifact, not a second academic owner. It must agree with the chapter and teaching plan on objectives, priorities, counted phase minutes and reserve. D11 alone validates and accepts it.\n'
+    if family=='TPF-21':
+        body+='\nFor a migrated legacy consumer, return the same nine top-level coordinator fields and artifacts.legacy_consumer containing only payload in the original consumer schema. The server creates the capability/schema/owner/hash/acceptance envelope after validating the original payload. Preserve its missing/partial/blocked semantics. Do not add a second incompatible strategy decision; the retained owner accepts the original result.\n'
+
     filename=f'{family}_Classroom_v{version}_REVISED_CANDIDATE.md'
     data=body.encode();(out/filename).write_bytes(data)
     manifest['families'].append({'familyId':family,'version':version,'file':filename,'sha256':hashlib.sha256(data).hexdigest(),'sourceFile':source,'sourceSha256':hashlib.sha256(raw).hexdigest(),'status':'qualification_pending','runtimeEffective':False})

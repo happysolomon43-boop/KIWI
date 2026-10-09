@@ -3,13 +3,13 @@
   "recordedAt": "2026-10-09",
   "delivery": 2,
   "branch": "feat/classroom-remodel-delivery-2",
-  "implementationCommit": "3bddc6381f821be2afa2b4755dc90066629aa5b7",
-  "testedTree": "4e306978bf63d8d0f41da86d3b80a8c835aaa22e",
+  "implementationCommit": "THIS_SOURCE_COMMIT",
+  "testedTree": "THIS_SOURCE_TREE",
   "pr": "https://github.com/happysolomon43-boop/KIWI/pull/330",
   "prState": "OPEN_DRAFT",
   "baseBranch": "feat/classroom-remodel-delivery-1",
   "delivery1Checkpoint": "checkpoint.v1.json",
-  "acceptance": "IN_PROGRESS_NOT_COMPLETE",
+  "acceptance": "IMPLEMENTED_CANDIDATE_ACCEPTANCE_HELD",
   "entryGate": "DELIVERY_1_NOT_COMPLETE; implementation is inactive preparatory work, not a passed dependency gate",
   "implemented": [
     "Additive typed academic metadata, private payloads, normalized stable anchors, dependencies and D11/PPL bindings over existing immutable PPL artifact versions",
@@ -21,7 +21,13 @@
     "Provider-interruption recovery reuses committed author/coordinator output without regenerating completed artifacts",
     "Dependency invalidation retains chapter prose on schedule-only changes and stales affected descendants on source change",
     "Optional authenticated public chapter route requires current server-pinned chapter/Blueprint and rejects D16/D17 protected takeover on every read",
-    "Existing CI PostgreSQL services use the official Docker ECR mirror at unchanged major versions after observed Docker Hub unauthenticated rate limiting"
+    "Existing CI PostgreSQL services use the official Docker ECR mirror at unchanged major versions after observed Docker Hub unauthenticated rate limiting",
+    "Real author/coordinator/Presenter request builders use existing D11 bounded context, D03/D05 candidate binding and central AI; generation output is durably saved before completion and reused on retry",
+    "Optional preparation runtime wires existing D11 Blueprint/PPL owners, D14 asset contracts and owned current-source dependencies; default remains inactive",
+    "Independent review adapter reuses D30 central rubric and requires observed live-provider route qualification, genuine generation provenance and distinct review route",
+    "D11 owner accepts coherent retained Blueprint only after current-state and independent review checks; PPL owner finalizes through existing maturity/lifecycle transitions",
+    "Explicit changed/retired-anchor remap history, immutable binding revisions, compare-and-swap replacement and persisted session pinning",
+    "Complete chapter reuse and compatible cross-class origin inheritance retain source/owner provenance; required continuity/check/scaffolding preparations persist privately"
   ],
   "changedFiles": [
     ".github/workflows/classroom-remodel-foundation.yml",
@@ -56,7 +62,8 @@
   ],
   "migrations": {
     "authored": [
-      "migrations/20261009204229_classroom_preparation_artifacts.sql"
+      "migrations/20261009204229_classroom_preparation_artifacts.sql",
+      "migrations/20261009212755_classroom_preparation_revisions.sql"
     ],
     "productionApplied": [],
     "integrationProjectApplied": [],
@@ -73,28 +80,35 @@
       "coordinator": "TPF-21 v1.0 proposal; TPF-5/8 alias",
       "presenter": "TPF-08 v2.0 candidate"
     },
-    "candidateRegistration": "PROPOSED_NOT_FROZEN",
+    "candidateRegistration": "CANDIDATE_REGISTERED_NOT_FROZEN",
     "runtimeActivation": "INACTIVE",
     "numericPolicy": "No new production numeric policy adopted; fixtures are not runtime policy"
   },
   "validation": {
     "localFullSuite": {
-      "tests": 1651,
-      "pass": 1651,
+      "tests": 1659,
+      "pass": 1659,
       "fail": 0,
       "skip": 0
     },
     "delivery2UnitSuite": {
-      "tests": 9,
-      "pass": 9
+      "tests": 12,
+      "pass": 12
     },
     "foundationSuite": {
       "tests": 34,
       "pass": 34
     },
     "foundationIntegrity": "PASS",
-    "webBuild": "PASS on first Delivery 2 source; no frontend code changes since",
-    "databaseCI": {
+    "webBuild": "PASS",
+    "liveProviderEvidence": "NOT_RUN",
+    "productionDeploymentEvidence": "NO_NEW_DEPLOYMENT",
+    "browserAccessibilityEvidence": "No new classroom UI; Delivery 4 not implemented",
+    "currentSourceCI": {
+      "commit": "THIS_SOURCE_COMMIT",
+      "status": "PENDING"
+    },
+    "previousDatabaseCI": {
       "commit": "3bddc6381f821be2afa2b4755dc90066629aa5b7",
       "run": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185270",
       "job": 114028929127,
@@ -108,211 +122,14 @@
       "browserDmlGrants": 0,
       "evidenceKind": "OBSERVED_ISOLATED_NATIVE_POSTGRES_WITH_SYNTHETIC_ACADEMIC_FIXTURES"
     },
-    "liveProviderEvidence": "NOT_RUN",
-    "productionDeploymentEvidence": "NO_NEW_DEPLOYMENT",
-    "browserAccessibilityEvidence": "No new classroom UI; Delivery 4 not implemented",
-    "currentSourceCI": {
-      "commit": "3bddc6381f821be2afa2b4755dc90066629aa5b7",
-      "workflows": 31,
-      "passed": 31,
-      "runs": [
-        {
-          "name": "Teaching D25 Reliability Recovery",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185501"
-        },
-        {
-          "name": "Teaching D12 Response Pedagogy",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185476"
-        },
-        {
-          "name": "Teaching D04 Kernel Persistence",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185502"
-        },
-        {
-          "name": "Teaching D18 Assessment Shell",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185495"
-        },
-        {
-          "name": "Teaching D05 Orchestrator Runtime",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185533"
-        },
-        {
-          "name": "Teaching D11 Lesson Controller",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185498"
-        },
-        {
-          "name": "Teaching D01 Foundation",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185504"
-        },
-        {
-          "name": "Teaching D13 Student Knowledge Model",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185575"
-        },
-        {
-          "name": "Teaching D17 Assessment Domain",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185485"
-        },
-        {
-          "name": "Teaching D14 Classroom",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185541"
-        },
-        {
-          "name": "Teaching D10 Course Lifecycle Requests",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185643"
-        },
-        {
-          "name": "Teaching D02 Runtime",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185569"
-        },
-        {
-          "name": "Teaching D19 Assessment Types",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185530"
-        },
-        {
-          "name": "Teaching D20 Formal Marking and Gradebook",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185556"
-        },
-        {
-          "name": "Teaching D06 Decision Gates",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185475"
-        },
-        {
-          "name": "Platform Security Audit",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185568"
-        },
-        {
-          "name": "Teaching D23 Information Architecture",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185576"
-        },
-        {
-          "name": "Teaching D24 Responsive Accessibility",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185479"
-        },
-        {
-          "name": "Teaching D21 Progression and GPA",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185515"
-        },
-        {
-          "name": "Integrity Session Guard Amendment",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185525"
-        },
-        {
-          "name": "Teaching D27 Integration Boundaries",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185300"
-        },
-        {
-          "name": "Teaching Integration Database",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185270"
-        },
-        {
-          "name": "Classroom Remodeling Foundation",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185280"
-        },
-        {
-          "name": "Teaching D16 Homework Integrity",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185283"
-        },
-        {
-          "name": "Teaching D22 Teacher Identity",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185330"
-        },
-        {
-          "name": "Teaching D07 Course Intake",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185342"
-        },
-        {
-          "name": "Teaching D26 Coordination Notifications",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185296"
-        },
-        {
-          "name": "Teaching D15 Attendance",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185337"
-        },
-        {
-          "name": "Teaching D09 Semester Scheduling Time",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185299"
-        },
-        {
-          "name": "Teaching D08 Course Plan and Coverage",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185315"
-        },
-        {
-          "name": "Teaching D03 Control Foundation",
-          "status": "completed",
-          "conclusion": "success",
-          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37992185385"
-        }
-      ]
-    }
+    "newMigrationCI": "PENDING_NATIVE_POSTGRES"
   },
   "qualification": "All 44 blueprint scenarios remain NOT_QUALIFIED; structural fixture coverage and actual database transactions are supporting evidence only",
   "remaining": [
-    "Delivery 1 canonical/governed orchestrator integration and all actual legacy caller compatibility gates are unfinished",
-    "Connect new author/coordinator/Presenter invocation adapters to the real prompt control and central AI boundary; candidate lookup cannot authorize invocation",
-    "Wire trusted approved scope/source/history/profile requirements, actual independent reviewers, D14 asset readiness and D11 Blueprint/PPL owner adapters; current service injects these boundaries and fixture-tests recovery",
-    "Implement governed reschedule/replan replacement bindings and compatible cross-class academic inheritance; current code preserves old prose and rejects silent changed binding replacement",
-    "Complete registered continuity/check/scaffolding preparation and explicit anchor remap history for replacements/splits/merges",
-    "Qualify actual connected chapter retrieval with persisted remodeled session pins after foundational/session contracts are accepted"
+    "Delivery 1 candidate empirical qualification and C4 human review dependency gate",
+    "Native PostgreSQL CI for new immutable revision/session-pin migration and expanded connected retrieval/remap tests",
+    "Observed live-provider complete/partial/blocked authoring, independent artifact/whole-artifact review, current D11 acceptance/PPL handoff and reader qualification using adopted requirements",
+    "Server-owned adoption of scope/source/profile/history, preparation numeric policy and qualified independent reviewer evidence before enabling runtime"
   ],
   "compatibility": {
     "legacySessions": "Existing active prompt bindings and routes preserved; no legacy retirement",
@@ -321,6 +138,10 @@
     "production": "No production migrations, rollout or new infrastructure",
     "rollback": "Default path remains inactive; deploy code rollback leaves legacy sessions unchanged. CI schema isolation verified separately; destructive production rollback not exercised"
   },
-  "nextUnfinishedAction": "Finish and qualify the candidate invocation/legacy-consumer boundary through existing governance (Delivery 1), then wire real owner/provider adapters and replacement preparation bindings before Delivery 2 acceptance.",
-  "externalBlockers": []
+  "nextUnfinishedAction": "Inspect new source CI and native PostgreSQL results; correct any failures. Then run live-provider/independent-review qualification with adopted owner configuration before accepting Delivery 1 and Delivery 2.",
+  "externalBlockers": [
+    "Local AI provider credentials unavailable; no observed revised-candidate qualification evidence",
+    "Qualified independent reviewer route and C4 academic human review not yet supplied",
+    "Production preparation requirements/numeric policy adoption missing; no numerical values invented"
+  ]
 }

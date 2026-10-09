@@ -420,6 +420,7 @@ function createStructuralPromptInvocation({
   capabilityCriticalityOverride = null,
   preparation = null,
   audit = {},
+  candidatePromptBinding = null,
 } = {}) {
   const capability = assertCapabilityBinding(capabilityId);
   if (capability.authority_ceiling === 'T0') {
@@ -444,6 +445,7 @@ function createStructuralPromptInvocation({
     contract.promptFamily.version
   );
   assertFrozenPromptBinding(prompt);
+  if(candidatePromptBinding)require('../classroom-remodel/invocation-binding').assertCandidateInvocationBinding(candidatePromptBinding,{capabilityId:capability.id,mode:task});
 
   const preparationMetadata = preparation == null
     ? null
@@ -474,12 +476,14 @@ function createStructuralPromptInvocation({
     directive: boundedDirective,
     context_allowlist: t4ContextAllowlist,
     prompt: Object.freeze({
-      family_id: prompt.familyId,
-      family_version: prompt.familyVersion,
-      manifest_version: prompt.manifestVersion,
-      manifest_sha256: prompt.manifestSha256,
-      combined_pack_sha256: prompt.combinedPackSha256,
-      frozen_binding: prompt,
+      family_id: candidatePromptBinding?.familyId || prompt.familyId,
+      family_version: candidatePromptBinding?.familyVersion || prompt.familyVersion,
+      manifest_version: candidatePromptBinding?.manifestVersion || prompt.manifestVersion,
+      manifest_sha256: candidatePromptBinding?.manifestSha256 || prompt.manifestSha256,
+      combined_pack_sha256: candidatePromptBinding?.manifestSha256 || prompt.combinedPackSha256,
+      prompt_sha256: candidatePromptBinding?.promptSha256 || prompt.promptSha256,
+      frozen_binding: candidatePromptBinding ? null : prompt,
+      candidate_binding: candidatePromptBinding,
       task_mode: task,
     }),
     context_lanes: contextLanes,
@@ -487,14 +491,14 @@ function createStructuralPromptInvocation({
     output_schema: schema,
     validation_requirements: contract.validationRequirements,
     failure_behavior: contract.failureBehavior,
-    route_control: route,
+    route_control: candidatePromptBinding ? Object.freeze({...route,familyId:candidatePromptBinding.familyId,familyVersion:candidatePromptBinding.familyVersion,qualificationStatus:'UNQUALIFIED',productionAuthorized:false,humanAcademicReviewRequired:true}) : route,
     preparation: preparationMetadata,
     audit: freezeDeep({
       correlation_id: correlationId,
       causation_id: audit.causation_id == null ? null : String(audit.causation_id).trim(),
       capability_id: capability.id,
-      prompt_family_id: prompt.familyId,
-      prompt_family_version: prompt.familyVersion,
+      prompt_family_id: candidatePromptBinding?.familyId || prompt.familyId,
+      prompt_family_version: candidatePromptBinding?.familyVersion || prompt.familyVersion,
       constitution_version: TEACHING_CONSTITUTION.version,
       output_schema_id: schema.id,
       output_schema_version: schema.version,

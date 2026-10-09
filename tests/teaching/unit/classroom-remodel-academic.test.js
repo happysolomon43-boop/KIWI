@@ -53,3 +53,10 @@ test('preparation resumes after a provider failure without regenerating persiste
  await assert.rejects(()=>service.prepare({id:'fixture-student'},'fixture-class',{operationKey:'fixture-op'}),{code:'FIXTURE_PROVIDER_FAILURE'});assert.equal(stored.size,3);assert.equal(binding,null);
  const result=await service.prepare({id:'fixture-student'},'fixture-class',{operationKey:'fixture-op'});assert.deepEqual(calls,{author:1,coordinator:1,presenter:2});assert.equal(stored.size,4);assert.equal(result.prepared,true);assert.equal(result.published,false);assert.equal(binding.receipt.wholeArtifactReview.reviewId,'FIXTURE_WHOLE_ONLY');
 });
+
+test('explicit chapter revisions require remaps for every changed or retired anchor',()=>{
+ const prior=f.chapter(),next=f.clone(prior);next.version='2';next.prior_version='1';next.units[0].elements[0].text='Corrected source-grounded prose';
+ assert.throws(()=>a.validateRevision(prior,next),{code:'CLASSROOM_CHANGED_ANCHOR_REMAP_REQUIRED'});
+ next.remaps=[{prior_version:'1',from:'U01',to:['U01'],reason:'Unit contains a corrected passage'},{prior_version:'1',from:'U01.E01',to:['U01.E01'],reason:'Explicit teacher correction'}];a.validateRevision(prior,next);
+ const forged=f.clone(next);forged.remaps[0].from='unknown';assert.throws(()=>a.validateRevision(prior,forged));
+});

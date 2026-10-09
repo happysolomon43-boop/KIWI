@@ -907,6 +907,13 @@ function createD11LessonControllerRepository({
     return Object.freeze({ ok:mismatches.length===0, reason:mismatches.length?'STALE_LIVE_CONTEXT':null, mismatches:Object.freeze(mismatches), context });
   }
 
+  async function commitClassroomBlueprint({studentId,classId,expected,blueprint,validationMetadata,generationProvenance}) {
+    return withTransaction(async tx=>{
+      const artifact=await recordPreparationArtifactUsing(tx,{studentId,classId,blueprint,capabilityId:'teaching.lesson.pre_class_lesson_planning',promptFamilyRef:'TPF-05@2.0'});
+      return saveBlueprintUsing(tx,{studentId,classId,expected,blueprint,validationMetadata:{...validationMetadata,ppl_artifact_version_id:artifact.artifact.artifact_version_id},generationProvenance,preparationRef:artifact.artifact.artifact_version_id});
+    });
+  }
+
   async function saveBlueprint({
     studentId,
     classId,
@@ -1643,6 +1650,7 @@ function createD11LessonControllerRepository({
     assertContextCurrentUsing,
     assertLiveContextCurrent,
     saveBlueprint,
+    commitClassroomBlueprint,
     saveBlueprintUsing,
     latestBlueprint,
     getSession,

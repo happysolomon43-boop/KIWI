@@ -341,3 +341,5 @@ Keep prepared assistance, released/accessibly available content, render confirma
 Ordinary classroom findings can inform Presenter feedback after the engine validates and confirms acceptance for the exact task, criteria, source, assistance and state. This is not independent academic verification. Formal or explicitly external validation remains with its owner.
 
 Use only the registered compatible mode-specific schema. Preserve all required authority, evidence, private/public and confirmation distinctions. If the schema cannot represent required work, return its contract-error form rather than silently dropping fields.
+
+For pre_class_lesson_blueprint the compatible runtime may request artifacts.controller_blueprint using the retained D11 Blueprint contract. This is an internal provisional artifact, not a second academic owner. It must agree with the chapter and teaching plan on objectives, priorities, counted phase minutes and reserve. D11 alone validates and accepts it.

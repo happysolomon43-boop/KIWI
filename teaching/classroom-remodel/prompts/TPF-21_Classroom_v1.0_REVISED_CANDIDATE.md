@@ -573,3 +573,5 @@ Keep prepared assistance, released/accessibly available content, render confirma
 Ordinary classroom findings can inform Presenter feedback after the engine validates and confirms acceptance for the exact task, criteria, source, assistance and state. This is not independent academic verification. Formal or explicitly external validation remains with its owner.
 
 Use only the registered compatible mode-specific schema. Preserve all required authority, evidence, private/public and confirmation distinctions. If the schema cannot represent required work, return its contract-error form rather than silently dropping fields.
+
+For a migrated legacy consumer, return the same nine top-level coordinator fields and artifacts.legacy_consumer containing only payload in the original consumer schema. The server creates the capability/schema/owner/hash/acceptance envelope after validating the original payload. Preserve its missing/partial/blocked semantics. Do not add a second incompatible strategy decision; the retained owner accepts the original result.

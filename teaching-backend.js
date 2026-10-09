@@ -50,6 +50,7 @@ function createTeachingRouter({
   publishedEventRegistry = null,
   teachingRuntimePlatform = null,
   classroomPreparationService = null,
+  classroomPreparationOptions = null,
 } = {}) {
   if (typeof authenticate !== 'function') {
     throw new TypeError('KIWI Teaching backend requires the existing authenticate middleware.');
@@ -71,6 +72,7 @@ function createTeachingRouter({
     d09TransactionalMutation: teachingRuntimePlatform?.transactionalMutation || null,
     d10RuntimePlatform: teachingRuntimePlatform || null,
     d11Intelligence,
+    classroomPreparationOptions,
     d11PublishedEventRegistry,
     d12Intelligence,
     d12PublishedEventRegistry,
@@ -808,7 +810,7 @@ function createTeachingRouter({
     }
   });
 
-  mountClassroomChapterRoute(router,{service:classroomPreparationService,sendError});
+  mountClassroomChapterRoute(router,{service:classroomPreparationService||foundation.classroomPreparation?.service,sendError});
   return router;
 }
 
