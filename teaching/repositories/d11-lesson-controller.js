@@ -1465,6 +1465,34 @@ function createD11LessonControllerRepository({
       const blueprint=decision.validatedContent;
       let newBlueprintId=null,newArtifactId=null;
       if(decision.mode==='INHERIT_VALIDATED_BLUEPRINT'){
+        // An earlier REQUEST_APPLIED materiality pass may have seeded an
+        // empty successor SKELETON. Retire it before publishing a completely
+        // validated inherited Blueprint: otherwise D11 start would mistake
+        // the empty workspace for unfinished current lesson preparation.
+        if(targetWorkspace&&!targetWorkspace.current_artifact_version_ref){
+          await tx.query(`
+            update teaching_preparation.workspaces set lifecycle_state='SUPERSEDED',
+              cancellation_reason='BLUEPRINT_INHERITED_REVALIDATED',
+              state_version=state_version+1,next_review_due_at=null,updated_at=now()
+            where workspace_id=$1 and state_version=$2 and lifecycle_state='ACTIVE'
+              and current_artifact_version_ref is null
+          `,[targetWorkspace.workspace_id,targetWorkspace.state_version]);
+          await tx.query(`
+            update teaching_runtime.event_outbox set status='CANCELLED',
+              last_error_code='TEACHING_D11_BLUEPRINT_ALREADY_INHERITED',
+              next_attempt_at=null,updated_at=now()
+            where aggregate_id=$1 and event_type like 'teaching.preparation.%'
+              and status in ('PENDING','RETRY_WAIT')
+          `,[targetWorkspace.workspace_id]);
+          await tx.query(`
+            update teaching_runtime.due_events set status='SUPERSEDED',
+              resolution='SUPERSEDED',recovery_reason='BLUEPRINT_INHERITED_REVALIDATED',
+              claim_token=null,claimed_by=null,claimed_at=null,claim_expires_at=null,updated_at=now()
+            where payload->>'preparation_workspace_id'=$1
+              and status in ('PENDING','RETRY_WAIT')
+              and event_type='teaching.preparation.review_due'
+          `,[targetWorkspace.workspace_id]);
+        }
         const result=await saveBlueprintUsing(tx,{
           studentId,classId:toClassId,expected:{
             studentId,classId:toClassId,
