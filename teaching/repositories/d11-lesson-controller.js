@@ -145,14 +145,21 @@ function createD11LessonControllerRepository({
     const classRow = await loadClassBase(studentId, classId, runner, false);
     if (!classRow) return null;
     const plan = await loadCurrentPlan(studentId, classRow.course_id, runner, false);
-    const [learningUnits, learningUnitDependencies, planPrerequisites, blueprint, session, workspace] = await Promise.all([
-      loadLearningUnits(studentId, plan?.course_plan_id, runner),
-      loadLearningUnitDependencies(studentId, plan?.course_plan_id, runner),
-      loadPlanPrerequisites(studentId, plan?.course_plan_id, runner),
-      latestBlueprint(studentId, classId, runner, false),
-      getSession(studentId, classId, runner, false),
-      getPreparationWorkspace(studentId, classId, runner, false),
-    ]);
+    // In a transaction all calls use a single pg Client; schedule queries
+    // serially to avoid concurrent client.query calls. Outside a transaction
+    // the pool supports parallel reads and remains unchanged.
+    const readers=[
+      ()=>loadLearningUnits(studentId, plan?.course_plan_id, runner),
+      ()=>loadLearningUnitDependencies(studentId, plan?.course_plan_id, runner),
+      ()=>loadPlanPrerequisites(studentId, plan?.course_plan_id, runner),
+      ()=>latestBlueprint(studentId, classId, runner, false),
+      ()=>getSession(studentId, classId, runner, false),
+      ()=>getPreparationWorkspace(studentId, classId, runner, false),
+    ];
+    const results=runner
+      ?await (async()=>{const acc=[];for(const read of readers)acc.push(await read());return acc;})()
+      :await Promise.all(readers.map(read=>read()));
+    const [learningUnits,learningUnitDependencies,planPrerequisites,blueprint,session,workspace]=results;
     return Object.freeze({ classRow, plan, learningUnits, learningUnitDependencies, planPrerequisites, blueprint, session, workspace });
   }
 
@@ -1429,12 +1436,15 @@ function createD11LessonControllerRepository({
         [studentId,ids]);
       const sourceHasSession=(sessionRows.rows||[]).some(row=>row.class_id===fromClassId);
       const targetHasSession=(sessionRows.rows||[]).some(row=>row.class_id===toClassId);
-      const [oldSlotQuery,newSlotQuery]=await Promise.all([
-        tx.query('select * from public.teaching_timetable_slots where student_id=$1 and timetable_slot_id=$2',
-          [studentId,source.source_timetable_slot_id]),
-        tx.query('select * from public.teaching_timetable_slots where student_id=$1 and timetable_slot_id=$2',
-          [studentId,target.source_timetable_slot_id]),
-      ]);
+      // A PostgreSQL transaction is ONE client: never concurrently call
+      // client.query() (deprecated and unsafe on pg@9). Keep the locked
+      // authority reads on the same transaction in a fixed order.
+      const oldSlotQuery=await tx.query(
+        'select * from public.teaching_timetable_slots where student_id=$1 and timetable_slot_id=$2',
+        [studentId,source.source_timetable_slot_id]);
+      const newSlotQuery=await tx.query(
+        'select * from public.teaching_timetable_slots where student_id=$1 and timetable_slot_id=$2',
+        [studentId,target.source_timetable_slot_id]);
       const oldSlot=oldSlotQuery.rows?.[0],newSlot=newSlotQuery.rows?.[0];
       const already=await latestBlueprint(studentId,toClassId,tx,true);
       if(already)return Object.freeze({mode:'ALREADY_PREPARED',reason:'TARGET_BLUEPRINT_EXISTS'});
@@ -1491,7 +1501,7 @@ function createD11LessonControllerRepository({
           await tx.query(`
             update teaching_runtime.event_outbox set status='CANCELLED',
               last_error_code='TEACHING_D11_BLUEPRINT_ALREADY_INHERITED',
-              next_attempt_at=null,updated_at=now()
+              updated_at=now()
             where aggregate_id=$1 and event_type like 'teaching.preparation.%'
               and status in ('PENDING','RETRY_WAIT')
           `,[targetWorkspace.workspace_id]);
