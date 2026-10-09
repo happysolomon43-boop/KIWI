@@ -25,7 +25,7 @@ function harness({snapshot=null}={}){
     querySelector(){return null;}
   }
   const doc={activeElement:new Element('active'),body:new Element('body'),createElement(tag){return new Element(tag);},addEventListener(){},querySelector(){return null;}};
-  const ctx={document:doc,window:{KIWI_API_CLIENT:{kiwiApiRequest:async(endpoint,opts)=>{
+  const ctx={AbortController,document:doc,window:{KIWI_API_CLIENT:{kiwiApiRequest:async(endpoint,opts)=>{
     requests.push({endpoint,opts});
     if(endpoint.endsWith('/classroom')&&snapshot)return snapshot;
     throw Object.assign(new Error('request timed out'),{code:'KIWI_API_TIMEOUT',status:408});
