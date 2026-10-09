@@ -1,0 +1,33 @@
+name: Classroom Remodeling Foundation
+on:
+  pull_request:
+    paths:
+      - 'teaching/classroom-remodel/**'
+      - 'docs/teaching/classroom-remodel/**'
+      - 'scripts/*classroom*'
+      - 'tests/teaching/unit/classroom-remodel-foundation.test.js'
+      - '.github/workflows/classroom-remodel-foundation.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'teaching/classroom-remodel/**'
+      - 'docs/teaching/classroom-remodel/**'
+      - 'scripts/*classroom*'
+      - 'tests/teaching/unit/classroom-remodel-foundation.test.js'
+permissions:
+  contents: read
+jobs:
+  candidate-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund
+      - run: python scripts/build-classroom-prompt-candidates.py
+      - run: git diff --exit-code -- teaching/classroom-remodel/prompts
+      - run: node scripts/verify-classroom-remodel-foundation.js
+      - run: node --test tests/teaching/unit/classroom-remodel-foundation.test.js tests/teaching/unit/d03-control-plane.test.js tests/teaching/unit/d03-prompt-bodies.test.js tests/teaching/unit/d12-response-pedagogy.test.js
+      - run: npm run build:web

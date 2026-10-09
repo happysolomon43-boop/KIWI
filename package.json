@@ -46,7 +46,8 @@
     "verify:teaching:d29": "node scripts/verify-teaching-d29-academic-qa.js",
     "verify:teaching:d30": "node scripts/verify-teaching-d30-canonical.js",
     "verify:teaching:d31": "node scripts/verify-teaching-d31-release-readiness.js",
-    "qualify:teaching:d30": "node scripts/run-teaching-d30-qualification.js"
+    "qualify:teaching:d30": "node scripts/run-teaching-d30-qualification.js",
+    "verify:classroom:foundation": "node scripts/verify-classroom-remodel-foundation.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

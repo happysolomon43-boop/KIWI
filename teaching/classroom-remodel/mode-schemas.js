@@ -1,0 +1,45 @@
+'use strict';
+const c=require('./contracts');
+const {object,string,list,bool,exact,enumeration,fail,claim}=c;
+const AUTHOR_BLOCKS={
+ pre_class_lesson_blueprint:['chapter','unit_map','teaching_plan','learning_trajectory','homework_proposal','preparation_update'],
+ core_optional_selection:['teaching_plan','unit_map'],adaptive_reserve_allocation:['teaching_plan'],purposeful_retrieval_selection:['teaching_plan','learning_trajectory'],
+ live_lesson_replan:['teaching_plan','closure_or_replan','learning_trajectory','unit_map'],lateness_replan:['teaching_plan','closure_or_replan','learning_trajectory','unit_map'],
+ lesson_closure_analysis:['closure_or_replan','homework_proposal'],rolling_planning_horizon:['teaching_plan','preparation_update'],homework_design_generate:['homework_proposal'],homework_to_next_lesson_synthesis:['closure_or_replan'],
+};
+const REQUIRED_AUTHOR={pre_class_lesson_blueprint:['chapter','unit_map','teaching_plan'],core_optional_selection:['teaching_plan','unit_map'],adaptive_reserve_allocation:['teaching_plan'],purposeful_retrieval_selection:['teaching_plan','learning_trajectory'],live_lesson_replan:['teaching_plan','closure_or_replan'],lateness_replan:['teaching_plan','closure_or_replan'],lesson_closure_analysis:['closure_or_replan','homework_proposal'],rolling_planning_horizon:['teaching_plan'],homework_design_generate:['homework_proposal'],homework_to_next_lesson_synthesis:['closure_or_replan']};
+function validateAuthor(v,{mode=v?.task_mode,chapter=null}={}){
+ exact(v,['task_mode','input_state_reference','status','review_required','review_reasons','completion','provenance','artifacts','handoff'],'author');c.noAuthority(v);enumeration(mode,c.AUTHOR_MODES,'mode');if(v.task_mode!==mode)fail('CLASSROOM_MODE_MISMATCH');enumeration(v.status,c.AUTHOR_STATUSES,'author.status');bool(v.review_required,'review_required');list(v.review_reasons,'review_reasons');object(v.provenance,'provenance');list(v.handoff,'handoff');object(v.artifacts,'artifacts');object(v.completion,'completion');
+ for(const key of Object.keys(v.artifacts))if(!AUTHOR_BLOCKS[mode].includes(key))fail('CLASSROOM_ARTIFACT_MODE_MISMATCH',key);
+ for(const [key,state]of Object.entries(v.completion)){if(!AUTHOR_BLOCKS[mode].includes(key))fail('CLASSROOM_COMPLETION_MODE_MISMATCH');enumeration(state,['complete','partial','blocked','not_requested'],'completion');if(['complete','partial'].includes(state)&&!Object.hasOwn(v.artifacts,key))fail('CLASSROOM_COMPLETION_WITHOUT_ARTIFACT');}
+ if(v.status==='ok')for(const key of REQUIRED_AUTHOR[mode])if(v.completion[key]!=='complete'||!v.artifacts[key])fail('CLASSROOM_AUTHOR_REQUIRED_BLOCK',key);
+ if(v.status!=='ok'&&!v.review_reasons.length)fail('CLASSROOM_AUTHOR_REASON_REQUIRED');
+ if(v.artifacts.chapter){c.validateChapter(v.artifacts.chapter);if(v.completion.chapter!==v.artifacts.chapter.completeness)fail('CLASSROOM_CHAPTER_COMPLETION_MISMATCH');}
+ if(mode==='pre_class_lesson_blueprint'&&v.artifacts.teaching_plan)c.validatePlan(v.artifacts.teaching_plan,v.artifacts.chapter||chapter);
+ if(v.artifacts.unit_map)list(v.artifacts.unit_map,'unit_map').forEach(r=>c.resolveAnchor(r,v.artifacts.chapter||chapter));
+ if(v.artifacts.homework_proposal){const h=v.artifacts.homework_proposal;object(h,'homework');bool(h.assign,'homework.assign');string(h.purpose,'homework.purpose');list(h.student_tasks,'student_tasks');object(h.private,'homework.private');if(h.student_tasks.length&&mode!=='homework_design_generate')fail('CLASSROOM_HOMEWORK_GENERATION_MODE');if(h.assigned===true)fail('CLASSROOM_HOMEWORK_ASSIGNMENT_FORBIDDEN');}
+ if(v.artifacts.closure_or_replan){object(v.artifacts.closure_or_replan,'closure_or_replan');list(v.artifacts.closure_or_replan.preserved_work,'preserved_work');list(v.artifacts.closure_or_replan.carry_forward,'carry_forward');string(v.artifacts.closure_or_replan.current_position,'current_position');}
+ return v;
+}
+const PRESENTER_FIELDS=['task_mode','input_state_reference','status','review_required','provenance','interaction','board','policy','content_integrity','teacher_correction','continuity','uncertainties','handoff'];
+function validatePresenter(v,{mode=v?.task_mode,directive=null,chapter=null,supportedBoardOperations=[]}={}){
+ exact(v,PRESENTER_FIELDS,'presenter');c.noAuthority(v);enumeration(mode,c.PRESENTER_MODES,'mode');if(v.task_mode!==mode)fail('CLASSROOM_MODE_MISMATCH');enumeration(v.status,c.PRESENTER_STATUSES,'presenter.status');bool(v.review_required,'review_required');object(v.provenance,'provenance');list(v.uncertainties,'uncertainties');list(v.handoff,'handoff');object(v.policy,'policy');object(v.content_integrity,'content_integrity');object(v.teacher_correction,'teacher_correction');object(v.continuity,'continuity');
+ exact(v.interaction,['instructional_purpose','portions','silence','expects_student_response','expected_response_kind','preparation_completion','stop_reason'],'interaction');bool(v.interaction.silence,'silence');bool(v.interaction.expects_student_response,'expects_student_response');enumeration(v.interaction.preparation_completion,['complete','partial','blocked'],'preparation_completion');list(v.interaction.portions,'portions');list(v.board,'board');
+ if(v.status==='ok'&&!directive)fail('CLASSROOM_DIRECTIVE_REQUIRED');if(directive)c.validateDirective(directive);
+ if(v.interaction.silence&&v.interaction.portions.length)fail('CLASSROOM_WAIT_FILLER');
+ if(v.status==='ok'&&directive.approved_action==='wait'&&!v.interaction.silence)fail('CLASSROOM_WAIT_NOT_SILENT');
+ if(v.status==='ok'&&directive.approved_action!=='wait'&&!v.interaction.portions.length)fail('CLASSROOM_EMPTY_TEACHING_NOT_WAIT');
+ const seen=new Set();v.interaction.portions.forEach((p,i)=>{
+  exact(p,['id','sequence','teacher_message','source_refs','board_refs','task_ref','boundary','publication_dependencies','wait_requirement','resume_at','expected_student_action','correction_of'],'portion');string(p.id,'portion.id');if(seen.has(p.id)||p.sequence!==i+1)fail('CLASSROOM_PORTION_ORDER_INVALID');seen.add(p.id);string(p.teacher_message,'teacher_message');list(p.source_refs,'source_refs').forEach(r=>{c.versionRef(r);if(chapter)c.resolveAnchor(r,chapter);if(directive&&!directive.presentation_span.some(a=>a.kind===r.kind&&a.id===r.id&&a.version===r.version&&a.anchor===r.anchor))fail('CLASSROOM_PORTION_OUTSIDE_AUTHORIZED_SPAN');});list(p.board_refs,'board_refs');list(p.publication_dependencies,'publication_dependencies');enumeration(p.boundary,['reading_boundary','suitable_teaching_pause'],'boundary');enumeration(p.wait_requirement,['none','student_response','evaluation','new_directive'],'wait_requirement');string(p.resume_at,'resume_at');
+ });
+ const boardIds=new Set();v.board.forEach(b=>{exact(b,['id','operation','type','content','target_ref','depends_on'],'board');string(b.id,'board.id');if(boardIds.has(b.id))fail('CLASSROOM_BOARD_DUPLICATE');boardIds.add(b.id);enumeration(b.operation,['add','highlight','reveal','annotate','compare','clear','restore'],'board.operation');enumeration(b.type,['text','equations','worked_steps','code','sources','graph','data','comparison','diagram','student_work_annotation'],'board.type');if(!supportedBoardOperations.includes(b.operation))fail('CLASSROOM_BOARD_OPERATION_UNSUPPORTED');object(b.content,'board.content');list(b.depends_on,'depends_on');});
+ if(directive){if(v.policy.academic_mode!==directive.academic_mode||v.policy.approved_action!==directive.approved_action||v.policy.assistance_ceiling!==directive.assistance_ceiling)fail('CLASSROOM_PRESENTER_DIRECTIVE_CHANGED');if(directive.response_window?.state==='OPEN'&&v.interaction.portions.some(p=>p.task_ref!==directive.task_ref))fail('CLASSROOM_OPEN_WINDOW_UNRELATED_MOVE');}
+ enumeration(v.content_integrity.validation_status,['checked','validation_needed','not_applicable'],'validation_status');bool(v.content_integrity.checkable_content_generated,'checkable_content_generated');if(v.status==='ok'&&v.content_integrity.checkable_content_generated&&v.content_integrity.validation_status!=='checked')fail('CLASSROOM_UNCHECKED_CONTENT');
+ if(v.status!=='ok'&&!v.uncertainties.length&&!v.handoff.length)fail('CLASSROOM_PRESENTER_HOLD_REASON_REQUIRED');return v;
+}
+function getModeSchema(role,mode,context={}){
+ const validator=role==='coordinator'?v=>c.validateCoordinator(v,{...context,mode}):role==='author'?v=>validateAuthor(v,{...context,mode}):role==='presenter'?v=>validatePresenter(v,{...context,mode}):null;
+ if(!validator)fail('CLASSROOM_SCHEMA_ROLE_UNKNOWN');
+ return c.schemaDescriptor(role,mode,async v=>{try{return {ok:true,value:validator(v)};}catch(e){return {ok:false,reason:e.code||'CLASSROOM_CONTRACT_INVALID',fieldPath:e.fieldPath||null};}});
+}
+module.exports={AUTHOR_BLOCKS,REQUIRED_AUTHOR,PRESENTER_FIELDS,validateAuthor,validatePresenter,getModeSchema};

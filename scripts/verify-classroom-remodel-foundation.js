@@ -1,0 +1,9 @@
+'use strict';
+const fs=require('node:fs');const path=require('node:path');const assert=require('node:assert/strict');const crypto=require('node:crypto');
+const {buildInventory}=require('./build-classroom-remodel-inventory');const {readCandidates,validateMigrationProposal}=require('../teaching/classroom-remodel/candidate-governance');
+const {assertRegistryIntegrity}=require('../teaching/capability-registry');const {promptCatalogStatus}=require('../teaching/prompt-runtime/prompt-catalog');const {assertPromptBodyStoreReady}=require('../teaching/prompt-runtime/prompt-body-store');
+const inventory=buildInventory();const saved=JSON.parse(fs.readFileSync(path.join(__dirname,'../docs/teaching/classroom-remodel/migration-inventory.v1.json'),'utf8'));
+assert.deepEqual(saved,inventory);assert.equal(inventory.migratedCapabilityCount,22);assertPromptBodyStoreReady();const legacyRegistry=assertRegistryIntegrity();const legacyCatalog=promptCatalogStatus();assert.equal(legacyRegistry.promptFamilies,20);assert.equal(legacyCatalog.familyCount,20);
+const candidates=readCandidates();for(const f of candidates.families){const bytes=fs.readFileSync(path.join(__dirname,'../docs/teaching/classroom-remodel/sources',f.sourceFile));assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'),f.sourceSha256);}
+const proposal=JSON.parse(fs.readFileSync(path.join(__dirname,'../teaching/classroom-remodel/migration-proposal.v1.json'),'utf8'));const governance=validateMigrationProposal(proposal);
+console.log(JSON.stringify({fixtureFoundationVerified:true,legacyRegistry,legacyPromptCatalog:{familyCount:legacyCatalog.familyCount,manifestVersion:legacyCatalog.manifestVersion},candidateGovernance:governance,activation:'INACTIVE',liveProviderEvidence:false,delivery1Acceptance:'NOT_COMPLETE'},null,2));

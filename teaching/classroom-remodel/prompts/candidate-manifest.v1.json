@@ -1,0 +1,48 @@
+{
+  "version": "classroom-prompt-candidates.v1",
+  "activation": "INACTIVE",
+  "governanceState": "PROMPT_CANDIDATE_DRAFT",
+  "workingCoordinatorAlias": "TPF-5/8",
+  "canonicalCoordinatorFamilyProposal": "TPF-21",
+  "canonicalRegistration": "PROPOSED_NOT_FROZEN",
+  "baseRegistryVersion": "1.3",
+  "baseManifestVersion": "1.4",
+  "retainedFamilies": [
+    "TPF-04",
+    "TPF-06",
+    "TPF-07",
+    "TPF-20"
+  ],
+  "families": [
+    {
+      "familyId": "TPF-05",
+      "version": "2.0",
+      "file": "TPF-05_Classroom_v2.0_REVISED_CANDIDATE.md",
+      "sha256": "aeb28ac3f5dfb32cea6edaa6411037a9492aaa568a59b4ab83723eedef22edcb",
+      "sourceFile": "TPF_05_v2-1.md",
+      "sourceSha256": "b5639a0e9e948983649094e73a007f9c137ce627d6a2a86e58525cd811143b77",
+      "status": "qualification_pending",
+      "runtimeEffective": false
+    },
+    {
+      "familyId": "TPF-21",
+      "version": "1.0",
+      "file": "TPF-21_Classroom_v1.0_REVISED_CANDIDATE.md",
+      "sha256": "75d5a3ba5d120c95fc9ed67e1ba1d93c51dc83f097151490671f4d6ae5b5dd30",
+      "sourceFile": "TPF_5_8_v2-1.md",
+      "sourceSha256": "6502464b66c1c79b7fde7441bdcc2394fd23e1da64bef8c5bfb0f923a470a701",
+      "status": "qualification_pending",
+      "runtimeEffective": false
+    },
+    {
+      "familyId": "TPF-08",
+      "version": "2.0",
+      "file": "TPF-08_Classroom_v2.0_REVISED_CANDIDATE.md",
+      "sha256": "b8f2e35a305c29f62d85f8f8aa33186fdab5d78242dcdfc7e7c35865c3544dd2",
+      "sourceFile": "TPF-08-1.md",
+      "sourceSha256": "0f07ac4c65b0747e2eee23028f4e829b6aec497177fdd79aebe1057aedb5b62c",
+      "status": "qualification_pending",
+      "runtimeEffective": false
+    }
+  ]
+}

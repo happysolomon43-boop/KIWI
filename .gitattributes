@@ -1,0 +1,3 @@
+# Approved originals are byte-pinned evidence, including Markdown hard breaks
+# and original CRLF. Do not normalize or lint away their source formatting.
+docs/teaching/classroom-remodel/sources/* -text whitespace=-trailing-space,-blank-at-eof,cr-at-eol

@@ -1,0 +1,4 @@
+'use strict';
+const {AUTHOR_STATUSES,PRESENTER_STATUSES,enumeration,fail}=require('./contracts');
+function normalizeResult(role,status){const allowed=role==='author'?AUTHOR_STATUSES:role==='coordinator'?['complete','partial','blocked']:role==='presenter'?PRESENTER_STATUSES:null;if(!allowed)fail('CLASSROOM_ROLE_UNKNOWN');enumeration(status,allowed,'status');let handling='hold';if(['ok','complete'].includes(status))handling='candidate';else if(status==='partial')handling='partial_candidate';else if(status==='policy_block')handling='prohibited';else if(['state_conflict','directive_conflict'].includes(status))handling='reconciliation';else if(['validation_needed','source_conflict','correction_required'].includes(status))handling='review';return {role,rawStatus:status,handling,requiresAcceptance:true,publicationConfirmed:false,renderConfirmed:false,learningEstablished:false,officialOutcome:null};}
+module.exports={normalizeResult};
