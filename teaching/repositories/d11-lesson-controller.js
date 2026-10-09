@@ -700,8 +700,9 @@ function createD11LessonControllerRepository({
         &&klass.course_lifecycle_state==='ACTIVE'
         &&klass.source_timetable_state==='APPROVED'
         &&(Date.parse(klass.scheduled_start_at)>clock().getTime()
-          || (allowLateStartRecovery===true && lateStartRecoveryEligibility({classRow:klass,session,now:clock()}).allowed))
-        &&!session
+          || (allowLateStartRecovery===true && lateStartRecoveryEligibility({classRow:klass,plan,session,now:clock()}).allowed))
+        &&(!session || (allowLateStartRecovery===true
+          &&lateStartRecoveryEligibility({classRow:klass,plan,session,now:clock()}).allowed))
         &&workspace.lifecycle_state==='ACTIVE'
         &&String(pre.course_state_version)===String(klass.course_state_version)
         &&String(pre.class_schedule_version)===String(klass.schedule_version)

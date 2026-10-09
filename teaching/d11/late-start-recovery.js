@@ -6,12 +6,34 @@
 const MAX_LATE_START_MS=45*60*1000;
 const MIN_TEACHING_REMAINING_MS=20*60*1000;
 
-function lateStartRecoveryEligibility({classRow,session=null,now=new Date()}={}) {
+function isRecoverableRouteHeldSession(session) {
+  if(!session||session.lifecycle_state!=='INTERRUPTED'
+    ||session.instructional_substate!=='INTERRUPTED'
+    ||session.lesson_blueprint_id!=null
+    ||session.resume_instructional_substate!=null) return false;
+  const progress=session.progress_state || {};
+  // No objective, segment, answer or evidence was completed. A normally
+  // interrupted lesson with academic progress is never treated as route-held.
+  return ['completed_segment_refs','completed_objective_refs','evidence_event_refs',
+    'independent_evidence_objective_refs'].every(k=>Array.isArray(progress[k])&&progress[k].length===0);
+}
+
+function lateStartRecoveryEligibility({classRow,plan=null,session=null,now=new Date()}={}) {
   const t=now instanceof Date?now.getTime():new Date(now).getTime();
   const start=Date.parse(classRow?.scheduled_start_at||'');
   const end=Date.parse(classRow?.scheduled_end_at||'');
   if(!Number.isFinite(t)||!Number.isFinite(start)||!Number.isFinite(end)
-     ||end<=start||!classRow||session) return Object.freeze({allowed:false,reason:'CLASS_WINDOW_OR_SESSION_INVALID'});
+     ||end<=start||!classRow) return Object.freeze({allowed:false,reason:'CLASS_WINDOW_OR_SESSION_INVALID'});
+  if(session&&!isRecoverableRouteHeldSession(session))
+    return Object.freeze({allowed:false,reason:'SESSION_ALREADY_HAS_ACADEMIC_WORK'});
+  if(session&&(
+    !plan
+    ||String(session.course_plan_id||'')!==String(plan.course_plan_id||'')
+    ||String(session.source_course_plan_version)!==String(plan.version_no)
+    ||String(session.source_course_state_version)!==String(classRow.course_state_version)
+    ||String(session.source_class_schedule_version)!==String(classRow.schedule_version)
+    ||String(session.source_timetable_version_id||'')!==String(classRow.source_timetable_version_id||'')))
+    return Object.freeze({allowed:false,reason:'ROUTE_HELD_AUTHORITY_STALE'});
   if(classRow.lifecycle_state!=='SCHEDULED'
     ||classRow.course_lifecycle_state!=='ACTIVE'
     ||classRow.source_timetable_state!=='APPROVED')
@@ -23,4 +45,4 @@ function lateStartRecoveryEligibility({classRow,session=null,now=new Date()}={})
     remainingMinutes:Math.floor((end-t)/60000)});
 }
 
-module.exports={lateStartRecoveryEligibility,MAX_LATE_START_MS,MIN_TEACHING_REMAINING_MS};
+module.exports={lateStartRecoveryEligibility,isRecoverableRouteHeldSession,MAX_LATE_START_MS,MIN_TEACHING_REMAINING_MS};

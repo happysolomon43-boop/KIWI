@@ -39,9 +39,10 @@ test('Late preparation is available only in an actual recoverable live Class',()
 test('PPL record guard retains preclass rule unless explicitly authorized late recovery',()=>{
   const repo=fs.readFileSync(path.resolve(__dirname,'../../../teaching/repositories/d11-lesson-controller.js'),'utf8');
   assert.match(repo,/allowLateStartRecovery=false/);
-  assert.match(repo,/lateStartRecoveryEligibility\(\{classRow:klass,session,now:clock\(\)\}\)\.allowed/);
+  assert.match(repo,/lateStartRecoveryEligibility\(\{classRow:klass,plan,session,now:clock\(\)\}\)\.allowed/);
   assert.match(repo,/Date\.parse\(klass\.scheduled_start_at\)>clock\(\)\.getTime\(\)/);
-  assert.match(repo,/&&\s*!session/);
+  assert.match(repo,/\(!session \|\| \(allowLateStartRecovery===true/);
+  assert.match(repo,/lateStartRecoveryEligibility\(\{classRow:klass,plan,session,now:clock\(\)\}\)\.allowed/);
   assert.match(repo,/source_timetable_state==='APPROVED'/);
 });
 
