@@ -38,11 +38,28 @@ test('candidate canonical alias and all 22 capability modes resolve without runt
  assert.throws(()=>r.assertRuntimeActivation(),{code:'CLASSROOM_CANDIDATE_ACTIVATION_PROHIBITED'});
  assert.throws(()=>r.resolveCandidateBinding({familyId:'TPF-21',mode:'prepare_guidance',capabilityId:'unknown'}));
 });
+test('candidate successor census is generated without changing active or historical readers',()=>{
+ const catalog=require('../../../teaching/prompt-runtime/prompt-catalog');const registry=require('../../../teaching/capability-registry');
+ const release=require('../../../scripts/build-classroom-release-proposal').buildReleaseProposal();assert.deepEqual(release,require('../../../teaching/classroom-remodel/release-proposal.v1.json'));
+ assert.equal(catalog.promptCatalogStatus().familyCount,20);assert.equal(registry.assertRegistryIntegrity().total,170);assert.equal(release.payload.counts.replacementBindings,22);assert.equal(release.payload.counts.retiredActiveBindings,0);
+ assert.equal(catalog.getClassroomCandidateFamily('TPF-5/8').canonicalId,'TPF-21');assert.equal(registry.getClassroomCandidateBinding({familyId:'TPF-21',mode:'design_check'}).runtimeAuthorized,false);
+ assert.throws(()=>catalog.getPromptFamily('TPF-21'));assert.equal(catalog.getPromptFamily('TPF-20').id,'TPF-20');
+});
 test('public snapshots exclude unreleased teacher output and retain accepted messages',()=>{
  const d=require('../../../teaching/classroom-remodel/domain-contracts');
  const snapshot={schema_version:'1',session_id:'s1',class_id:'c1',controller_version:1,delivery_version:1,delivery_epoch:1,control_epoch:1,server_time:'2026-10-09T21:00:00Z',cursor:1,chapter_ref:ref(),permitted_actions:[],delivery_state:'READY',conversation:[{id:'e1',sequence:1,role:'teacher',type:'portion',text:'Explain force',source_refs:[],status:'PREPARED',occurred_at:'2026-10-09T21:00:00Z'}],active_task:null};
  assert.throws(()=>d.projectSnapshot(snapshot));snapshot.conversation[0].status='RELEASED';assert.equal(d.projectSnapshot(snapshot).conversation.length,1);
  snapshot.conversation[0].role='student';snapshot.conversation[0].status='ACCEPTED';assert.equal(d.projectSnapshot(snapshot).conversation[0].status,'ACCEPTED');snapshot.private_criteria='secret';assert.throws(()=>d.projectSnapshot(snapshot));
+});
+test('public deltas preserve continuous cursors and reject private or prepared output',()=>{
+ const d=require('../../../teaching/classroom-remodel/domain-contracts');
+ const delta={schema_version:'1',session_id:'s1',from_cursor:4,to_cursor:5,server_time:'2026-10-09T21:00:00Z',events:[{id:'e5',sequence:5,role:'teacher',type:'portion',text:'Explain force',source_refs:[],status:'RELEASED',occurred_at:'2026-10-09T21:00:00Z'}]};
+ assert.equal(d.projectDelta(delta).events[0].sequence,5);delta.events[0].sequence=4;assert.throws(()=>d.projectDelta(delta));delta.events[0].sequence=5;delta.to_cursor=6;assert.throws(()=>d.projectDelta(delta));delta.to_cursor=5;delta.events[0].private='answer key';assert.throws(()=>d.projectDelta(delta));
+});
+test('interpretation receipt requires D12 acceptance and pinned task/response/exposure versions',()=>{
+ const d=require('../../../teaching/classroom-remodel/domain-contracts');
+ const receipt={receipt_id:'r1',interpretation_ref:ref(null,'1','interpretation'),task_ref:ref(null,'1','task'),response_ref:ref(null,'1','response'),criterion_ref:ref(null,'1','criterion'),controller_version:1,chapter_version:'1',assistance_version:'1',exposure_version:'1',accepted_at:'2026-10-09T21:00:00Z',owner:'D12',accepted:true};
+ d.validateInterpretationAcceptance(receipt);assert.throws(()=>d.validateInterpretationAcceptance({...receipt,owner:'TPF-21'}));const missing=copy(receipt);delete missing.exposure_version;assert.throws(()=>d.validateInterpretationAcceptance(missing));
 });
 const directive=()=>({academic_mode:'teaching',instructional_purpose:'Explain force',approved_action:'explain',target_competence_or_question:'objective1',allowed_interaction_kinds:['explanation'],assistance_ceiling:'full_instruction',current_assistance_state:'none',evidence_intent:'instruction_only',restrictions:[],expected_student_action:'none',current_learning_stage:'unknown',presentation_span:[ref('U01.P01','1','source_element')],response_budget:1000,source_refs:[ref('U01.P01','1','source_element')],board_refs:[],task_ref:null,time_constraints:{remaining_ms:null},response_window:null,resume_at:'U01.P01',accepted_evaluation:null});
 const coordinator=(mode,status='blocked')=>({request_ref:null,task_mode:mode,input_state_reference:null,status,review_required:status!=='complete',artifacts:{},next_action:null,runtime_requests:[],issues:status==='complete'?[]:[{type:'insufficient context',scope:mode,evidence_or_missing_input:'Authoritative input not supplied',consequence:'Affected result withheld',owner:'D11',can_safely_continue:false}]});

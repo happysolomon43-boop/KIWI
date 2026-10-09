@@ -207,6 +207,7 @@ function listCapabilities() {
 }
 
 module.exports = {
+  getClassroomCandidateBinding: (request) => require('../classroom-remodel/candidate-registry').resolveCandidateBinding(request),
   EXPECTED_COUNTS,
   REGISTRY_VERSION,
   REGISTRY_SOURCE_SHA256,

@@ -8,7 +8,7 @@ function selectSessionContract({existingBinding=null,release=null,policy=null,qu
  if(!release||release.status!=='QUALIFIED'||!cohortAuthorized)return {engine:LEGACY,upgrade:false,permittedCapabilities:[]};
  validatePolicy(policy);for(const f of ['promptManifestHash','schemaVersion','engineVersion','registryVersion','rollbackEngineVersion'])if(!release[f])fail('CLASSROOM_RELEASE_MANIFEST_INCOMPLETE');
  if(!capabilityReadiness(policy,'session').ready)fail('CLASSROOM_SESSION_POLICY_NOT_ADOPTED');
- const permittedCapabilities=qualifiedRoutes.filter(r=>r.qualified===true&&r.schemaVersion===release.schemaVersion&&capabilityReadiness(policy,r.policyCapability).ready).map(r=>r.action);
+ const permittedCapabilities=qualifiedRoutes.filter(r=>r.qualified===true&&r.registered===true&&r.schemaVersion===release.schemaVersion&&capabilityReadiness(policy,r.policyCapability).ready).map(r=>{if(typeof r.action!=='string'||!r.action.trim())fail('CLASSROOM_ROUTE_ACTION_REQUIRED');return r.action;});
  return {engine:REMODELED,engineVersion:release.engineVersion,promptManifestHash:release.promptManifestHash,schemaVersion:release.schemaVersion,registryVersion:release.registryVersion,policyVersion:policy.version,rollbackEngineVersion:release.rollbackEngineVersion,permittedCapabilities,upgrade:false};
 }
 function rollbackDisposition(binding,{newAdmissionEnabled=false,supportedEngines=[]}={}){
