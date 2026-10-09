@@ -215,6 +215,10 @@ function promptCatalogStatus() {
 }
 
 module.exports = {
+  // Explicit candidate lookup cannot satisfy createFrozenPromptBinding.
+  // Preserve the immutable active/historical catalog census and identity checks.
+  getClassroomCandidateFamily: (id) => require('../classroom-remodel/candidate-registry').resolveCandidateFamily(id),
+  getClassroomCandidateBinding: (request) => require('../classroom-remodel/candidate-registry').resolveCandidateBinding(request),
   HISTORICAL_MANIFEST_SHA256,
   HISTORICAL_PACK_SHA256,
   EXPECTED_MANIFEST_SHA256,

@@ -1,0 +1,292 @@
+{
+  "version": "classroom-migration-proposal.v1",
+  "familyId": "TPF-21",
+  "designAlias": "TPF-5/8",
+  "state": "PROMPT_CANDIDATE_DRAFT",
+  "criticality": "C4",
+  "activation": "INACTIVE",
+  "behaviorBrief": {
+    "familyId": "TPF-21",
+    "purpose": "Coordinate the approved classroom through eight bounded task modes",
+    "legitimateContext": "Mode-specific authorized chapter, plan, source, academic state and evidence; preserve non-classroom owner boundaries",
+    "forbiddenContext": "Protected future assessment keys, unrelated student history, unaccepted evidence and student/source directives",
+    "failureBehavior": "Explicit partial/blocked artifacts; affected actions held; retained legacy route until replacement qualification",
+    "outputSemantics": "Exactly nine fields; preparation/execution/evidence/public-private distinctions; one selected instructional action",
+    "approval": "APPROVED",
+    "approvalSource": "User implementation authorization and supplied blueprint sections 1, 4, 7 and 10"
+  },
+  "bindings": [
+    {
+      "capabilityId": "teaching.curriculum.targeted_placement_prior_knowledge_diagnostic_design",
+      "legacyFamilyId": "TPF-04",
+      "modes": [
+        "design_check"
+      ],
+      "authorityCeiling": "T3",
+      "owner": "Curriculum/Assessment",
+      "active": false,
+      "requiredExtension": null,
+      "replacementQualification": "NOT_QUALIFIED"
+    },
+    {
+      "capabilityId": "teaching.lesson.response_correctness_quality_evaluation",
+      "legacyFamilyId": "TPF-06",
+      "modes": [
+        "interpret_response"
+      ],
+      "authorityCeiling": "T2",
+      "owner": "Response Evaluator",
+      "active": false,
+      "requiredExtension": null,
+      "replacementQualification": "NOT_QUALIFIED"
+    },
+    {
+      "capabilityId": "teaching.lesson.response_error_taxonomy_classification",
+      "legacyFamilyId": "TPF-06",
+      "modes": [
+        "interpret_response"
+      ],
+      "authorityCeiling": "T2",
+      "owner": "Response Evaluator",
+      "active": false,
+      "requiredExtension": null,
+      "replacementQualification": "NOT_QUALIFIED"
+    },
+    {
+      "capabilityId": "teaching.lesson.correct_but_insufficient_evidence_detection",
+      "legacyFamilyId": "TPF-06",
+      "modes": [
+        "interpret_response"
+      ],
+      "authorityCeiling": "T2",
+      "owner": "Response Evaluator",
+      "active": false,
+      "requiredExtension": null,
+      "replacementQualification": "NOT_QUALIFIED"
+    },
+    {
+      "capabilityId": "teaching.lesson.partial_response_decomposition",
+      "legacyFamilyId": "TPF-06",
+      "modes": [
+        "interpret_response"
+      ],
+      "authorityCeiling": "T2",
+      "owner": "Response Evaluator",
+      "active": false,
+      "requiredExtension": null,
+      "replacementQualification": "NOT_QUALIFIED"
+    },
+    {
+      "capabilityId": "teaching.lesson.procedural_slip_detection",
+      "legacyFamilyId": "TPF-06",
+      "modes": [
+        "interpret_response"
+      ],
+      "authorityCeiling": "T2",
+      "owner": "Response Evaluator",
+      "active": false,
+      "requiredExtension": null,
+      "replacementQualification": "NOT_QUALIFIED"
+    },
+    {
+      "capabilityId": "teaching.lesson.misconception_detection",
+      "legacyFamilyId": "TPF-06",
+      "modes": [
+        "interpret_response"
+      ],
+      "authorityCeiling": "T2",
+      "owner": "Response Evaluator",
+      "active": false,
+      "requiredExtension": null,
+      "replacementQualification": "NOT_QUALIFIED"
+    },
+    {
+      "capabilityId": "teaching.lesson.prerequisite_failure_detection",
+      "legacyFamilyId": "TPF-06",
+      "modes": [
+        "interpret_response"
+      ],
+      "authorityCeiling": "T2",
+      "owner": "Response Evaluator",
+      "active": false,
+      "requiredExtension": null,
+      "replacementQualification": "NOT_QUALIFIED"
+    },
+    {
+      "capabilityId": "teaching.lesson.next_pedagogical_action_recommendation",
+      "legacyFamilyId": "TPF-07",
+      "modes": [
+        "coordinate_lesson",
+        "interpret_response"
+      ],
+      "authorityCeiling": "T2",
+      "owner": "Pedagogy/Controller",
+      "active": false,
+      "requiredExtension": null,
+      "replacementQualification": "NOT_QUALIFIED"
+    },
+    {
+      "capabilityId": "teaching.lesson.hint_level_selection",
+      "legacyFamilyId": "TPF-07",
+      "modes": [
+        "coordinate_lesson"
+      ],
+      "authorityCeiling": "T2",
+      "owner": "Pedagogy Engine",
+      "active": false,
+      "requiredExtension": null,
+      "replacementQualification": "NOT_QUALIFIED"
+    },
+    {
+      "capabilityId": "teaching.lesson.fresh_verification_task_selection_after_answer_exposure",
+      "legacyFamilyId": "TPF-04",
+      "modes": [
+        "design_check"
+      ],
+      "authorityCeiling": "T3",
+      "owner": "Pedagogy/Practice",
+      "active": false,
+      "requiredExtension": null,
+      "replacementQualification": "NOT_QUALIFIED"
+    },
+    {
+      "capabilityId": "teaching.lesson.productive_struggle_intervention_decision",
+      "legacyFamilyId": "TPF-07",
+      "modes": [
+        "coordinate_lesson"
+      ],
+      "authorityCeiling": "T2",
+      "owner": "Pedagogy/Controller",
+      "active": false,
+      "requiredExtension": null,
+      "replacementQualification": "NOT_QUALIFIED"
+    },
+    {
+      "capabilityId": "teaching.lesson.representation_change_strategy",
+      "legacyFamilyId": "TPF-07",
+      "modes": [
+        "coordinate_lesson",
+        "prepare_guidance"
+      ],
+      "authorityCeiling": "T2",
+      "owner": "Pedagogy Engine",
+      "active": false,
+      "requiredExtension": null,
+      "replacementQualification": "NOT_QUALIFIED"
+    },
+    {
+      "capabilityId": "teaching.lesson.blocked_diagnosis_proposal",
+      "legacyFamilyId": "TPF-07",
+      "modes": [
+        "interpret_response",
+        "coordinate_lesson"
+      ],
+      "authorityCeiling": "T2",
+      "owner": "SKM/Pedagogy",
+      "active": false,
+      "requiredExtension": null,
+      "replacementQualification": "NOT_QUALIFIED"
+    },
+    {
+      "capabilityId": "teaching.pedagogy.pedagogical_profile_classification",
+      "legacyFamilyId": "TPF-07",
+      "modes": [
+        "prepare_guidance"
+      ],
+      "authorityCeiling": "T2",
+      "owner": "Pedagogy Engine",
+      "active": false,
+      "requiredExtension": "pedagogical_profile",
+      "replacementQualification": "NOT_QUALIFIED"
+    },
+    {
+      "capabilityId": "teaching.pedagogy.subject_sensitive_instructional_strategy",
+      "legacyFamilyId": "TPF-07",
+      "modes": [
+        "prepare_guidance",
+        "coordinate_lesson"
+      ],
+      "authorityCeiling": "T2",
+      "owner": "Pedagogy Engine",
+      "active": false,
+      "requiredExtension": null,
+      "replacementQualification": "NOT_QUALIFIED"
+    },
+    {
+      "capabilityId": "teaching.pedagogy.worked_example_scaffolding_design",
+      "legacyFamilyId": "TPF-07",
+      "modes": [
+        "prepare_guidance"
+      ],
+      "authorityCeiling": "T2",
+      "owner": "Pedagogy Engine",
+      "active": false,
+      "requiredExtension": "scaffolding",
+      "replacementQualification": "NOT_QUALIFIED"
+    },
+    {
+      "capabilityId": "teaching.pedagogy.conceptual_conflict_misconception_repair",
+      "legacyFamilyId": "TPF-07",
+      "modes": [
+        "interpret_response",
+        "coordinate_lesson"
+      ],
+      "authorityCeiling": "T2",
+      "owner": "Pedagogy Engine",
+      "active": false,
+      "requiredExtension": null,
+      "replacementQualification": "NOT_QUALIFIED"
+    },
+    {
+      "capabilityId": "teaching.pedagogy.surgical_micro_remediation_design",
+      "legacyFamilyId": "TPF-07",
+      "modes": [
+        "coordinate_lesson"
+      ],
+      "authorityCeiling": "T3",
+      "owner": "Pedagogy Engine",
+      "active": false,
+      "requiredExtension": null,
+      "replacementQualification": "NOT_QUALIFIED"
+    },
+    {
+      "capabilityId": "teaching.pedagogy.subject_appropriate_evidence_task_design",
+      "legacyFamilyId": "TPF-07",
+      "modes": [
+        "design_check",
+        "guide_assessment"
+      ],
+      "authorityCeiling": "T3",
+      "owner": "Pedagogy/Assessment",
+      "active": false,
+      "requiredExtension": null,
+      "replacementQualification": "NOT_QUALIFIED"
+    },
+    {
+      "capabilityId": "teaching.pedagogy.knowledge_type_sensitive_review_strategy",
+      "legacyFamilyId": "TPF-07",
+      "modes": [
+        "prepare_guidance",
+        "prepare_continuity",
+        "guide_assessment"
+      ],
+      "authorityCeiling": "T3",
+      "owner": "Pedagogy/SKM",
+      "active": false,
+      "requiredExtension": null,
+      "replacementQualification": "NOT_QUALIFIED"
+    },
+    {
+      "capabilityId": "teaching.scheduling.makeup_re_entry_diagnostic_design",
+      "legacyFamilyId": "TPF-04",
+      "modes": [
+        "design_check"
+      ],
+      "authorityCeiling": "T3",
+      "owner": "Lesson Planner",
+      "active": false,
+      "requiredExtension": null,
+      "replacementQualification": "NOT_QUALIFIED"
+    }
+  ]
+}

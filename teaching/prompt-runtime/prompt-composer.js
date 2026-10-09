@@ -23,6 +23,7 @@ function serializableOutputSchema(schema = {}) {
     state_bearing_fields: schema.state_bearing_fields || [],
     student_facing_field: schema.student_facing_field || null,
     declared_fields: schema.declared_fields || [],
+    ...(schema.format_contract?{format_contract:schema.format_contract}:{}),
   });
 }
 
@@ -40,6 +41,8 @@ function serializablePromptContract(invocation) {
       manifest_sha256: invocation.prompt.manifest_sha256,
       combined_pack_sha256: invocation.prompt.combined_pack_sha256,
       task_mode: invocation.prompt.task_mode,
+      binding_kind:invocation.prompt.candidate_binding?'QUALIFICATION_CANDIDATE':'FROZEN',
+      prompt_sha256:invocation.prompt.prompt_sha256,
     }),
     context_lanes: invocation.context_lanes,
     state_reference: invocation.state_reference,
@@ -60,15 +63,19 @@ function composeTeachingModelContent({
   invocation,
   academicInput = {},
 } = {}) {
-  if (!invocation?.prompt?.frozen_binding) {
+  if (!invocation?.prompt?.frozen_binding && !invocation?.prompt?.candidate_binding) {
     fail('Teaching prompt composition requires a structural prompt invocation.');
   }
 
-  assertFrozenPromptBinding(invocation.prompt.frozen_binding);
-  const body = getPromptBody(
-    invocation.prompt.family_id,
-    invocation.prompt.family_version
-  );
+  let body,opening,closing;
+  if(invocation.prompt.candidate_binding){
+    const candidate=require('../classroom-remodel/invocation-binding').assertCandidateInvocationBinding(invocation.prompt.candidate_binding,{capabilityId:invocation.capability.id,mode:invocation.prompt.task_mode});
+    body={promptText:candidate.text};opening='<KIWI_TEACHING_CANDIDATE_PROMPT>';closing='</KIWI_TEACHING_CANDIDATE_PROMPT>';
+  }else{
+    assertFrozenPromptBinding(invocation.prompt.frozen_binding);
+    body=getPromptBody(invocation.prompt.family_id,invocation.prompt.family_version);
+    opening='<KIWI_TEACHING_FROZEN_PROMPT>';closing='</KIWI_TEACHING_FROZEN_PROMPT>';
+  }
   const runtimeContract = serializablePromptContract(invocation);
   const boundedAcademicInput = serializeAcademicInput(academicInput);
 
@@ -77,10 +84,10 @@ function composeTeachingModelContent({
   // data so feature code never edits, interpolates into, or rewrites the
   // design-frozen family core.
   return [
-    '<KIWI_TEACHING_FROZEN_PROMPT>',
+    opening,
     // The file already ends in a newline. Append the closing marker without
     // inserting or removing a byte within the frozen region.
-    body.promptText + '</KIWI_TEACHING_FROZEN_PROMPT>',
+    body.promptText + closing,
     '',
     '<KIWI_TEACHING_RUNTIME_CONTRACT_JSON>',
     JSON.stringify(runtimeContract),

@@ -1,0 +1,402 @@
+{
+  "version": "classroom-qualification-ledger.v1",
+  "blueprintSha256": "f383cfc469b5fcd1e66b0431773c42c57b67e41ead0eeaeaee58aeb7cc8cc969",
+  "scenarios": [
+    {
+      "number": 1,
+      "sourceRequirement": "1. **Simple concept:** concise complete chapter and proportionate explanation, no padding or mandatory check.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 2,
+      "sourceRequirement": "2. **Dense equation:** symbols/conditions/steps remain connected; pace/Board dependency works; pause resumes unfinished reasoning correctly.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 3,
+      "sourceRequirement": "3. **Long chapter continuation:** partial generation preserves complete units/anchors; continuation finishes without restart, duplicate or summary compression; Class cannot falsely claim readiness.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 4,
+      "sourceRequirement": "4. **Ordinary flow:** automatic release within approved span, no Next requirement, no coordinator call per sentence.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 5,
+      "sourceRequirement": "5. **Immediate blocker:** accepted message holds appropriate release, receives one disposition, changes only the relevant explanation and resumes at the anchor.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 6,
+      "sourceRequirement": "6. **Boundary deferral:** acknowledgement matches a real stored example/boundary commitment; later delivery resolves the linked question.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 7,
+      "sourceRequirement": "7. **Related messages:** one response covers all linked concerns, originals remain traceable, unanswered parts persist.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 8,
+      "sourceRequirement": "8. **Unrelated/protected request:** respectful redirection without prohibited answers, loss or false promise.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 9,
+      "sourceRequirement": "9. **Allowance exhaustion:** new discretionary message fails admission truthfully; teacher reply/clarification/extension/technical controls remain available; retry charges once.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 10,
+      "sourceRequirement": "10. **Wrong answer:** item validity checked first; local slip versus conceptual hypothesis distinguished; correct components preserved; strategy change is proportionate.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 11,
+      "sourceRequirement": "11. **Assisted answer:** released hint/solution exposure limits independence; fresh verification is legitimate variation; reduced later help does not restore old evidence.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 12,
+      "sourceRequirement": "12. **Chapter copyability:** accessible worked solution cannot be treated as clean independent verification.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 13,
+      "sourceRequirement": "13. **Question asset delay:** timer does not open before complete accessible question/fallback readiness.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 14,
+      "sourceRequirement": "14. **More time:** authorized extension persists once and respects end time; typing does not invent a new deadline.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 15,
+      "sourceRequirement": "15. **No response:** records no response, no invented failure/emotion; Class closure/task disposition remains coherent.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 16,
+      "sourceRequirement": "16. **Open window clarification:** related permitted help preserves task/window and records assistance; unrelated instruction remains held.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 17,
+      "sourceRequirement": "17. **Reload during presentation:** exact current position and public history restore without duplicating teaching.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 18,
+      "sourceRequirement": "18. **Reload during timed task:** original deadline remains, drafts are separate, quota unchanged.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 19,
+      "sourceRequirement": "19. **Lost send/receipt acknowledgement:** same idempotency key reconciles outcome, no duplicate quota/message/delivery event.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 20,
+      "sourceRequirement": "20. **Two devices:** takeover changes control epoch, stale control actions fail, no competing timers or advancement.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 21,
+      "sourceRequirement": "21. **Background/offline client:** no unsupported render/attendance inference; reconnect reconciles and no automatic late answer backdating.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 22,
+      "sourceRequirement": "22. **Worker crash:** before/after commit, outbox and leases recover one business effect.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 23,
+      "sourceRequirement": "23. **Provider stall/unknown outcome:** bounded retry/reconciliation, readable preserved lesson, no fabricated completion.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 24,
+      "sourceRequirement": "24. **Optional/essential visual failure:** accurate text fallback or explicit hold; no phantom asset, unsafe SVG or unowned retrieval.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 25,
+      "sourceRequirement": "25. **Correction:** public corrected statement, chapter/Board version links, invalidated buffer and evidence recheck; no silent rewrite or student blame.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 26,
+      "sourceRequirement": "26. **Substantial replan:** TPF-05 revises only remaining work; D11 accepts current version/time; completed activity preserved.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 27,
+      "sourceRequirement": "27. **Late/very-late Class:** legitimate remaining activity, no automatic overtime, truthful carry-forward.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 28,
+      "sourceRequirement": "28. **Break/early dismissal:** request is not grant; actual authority and resumption preserved.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 29,
+      "sourceRequirement": "29. **Protected takeover:** chapter/Board/Notebook/help suppressed server-side, no private stream leakage, proper work shell receives response.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 30,
+      "sourceRequirement": "30. **Closure race:** server-accepted response persists; expired/late submission policy explicit; post-closure evaluation never reopens Class.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 31,
+      "sourceRequirement": "31. **Unresolved queue at closure:** visible unresolved records and next-Class linkage, no false scheduled appointment or silent cancellation loss.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 32,
+      "sourceRequirement": "32. **First class/short history:** no invented previous lessons; present teaching remains usable.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 33,
+      "sourceRequirement": "33. **Real historical connection:** source-linked discussed-versus-demonstrated claims; no forced connection.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 34,
+      "sourceRequirement": "34. **Older summary conflict:** retrieve exact source where needed; preserve unresolved uncertainty.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 35,
+      "sourceRequirement": "35. **Homework:** actual purpose, workload/assistance, checked tasks/private keys; no punitive unsupported inference or model-assigned deadline.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 36,
+      "sourceRequirement": "36. **Formal guidance:** taught/exposed/independent distinctions preserved; protected future packages absent from Teacher context.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 37,
+      "sourceRequirement": "37. **TPF-20:** notes reflect actual delivered/corrected/unfinished content and bind to closure; held/publication states truthful.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 38,
+      "sourceRequirement": "38. **Historical UI:** no JOIN/write/quota/timer; old records retain original provenance.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 39,
+      "sourceRequirement": "39. **Migration:** all 22 old capabilities plus retained 05/08/20 modes and non-classroom callers have functioning qualified routes.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 40,
+      "sourceRequirement": "40. **Schema/enum drift:** reject invalid mode, unknown action/assistance, missing private separation, incompatible anchors or dropped fields.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 41,
+      "sourceRequirement": "41. **Ownership/security:** cross-student IDs, asset references, cursors, receipts and task submissions fail; injected source commands remain data.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 42,
+      "sourceRequirement": "42. **Accessibility/mobile:** keyboard/screen reader/reduced motion/zoom/software keyboard/long math, stable scroll/focus and accessible timer readiness.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 43,
+      "sourceRequirement": "43. **Deployment:** stream reconnect/poll fallback, auth refresh, worker restart, migration/grant readiness and compatible frontend/backend version.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    },
+    {
+      "number": 44,
+      "sourceRequirement": "44. **Rollback:** active response/queue/session survive rollback policy with no unsafe old-client rendering or timer reset.",
+      "status": "NOT_QUALIFIED",
+      "fixtureEvidence": [],
+      "liveProviderEvidence": [],
+      "deploymentEvidence": [],
+      "testedVersions": null
+    }
+  ]
+}

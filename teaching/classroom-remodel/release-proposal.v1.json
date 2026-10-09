@@ -1,0 +1,2235 @@
+{
+  "payload": {
+    "version": "classroom-release-proposal.v1",
+    "activation": "INACTIVE",
+    "qualification": "NOT_QUALIFIED",
+    "baseRegistryVersion": "1.3",
+    "basePromptManifestVersion": "1.4",
+    "canonicalCoordinator": {
+      "id": "TPF-21",
+      "alias": "TPF-5/8",
+      "governanceState": "PROMPT_CANDIDATE_DRAFT",
+      "registration": "CANDIDATE_ONLY"
+    },
+    "families": [
+      {
+        "id": "TPF-01",
+        "version": "1.0",
+        "promptSha256": "7ab97ec3ba8285659c40b7dc3ab149a721d8b475c14cbda89d13e73796d6d370",
+        "role": "RETAINED_ACTIVE_OR_HISTORICAL"
+      },
+      {
+        "id": "TPF-02",
+        "version": "1.2",
+        "promptSha256": "c3084d859209c672d86659b54ce63cc52422b3887414c0b50a64722f4744c004",
+        "role": "RETAINED_ACTIVE_OR_HISTORICAL"
+      },
+      {
+        "id": "TPF-03",
+        "version": "1.0",
+        "promptSha256": "78b10efe7530fd1e84db1b284a90d15f0a2071d9dc241e5d31604b39b237ce26",
+        "role": "RETAINED_ACTIVE_OR_HISTORICAL"
+      },
+      {
+        "id": "TPF-04",
+        "version": "1.2",
+        "promptSha256": "bccf0a2f4eca30ab5259d87dc2c6640d8eda4e09b61c1e5fd41e5a39162bb453",
+        "role": "RETAINED_ACTIVE_OR_HISTORICAL"
+      },
+      {
+        "id": "TPF-05",
+        "version": "2.0",
+        "promptSha256": "64203d5254a50bc958de72438a97c996946a7ef72a6331af8c83d44c86bcadc6",
+        "role": "INACTIVE_CANDIDATE"
+      },
+      {
+        "id": "TPF-06",
+        "version": "1.3",
+        "promptSha256": "59785c0d601b8535647a86e6923414714f4320af405f8133c75a468ccd3b8173",
+        "role": "RETAINED_ACTIVE_OR_HISTORICAL"
+      },
+      {
+        "id": "TPF-07",
+        "version": "1.2",
+        "promptSha256": "fc3546f686b7eb64e68147555a1bb314d587d7d919e662382c2eb20801d329fc",
+        "role": "RETAINED_ACTIVE_OR_HISTORICAL"
+      },
+      {
+        "id": "TPF-08",
+        "version": "2.0",
+        "promptSha256": "b8f2e35a305c29f62d85f8f8aa33186fdab5d78242dcdfc7e7c35865c3544dd2",
+        "role": "INACTIVE_CANDIDATE"
+      },
+      {
+        "id": "TPF-09",
+        "version": "1.2",
+        "promptSha256": "311e35a3edb67267a357b787b79c496a1660f297fc33e62776c457146946bab6",
+        "role": "RETAINED_ACTIVE_OR_HISTORICAL"
+      },
+      {
+        "id": "TPF-10",
+        "version": "1.1",
+        "promptSha256": "226a6f44cff3863ed8cc016daa50e38d9cac92f86fc205e6a5d1026d22cc8306",
+        "role": "RETAINED_ACTIVE_OR_HISTORICAL"
+      },
+      {
+        "id": "TPF-11",
+        "version": "1.0",
+        "promptSha256": "1c40d7a2b38fffe355da90933ecd47a688bff3a404fceb01d038f23659fc5994",
+        "role": "RETAINED_ACTIVE_OR_HISTORICAL"
+      },
+      {
+        "id": "TPF-12",
+        "version": "1.3",
+        "promptSha256": "0511b6591702748bb821f4d3b363287185ca6bf0ac52a14eb3b2ef3af3aba417",
+        "role": "RETAINED_ACTIVE_OR_HISTORICAL"
+      },
+      {
+        "id": "TPF-13",
+        "version": "1.3",
+        "promptSha256": "80bbaecd8f16a487c363fedc6364c3d974b1d88e1a7867473dcf2b81116128c6",
+        "role": "RETAINED_ACTIVE_OR_HISTORICAL"
+      },
+      {
+        "id": "TPF-14",
+        "version": "1.4",
+        "promptSha256": "8468485ad602be0d3448b342e8fc111776de84d85dced7f3ca0e0c86aeee43c4",
+        "role": "RETAINED_ACTIVE_OR_HISTORICAL"
+      },
+      {
+        "id": "TPF-15",
+        "version": "1.0",
+        "promptSha256": "a088a74f044082abb126952939bc3fe627b273b1cfea166833fae87afbc8dcdb",
+        "role": "RETAINED_ACTIVE_OR_HISTORICAL"
+      },
+      {
+        "id": "TPF-16",
+        "version": "1.0",
+        "promptSha256": "278c45b97de8ceff9e6307543bea1072d51d244ccf21b7b16ca8a98d3c5daeda",
+        "role": "RETAINED_ACTIVE_OR_HISTORICAL"
+      },
+      {
+        "id": "TPF-17",
+        "version": "1.1",
+        "promptSha256": "e297d3cc7e0f4c7febb1e13fcde2752a772f4a0bd61aea58170ed7dcc916674e",
+        "role": "RETAINED_ACTIVE_OR_HISTORICAL"
+      },
+      {
+        "id": "TPF-18",
+        "version": "1.0",
+        "promptSha256": "1ea28ec7d84ded6092949bd0656f83450178386d5990077f02d033208feec7d5",
+        "role": "RETAINED_ACTIVE_OR_HISTORICAL"
+      },
+      {
+        "id": "TPF-19",
+        "version": "1.0",
+        "promptSha256": "abb79225448de4a2350dc7366b2e7ca4088212e7e32991a58dce7199d8cd8831",
+        "role": "RETAINED_ACTIVE_OR_HISTORICAL"
+      },
+      {
+        "id": "TPF-20",
+        "version": "1.0",
+        "promptSha256": "d8d13f679e6817c1c02935e6581f5fc6ad512812004b59eebcf9a7d85c962e67",
+        "role": "RETAINED_ACTIVE_OR_HISTORICAL"
+      },
+      {
+        "id": "TPF-21",
+        "version": "1.0",
+        "promptSha256": "e23fc37454b700da83d62bdb4113eae4ca0b464b4efe97ed479984b60a9273dd",
+        "role": "INACTIVE_CANDIDATE"
+      }
+    ],
+    "capabilities": [
+      {
+        "id": "teaching.curriculum.intake_signal_extraction",
+        "aliases": [
+          "INV-001"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Course Planning",
+        "activeFamily": "TPF-01",
+        "candidateFamily": "TPF-01",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.curriculum.intake_planning_interpretation",
+        "aliases": [
+          "INV-002"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Course Planning",
+        "activeFamily": "TPF-01",
+        "candidateFamily": "TPF-01",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.curriculum.deep_curriculum_audit",
+        "aliases": [
+          "INV-003"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Curriculum Planner",
+        "activeFamily": "TPF-02",
+        "candidateFamily": "TPF-02",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.curriculum.source_content_inventory_discovery",
+        "aliases": [
+          "INV-004"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Curriculum/Coverage",
+        "activeFamily": "TPF-02",
+        "candidateFamily": "TPF-02",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.curriculum.required_vs_supplementary_source_classification",
+        "aliases": [
+          "INV-005"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Curriculum/Coverage",
+        "activeFamily": "TPF-02",
+        "candidateFamily": "TPF-02",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.curriculum.source_conflict_detection",
+        "aliases": [
+          "INV-006"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Curriculum Planner",
+        "activeFamily": "TPF-02",
+        "candidateFamily": "TPF-02",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.curriculum.source_conflict_resolution_proposal",
+        "aliases": [
+          "INV-007"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Curriculum/Coverage",
+        "activeFamily": "TPF-02",
+        "candidateFamily": "TPF-02",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.curriculum.supplementation_gap_analysis",
+        "aliases": [
+          "INV-008"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Curriculum Planner",
+        "activeFamily": "TPF-02",
+        "candidateFamily": "TPF-02",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.curriculum.dependency_graph_construction",
+        "aliases": [
+          "INV-009"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Curriculum Planner",
+        "activeFamily": "TPF-02",
+        "candidateFamily": "TPF-02",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.curriculum.learning_unit_decomposition",
+        "aliases": [
+          "INV-010"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Curriculum Planner",
+        "activeFamily": "TPF-02",
+        "candidateFamily": "TPF-02",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.curriculum.learning_unit_intended_competence_formulation",
+        "aliases": [
+          "INV-011"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Curriculum Planner",
+        "activeFamily": "TPF-02",
+        "candidateFamily": "TPF-02",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.curriculum.learning_unit_exit_condition_proposal",
+        "aliases": [
+          "INV-012"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Curriculum/Pedagogy",
+        "activeFamily": "TPF-02",
+        "candidateFamily": "TPF-02",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.curriculum.criticality_foundational_importance_analysis",
+        "aliases": [
+          "INV-013"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Curriculum Planner",
+        "activeFamily": "TPF-02",
+        "candidateFamily": "TPF-02",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.curriculum.dynamic_learning_unit_splitting",
+        "aliases": [
+          "INV-014"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Curriculum Planner",
+        "activeFamily": "TPF-02",
+        "candidateFamily": "TPF-02",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.curriculum.dynamic_learning_unit_merging_compression",
+        "aliases": [
+          "INV-015"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Curriculum Planner",
+        "activeFamily": "TPF-02",
+        "candidateFamily": "TPF-02",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.curriculum.assumed_prerequisite_identification",
+        "aliases": [
+          "INV-016"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Curriculum Planner",
+        "activeFamily": "TPF-02",
+        "candidateFamily": "TPF-02",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.curriculum.targeted_placement_prior_knowledge_diagnostic_design",
+        "aliases": [
+          "INV-017"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Curriculum/Assessment",
+        "activeFamily": "TPF-04",
+        "candidateFamily": "TPF-21",
+        "candidateModes": [
+          "design_check"
+        ],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.curriculum.validated_prior_knowledge_interpretation",
+        "aliases": [
+          "INV-018"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Evidence/SKM",
+        "activeFamily": "TPF-09",
+        "candidateFamily": "TPF-09",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.curriculum.course_plan_generation",
+        "aliases": [
+          "INV-019"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Curriculum Planner",
+        "activeFamily": "TPF-03",
+        "candidateFamily": "TPF-03",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.curriculum.course_plan_coverage_reconciliation",
+        "aliases": [
+          "INV-020"
+        ],
+        "authorityCeiling": "T0",
+        "owner": "Course Coverage Ledger",
+        "activeFamily": null,
+        "candidateFamily": null,
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.curriculum.course_scope_change_impact_analysis",
+        "aliases": [
+          "INV-021"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Course Plan/Coverage",
+        "activeFamily": "TPF-03",
+        "candidateFamily": "TPF-03",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.curriculum.course_activation_coverage_decision",
+        "aliases": [
+          "INV-022"
+        ],
+        "authorityCeiling": "T0",
+        "owner": "Course Lifecycle/Coverage",
+        "activeFamily": null,
+        "candidateFamily": null,
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.lesson.pre_class_lesson_planning",
+        "aliases": [
+          "INV-023"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Lesson Planner",
+        "activeFamily": "TPF-05",
+        "candidateFamily": "TPF-05",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.lesson.core_vs_optional_objective_selection",
+        "aliases": [
+          "INV-024"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Lesson Planner",
+        "activeFamily": "TPF-05",
+        "candidateFamily": "TPF-05",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.lesson.adaptive_reserve_allocation",
+        "aliases": [
+          "INV-025"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Lesson Planner",
+        "activeFamily": "TPF-05",
+        "candidateFamily": "TPF-05",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.lesson.purposeful_retrieval_selection",
+        "aliases": [
+          "INV-026"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Lesson Planner",
+        "activeFamily": "TPF-05",
+        "candidateFamily": "TPF-05",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.lesson.live_lesson_replanning",
+        "aliases": [
+          "INV-027"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Teaching Controller + Lesson Planner",
+        "activeFamily": "TPF-05",
+        "candidateFamily": "TPF-05",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.lesson.live_instructional_state_transition",
+        "aliases": [
+          "INV-028"
+        ],
+        "authorityCeiling": "T0",
+        "owner": "Teaching Controller",
+        "activeFamily": null,
+        "candidateFamily": null,
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.lesson.autonomous_teacher_led_class_progression",
+        "aliases": [
+          "INV-029"
+        ],
+        "authorityCeiling": "T0",
+        "owner": "Teaching Controller",
+        "activeFamily": null,
+        "candidateFamily": null,
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.lesson.response_correctness_quality_evaluation",
+        "aliases": [
+          "INV-030"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Response Evaluator",
+        "activeFamily": "TPF-06",
+        "candidateFamily": "TPF-21",
+        "candidateModes": [
+          "interpret_response"
+        ],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.lesson.response_error_taxonomy_classification",
+        "aliases": [
+          "INV-031"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Response Evaluator",
+        "activeFamily": "TPF-06",
+        "candidateFamily": "TPF-21",
+        "candidateModes": [
+          "interpret_response"
+        ],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.lesson.correct_but_insufficient_evidence_detection",
+        "aliases": [
+          "INV-032"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Response Evaluator",
+        "activeFamily": "TPF-06",
+        "candidateFamily": "TPF-21",
+        "candidateModes": [
+          "interpret_response"
+        ],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.lesson.partial_response_decomposition",
+        "aliases": [
+          "INV-033"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Response Evaluator",
+        "activeFamily": "TPF-06",
+        "candidateFamily": "TPF-21",
+        "candidateModes": [
+          "interpret_response"
+        ],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.lesson.procedural_slip_detection",
+        "aliases": [
+          "INV-034"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Response Evaluator",
+        "activeFamily": "TPF-06",
+        "candidateFamily": "TPF-21",
+        "candidateModes": [
+          "interpret_response"
+        ],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.lesson.misconception_detection",
+        "aliases": [
+          "INV-035"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Response Evaluator",
+        "activeFamily": "TPF-06",
+        "candidateFamily": "TPF-21",
+        "candidateModes": [
+          "interpret_response"
+        ],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.lesson.prerequisite_failure_detection",
+        "aliases": [
+          "INV-036"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Response Evaluator",
+        "activeFamily": "TPF-06",
+        "candidateFamily": "TPF-21",
+        "candidateModes": [
+          "interpret_response"
+        ],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.lesson.next_pedagogical_action_recommendation",
+        "aliases": [
+          "INV-037"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Pedagogy/Controller",
+        "activeFamily": "TPF-07",
+        "candidateFamily": "TPF-21",
+        "candidateModes": [
+          "coordinate_lesson",
+          "interpret_response"
+        ],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.lesson.hint_level_selection",
+        "aliases": [
+          "INV-038"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Pedagogy Engine",
+        "activeFamily": "TPF-07",
+        "candidateFamily": "TPF-21",
+        "candidateModes": [
+          "coordinate_lesson"
+        ],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.lesson.fresh_verification_task_selection_after_answer_exposure",
+        "aliases": [
+          "INV-039"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Pedagogy/Practice",
+        "activeFamily": "TPF-04",
+        "candidateFamily": "TPF-21",
+        "candidateModes": [
+          "design_check"
+        ],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.lesson.productive_struggle_intervention_decision",
+        "aliases": [
+          "INV-040"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Pedagogy/Controller",
+        "activeFamily": "TPF-07",
+        "candidateFamily": "TPF-21",
+        "candidateModes": [
+          "coordinate_lesson"
+        ],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.lesson.representation_change_strategy",
+        "aliases": [
+          "INV-041"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Pedagogy Engine",
+        "activeFamily": "TPF-07",
+        "candidateFamily": "TPF-21",
+        "candidateModes": [
+          "coordinate_lesson",
+          "prepare_guidance"
+        ],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.lesson.blocked_diagnosis_proposal",
+        "aliases": [
+          "INV-042"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "SKM/Pedagogy",
+        "activeFamily": "TPF-07",
+        "candidateFamily": "TPF-21",
+        "candidateModes": [
+          "interpret_response",
+          "coordinate_lesson"
+        ],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.lesson.teacher_self_correction_analysis",
+        "aliases": [
+          "INV-043"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "AI Teacher/Content Integrity",
+        "activeFamily": "TPF-08",
+        "candidateFamily": "TPF-08",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.lesson.teacher_source_grounding_selection",
+        "aliases": [
+          "INV-044"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "AI Teacher",
+        "activeFamily": "TPF-08",
+        "candidateFamily": "TPF-08",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.lesson.lesson_closure_analysis",
+        "aliases": [
+          "INV-045"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Lesson Planner/SKM",
+        "activeFamily": "TPF-05",
+        "candidateFamily": "TPF-05",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.lesson.student_facing_class_summary_generation",
+        "aliases": [
+          "INV-046"
+        ],
+        "authorityCeiling": "T1",
+        "owner": "AI Teacher/Translation",
+        "activeFamily": "TPF-19",
+        "candidateFamily": "TPF-19",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.lesson.internal_post_class_teacher_note_generation",
+        "aliases": [
+          "INV-047"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Lesson Planner/SKM",
+        "activeFamily": "TPF-09",
+        "candidateFamily": "TPF-09",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.pedagogy.pedagogical_profile_classification",
+        "aliases": [
+          "INV-048"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Pedagogy Engine",
+        "activeFamily": "TPF-07",
+        "candidateFamily": "TPF-21",
+        "candidateModes": [
+          "prepare_guidance"
+        ],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.pedagogy.subject_sensitive_instructional_strategy",
+        "aliases": [
+          "INV-049"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Pedagogy Engine",
+        "activeFamily": "TPF-07",
+        "candidateFamily": "TPF-21",
+        "candidateModes": [
+          "prepare_guidance",
+          "coordinate_lesson"
+        ],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.pedagogy.worked_example_scaffolding_design",
+        "aliases": [
+          "INV-050"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Pedagogy Engine",
+        "activeFamily": "TPF-07",
+        "candidateFamily": "TPF-21",
+        "candidateModes": [
+          "prepare_guidance"
+        ],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.pedagogy.conceptual_conflict_misconception_repair",
+        "aliases": [
+          "INV-051"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Pedagogy Engine",
+        "activeFamily": "TPF-07",
+        "candidateFamily": "TPF-21",
+        "candidateModes": [
+          "interpret_response",
+          "coordinate_lesson"
+        ],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.pedagogy.surgical_micro_remediation_design",
+        "aliases": [
+          "INV-052"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Pedagogy Engine",
+        "activeFamily": "TPF-07",
+        "candidateFamily": "TPF-21",
+        "candidateModes": [
+          "coordinate_lesson"
+        ],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.pedagogy.subject_appropriate_evidence_task_design",
+        "aliases": [
+          "INV-053"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Pedagogy/Assessment",
+        "activeFamily": "TPF-07",
+        "candidateFamily": "TPF-21",
+        "candidateModes": [
+          "design_check",
+          "guide_assessment"
+        ],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.pedagogy.knowledge_type_sensitive_review_strategy",
+        "aliases": [
+          "INV-054"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Pedagogy/SKM",
+        "activeFamily": "TPF-07",
+        "candidateFamily": "TPF-21",
+        "candidateModes": [
+          "prepare_guidance",
+          "prepare_continuity",
+          "guide_assessment"
+        ],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.pedagogy.natural_teacher_explanation_generation",
+        "aliases": [
+          "INV-055"
+        ],
+        "authorityCeiling": "T1",
+        "owner": "AI Teacher",
+        "activeFamily": "TPF-08",
+        "candidateFamily": "TPF-08",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.pedagogy.teacher_questioning_probing_generation",
+        "aliases": [
+          "INV-056"
+        ],
+        "authorityCeiling": "T1",
+        "owner": "AI Teacher",
+        "activeFamily": "TPF-08",
+        "candidateFamily": "TPF-08",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.pedagogy.hint_wording_generation",
+        "aliases": [
+          "INV-057"
+        ],
+        "authorityCeiling": "T1",
+        "owner": "AI Teacher",
+        "activeFamily": "TPF-08",
+        "candidateFamily": "TPF-08",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.pedagogy.example_analogy_generation",
+        "aliases": [
+          "INV-058"
+        ],
+        "authorityCeiling": "T1",
+        "owner": "AI Teacher",
+        "activeFamily": "TPF-08",
+        "candidateFamily": "TPF-08",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.pedagogy.outside_class_teacher_q_a",
+        "aliases": [
+          "INV-059"
+        ],
+        "authorityCeiling": "T1",
+        "owner": "AI Teacher",
+        "activeFamily": "TPF-08",
+        "candidateFamily": "TPF-08",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.pedagogy.teacher_interaction_style_adaptation",
+        "aliases": [
+          "INV-060"
+        ],
+        "authorityCeiling": "T1",
+        "owner": "Teacher Identity/AI Teacher",
+        "activeFamily": "TPF-08",
+        "candidateFamily": "TPF-08",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.pedagogy.specific_evidence_based_praise_generation",
+        "aliases": [
+          "INV-061"
+        ],
+        "authorityCeiling": "T1",
+        "owner": "AI Teacher",
+        "activeFamily": "TPF-08",
+        "candidateFamily": "TPF-08",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.pedagogy.challenge_accountability_communication",
+        "aliases": [
+          "INV-062"
+        ],
+        "authorityCeiling": "T1",
+        "owner": "AI Teacher",
+        "activeFamily": "TPF-08",
+        "candidateFamily": "TPF-08",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.pedagogy.context_sensitive_humor_register_choice",
+        "aliases": [
+          "INV-063"
+        ],
+        "authorityCeiling": "T1",
+        "owner": "Teacher Identity/AI Teacher",
+        "activeFamily": "TPF-08",
+        "candidateFamily": "TPF-08",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.pedagogy.teacher_identity_profile_generation_assignment",
+        "aliases": [
+          "INV-064"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Teacher Identity",
+        "activeFamily": "TPF-18",
+        "candidateFamily": "TPF-18",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.pedagogy.teacher_change_transition_generation",
+        "aliases": [
+          "INV-065"
+        ],
+        "authorityCeiling": "T1",
+        "owner": "Teacher Identity/Request",
+        "activeFamily": "TPF-18",
+        "candidateFamily": "TPF-18",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.pedagogy.board_instructional_content_generation",
+        "aliases": [
+          "INV-066"
+        ],
+        "authorityCeiling": "T1",
+        "owner": "AI Teacher/Classroom",
+        "activeFamily": "TPF-08",
+        "candidateFamily": "TPF-08",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.pedagogy.learning_analysis_translation",
+        "aliases": [
+          "INV-067"
+        ],
+        "authorityCeiling": "T1",
+        "owner": "Translation Layer",
+        "activeFamily": "TPF-19",
+        "candidateFamily": "TPF-19",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.evidence.evidence_event_interpretation",
+        "aliases": [
+          "INV-068"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "SKM/Evidence",
+        "activeFamily": "TPF-09",
+        "candidateFamily": "TPF-09",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.evidence.evidence_quality_weighting_proposal",
+        "aliases": [
+          "INV-069"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "SKM",
+        "activeFamily": "TPF-09",
+        "candidateFamily": "TPF-09",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.evidence.knowledge_state_update",
+        "aliases": [
+          "INV-070"
+        ],
+        "authorityCeiling": "T0",
+        "owner": "SKM State Engine",
+        "activeFamily": null,
+        "candidateFamily": null,
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.evidence.fragile_detection",
+        "aliases": [
+          "INV-071"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "SKM",
+        "activeFamily": "TPF-09",
+        "candidateFamily": "TPF-09",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.evidence.regressed_detection",
+        "aliases": [
+          "INV-072"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "SKM",
+        "activeFamily": "TPF-09",
+        "candidateFamily": "TPF-09",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.evidence.misconception_record_synthesis",
+        "aliases": [
+          "INV-073"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "SKM",
+        "activeFamily": "TPF-09",
+        "candidateFamily": "TPF-09",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.evidence.confidence_calibration_interpretation",
+        "aliases": [
+          "INV-074"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "SKM",
+        "activeFamily": "TPF-09",
+        "candidateFamily": "TPF-09",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.evidence.path_to_success_memory_extraction",
+        "aliases": [
+          "INV-075"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "SKM/Pedagogy",
+        "activeFamily": "TPF-09",
+        "candidateFamily": "TPF-09",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.evidence.retention_check_scheduling_recommendation",
+        "aliases": [
+          "INV-076"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "SKM/Lesson Planner",
+        "activeFamily": "TPF-09",
+        "candidateFamily": "TPF-09",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.evidence.transfer_evidence_interpretation",
+        "aliases": [
+          "INV-077"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "SKM",
+        "activeFamily": "TPF-09",
+        "candidateFamily": "TPF-09",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.evidence.independence_evidence_interpretation",
+        "aliases": [
+          "INV-078"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "SKM",
+        "activeFamily": "TPF-09",
+        "candidateFamily": "TPF-09",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.evidence.pre_class_skm_synthesis_for_planning",
+        "aliases": [
+          "INV-079"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "SKM/Lesson Planner",
+        "activeFamily": "TPF-09",
+        "candidateFamily": "TPF-09",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.evidence.assessment_result_learning_interpretation",
+        "aliases": [
+          "INV-080"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "SKM",
+        "activeFamily": "TPF-09",
+        "candidateFamily": "TPF-09",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.evidence.learning_evidence_contradiction_detection",
+        "aliases": [
+          "INV-081"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "SKM",
+        "activeFamily": "TPF-09",
+        "candidateFamily": "TPF-09",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.evidence.student_identity_safeguard",
+        "aliases": [
+          "INV-082"
+        ],
+        "authorityCeiling": "T0",
+        "owner": "SKM Policy",
+        "activeFamily": null,
+        "candidateFamily": null,
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.scheduling.initial_timetable_proposal",
+        "aliases": [
+          "INV-083"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Scheduler",
+        "activeFamily": "TPF-10",
+        "candidateFamily": "TPF-10",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.scheduling.schedule_feasibility_calculation",
+        "aliases": [
+          "INV-084"
+        ],
+        "authorityCeiling": "T0",
+        "owner": "Scheduler",
+        "activeFamily": null,
+        "candidateFamily": null,
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.scheduling.instructional_load_estimation",
+        "aliases": [
+          "INV-085"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Curriculum/Scheduler",
+        "activeFamily": "TPF-10",
+        "candidateFamily": "TPF-10",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.scheduling.schedule_debt_interpretation",
+        "aliases": [
+          "INV-086"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Scheduler",
+        "activeFamily": "TPF-10",
+        "candidateFamily": "TPF-10",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.scheduling.rolling_planning_horizon_adjustment",
+        "aliases": [
+          "INV-087"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Scheduler/Lesson Planner",
+        "activeFamily": "TPF-05",
+        "candidateFamily": "TPF-05",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.scheduling.ahead_of_schedule_response_planning",
+        "aliases": [
+          "INV-088"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Scheduler/Curriculum",
+        "activeFamily": "TPF-10",
+        "candidateFamily": "TPF-10",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.scheduling.behind_schedule_cause_diagnosis",
+        "aliases": [
+          "INV-089"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Scheduler/Pedagogy",
+        "activeFamily": "TPF-10",
+        "candidateFamily": "TPF-10",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.scheduling.recovery_option_proposal",
+        "aliases": [
+          "INV-090"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Scheduler",
+        "activeFamily": "TPF-10",
+        "candidateFamily": "TPF-10",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.scheduling.multi_course_workload_arbitration",
+        "aliases": [
+          "INV-091"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Global Scheduler",
+        "activeFamily": "TPF-10",
+        "candidateFamily": "TPF-10",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.scheduling.impossible_multi_course_state_detection",
+        "aliases": [
+          "INV-092"
+        ],
+        "authorityCeiling": "T0",
+        "owner": "Global Scheduler",
+        "activeFamily": null,
+        "candidateFamily": null,
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.scheduling.schedule_change_alternative_proposal",
+        "aliases": [
+          "INV-093"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Request/Scheduler",
+        "activeFamily": "TPF-10",
+        "candidateFamily": "TPF-10",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.scheduling.lateness_lesson_replanning",
+        "aliases": [
+          "INV-094"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Teaching Controller/Lesson Planner",
+        "activeFamily": "TPF-05",
+        "candidateFamily": "TPF-05",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.scheduling.makeup_re_entry_diagnostic_design",
+        "aliases": [
+          "INV-095"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Lesson Planner",
+        "activeFamily": "TPF-04",
+        "candidateFamily": "TPF-21",
+        "candidateModes": [
+          "design_check"
+        ],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.scheduling.attendance_outcome_determination",
+        "aliases": [
+          "INV-096"
+        ],
+        "authorityCeiling": "T0",
+        "owner": "Attendance Ledger",
+        "activeFamily": null,
+        "candidateFamily": null,
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.scheduling.inactivity_contextual_interpretation",
+        "aliases": [
+          "INV-097"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Attendance/Controller",
+        "activeFamily": "TPF-10",
+        "candidateFamily": "TPF-10",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.scheduling.purposeful_homework_selection_generation",
+        "aliases": [
+          "INV-098"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Lesson Planner/Homework",
+        "activeFamily": "TPF-05",
+        "candidateFamily": "TPF-05",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.scheduling.homework_workload_estimation",
+        "aliases": [
+          "INV-099"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Homework/Scheduler",
+        "activeFamily": "TPF-10",
+        "candidateFamily": "TPF-10",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.scheduling.homework_assistance_policy_interpretation",
+        "aliases": [
+          "INV-100"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Integrity Policy",
+        "activeFamily": "TPF-11",
+        "candidateFamily": "TPF-11",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.scheduling.homework_independent_work_evaluation",
+        "aliases": [
+          "INV-101"
+        ],
+        "authorityCeiling": "T4",
+        "owner": "Assessment/Homework Evaluator",
+        "activeFamily": "TPF-15",
+        "candidateFamily": "TPF-15",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.scheduling.long_form_authenticity_verification_task_generation",
+        "aliases": [
+          "INV-102"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Integrity/Assessment",
+        "activeFamily": "TPF-11",
+        "candidateFamily": "TPF-11",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.scheduling.similarity_plagiarism_interpretation",
+        "aliases": [
+          "INV-103"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Integrity",
+        "activeFamily": "TPF-11",
+        "candidateFamily": "TPF-11",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.scheduling.homework_to_next_lesson_synthesis",
+        "aliases": [
+          "INV-104"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Lesson Planner",
+        "activeFamily": "TPF-05",
+        "candidateFamily": "TPF-05",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.assessment_purpose_measurement_design",
+        "aliases": [
+          "INV-105"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Assessment Planner",
+        "activeFamily": "TPF-12",
+        "candidateFamily": "TPF-12",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.assessment_blueprint_generation",
+        "aliases": [
+          "INV-106"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Assessment Planner",
+        "activeFamily": "TPF-12",
+        "candidateFamily": "TPF-12",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.assessment_eligibility_decision",
+        "aliases": [
+          "INV-107"
+        ],
+        "authorityCeiling": "T0",
+        "owner": "Assessment Eligibility Ledger",
+        "activeFamily": null,
+        "candidateFamily": null,
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.dynamic_mark_allocation_proposal",
+        "aliases": [
+          "INV-108"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Assessment Planner",
+        "activeFamily": "TPF-12",
+        "candidateFamily": "TPF-12",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.diagnostic_assessment_generation",
+        "aliases": [
+          "INV-109"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Assessment Generator",
+        "activeFamily": "TPF-13",
+        "candidateFamily": "TPF-13",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.classwork_assessment_generation",
+        "aliases": [
+          "INV-110"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Assessment Generator",
+        "activeFamily": "TPF-13",
+        "candidateFamily": "TPF-13",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.scheduled_test_generation",
+        "aliases": [
+          "INV-111"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Assessment Generator",
+        "activeFamily": "TPF-13",
+        "candidateFamily": "TPF-13",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.mid_semester_assessment_generation",
+        "aliases": [
+          "INV-112"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Assessment Generator",
+        "activeFamily": "TPF-13",
+        "candidateFamily": "TPF-13",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.final_examination_generation",
+        "aliases": [
+          "INV-113"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Assessment Generator",
+        "activeFamily": "TPF-13",
+        "candidateFamily": "TPF-13",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.impromptu_assessment_selection_design",
+        "aliases": [
+          "INV-114"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Assessment Planner/Controller",
+        "activeFamily": "TPF-12",
+        "candidateFamily": "TPF-12",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.assessment_question_family_selection",
+        "aliases": [
+          "INV-115"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Assessment Planner",
+        "activeFamily": "TPF-12",
+        "candidateFamily": "TPF-12",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.misconception_based_distractor_generation",
+        "aliases": [
+          "INV-116"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Assessment Generator",
+        "activeFamily": "TPF-13",
+        "candidateFamily": "TPF-13",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.constructed_response_item_generation",
+        "aliases": [
+          "INV-117"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Assessment Generator",
+        "activeFamily": "TPF-13",
+        "candidateFamily": "TPF-13",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.rubric_mark_scheme_generation",
+        "aliases": [
+          "INV-118"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Assessment Planner",
+        "activeFamily": "TPF-12",
+        "candidateFamily": "TPF-12",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.question_validation",
+        "aliases": [
+          "INV-119"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Assessment Validator",
+        "activeFamily": "TPF-14",
+        "candidateFamily": "TPF-14",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.independent_solution_verification",
+        "aliases": [
+          "INV-120"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Assessment Validator",
+        "activeFamily": "TPF-14",
+        "candidateFamily": "TPF-14",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.objective_answer_key_verification",
+        "aliases": [
+          "INV-121"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Assessment Validator",
+        "activeFamily": "TPF-14",
+        "candidateFamily": "TPF-14",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.code_item_test_case_validation",
+        "aliases": [
+          "INV-122"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Assessment Validator",
+        "activeFamily": "TPF-14",
+        "candidateFamily": "TPF-14",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.interpretive_rubric_defensibility_review",
+        "aliases": [
+          "INV-123"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Assessment Validator",
+        "activeFamily": "TPF-14",
+        "candidateFamily": "TPF-14",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.high_stakes_whole_package_review",
+        "aliases": [
+          "INV-124"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Assessment Validator",
+        "activeFamily": "TPF-14",
+        "candidateFamily": "TPF-14",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.assessment_package_locking",
+        "aliases": [
+          "INV-125"
+        ],
+        "authorityCeiling": "T0",
+        "owner": "Assessment Attempt/Package",
+        "activeFamily": null,
+        "candidateFamily": null,
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.equivalent_assessment_variant_generation",
+        "aliases": [
+          "INV-126"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Assessment Generator",
+        "activeFamily": "TPF-13",
+        "candidateFamily": "TPF-13",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.predicted_item_difficulty_estimation",
+        "aliases": [
+          "INV-127"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Assessment Analytics",
+        "activeFamily": "TPF-14",
+        "candidateFamily": "TPF-14",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.assessment_clarification_classification",
+        "aliases": [
+          "INV-128"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Assessment Controller",
+        "activeFamily": "TPF-14",
+        "candidateFamily": "TPF-14",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.assessment_interruption_cause_classification",
+        "aliases": [
+          "INV-129"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Assessment Controller/Reliability",
+        "activeFamily": "TPF-14",
+        "candidateFamily": "TPF-14",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.deterministic_objective_marking",
+        "aliases": [
+          "INV-130"
+        ],
+        "authorityCeiling": "T0",
+        "owner": "Assessment Evaluator",
+        "activeFamily": null,
+        "candidateFamily": null,
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.constructed_response_rubric_marking",
+        "aliases": [
+          "INV-131"
+        ],
+        "authorityCeiling": "T4",
+        "owner": "Assessment Evaluator",
+        "activeFamily": "TPF-15",
+        "candidateFamily": "TPF-15",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.criterion_based_partial_credit_allocation",
+        "aliases": [
+          "INV-132"
+        ],
+        "authorityCeiling": "T4",
+        "owner": "Assessment Evaluator",
+        "activeFamily": "TPF-15",
+        "candidateFamily": "TPF-15",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.alternative_valid_answer_recognition",
+        "aliases": [
+          "INV-133"
+        ],
+        "authorityCeiling": "T4",
+        "owner": "Assessment Evaluator",
+        "activeFamily": "TPF-15",
+        "candidateFamily": "TPF-15",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.high_stakes_moderation_consistency_review",
+        "aliases": [
+          "INV-134"
+        ],
+        "authorityCeiling": "T4",
+        "owner": "Assessment Moderator",
+        "activeFamily": "TPF-16",
+        "candidateFamily": "TPF-16",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.borderline_moderation_needed_detection",
+        "aliases": [
+          "INV-135"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Assessment Moderator",
+        "activeFamily": "TPF-16",
+        "candidateFamily": "TPF-16",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.faulty_question_defect_review",
+        "aliases": [
+          "INV-136"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Assessment Validator",
+        "activeFamily": "TPF-14",
+        "candidateFamily": "TPF-14",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.student_question_challenge_review",
+        "aliases": [
+          "INV-137"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Assessment Validator",
+        "activeFamily": "TPF-14",
+        "candidateFamily": "TPF-14",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.appeal_re_evaluation",
+        "aliases": [
+          "INV-138"
+        ],
+        "authorityCeiling": "T4",
+        "owner": "Assessment Evaluator/Appeal",
+        "activeFamily": "TPF-16",
+        "candidateFamily": "TPF-16",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.assessment_result_feedback_generation",
+        "aliases": [
+          "INV-139"
+        ],
+        "authorityCeiling": "T1",
+        "owner": "AI Teacher/Assessment",
+        "activeFamily": "TPF-19",
+        "candidateFamily": "TPF-19",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.mixed_topic_rubric_decomposition",
+        "aliases": [
+          "INV-140"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Assessment Planner",
+        "activeFamily": "TPF-12",
+        "candidateFamily": "TPF-12",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.cumulative_coverage_selection",
+        "aliases": [
+          "INV-141"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Assessment Planner",
+        "activeFamily": "TPF-12",
+        "candidateFamily": "TPF-12",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.out_of_scope_untaught_dependency_detection",
+        "aliases": [
+          "INV-142"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Assessment Validator",
+        "activeFamily": "TPF-14",
+        "candidateFamily": "TPF-14",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.assessment.invalid_assessment_repair_proposal",
+        "aliases": [
+          "INV-143"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Assessment/Gradebook",
+        "activeFamily": "TPF-14",
+        "candidateFamily": "TPF-14",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.progression.gradebook_calculation",
+        "aliases": [
+          "INV-144"
+        ],
+        "authorityCeiling": "T0",
+        "owner": "Gradebook",
+        "activeFamily": null,
+        "candidateFamily": null,
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.progression.topic_score_evidence_mapping",
+        "aliases": [
+          "INV-145"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Gradebook/Assessment Lineage",
+        "activeFamily": "TPF-09",
+        "candidateFamily": "TPF-09",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.progression.evidence_sufficiency_provisional_status_decision",
+        "aliases": [
+          "INV-146"
+        ],
+        "authorityCeiling": "T0",
+        "owner": "Gradebook Policy",
+        "activeFamily": null,
+        "candidateFamily": null,
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.progression.essential_learning_outcome_verification_interpretation",
+        "aliases": [
+          "INV-147"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Progression",
+        "activeFamily": "TPF-17",
+        "candidateFamily": "TPF-17",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.progression.improvement_pattern_analysis",
+        "aliases": [
+          "INV-148"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Learning Analysis",
+        "activeFamily": "TPF-09",
+        "candidateFamily": "TPF-09",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.progression.certification_readiness_synthesis",
+        "aliases": [
+          "INV-149"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Progression Engine",
+        "activeFamily": "TPF-17",
+        "candidateFamily": "TPF-17",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.progression.progression_outcome_determination",
+        "aliases": [
+          "INV-150"
+        ],
+        "authorityCeiling": "T0",
+        "owner": "Progression Engine",
+        "activeFamily": null,
+        "candidateFamily": null,
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.progression.targeted_remediation_plan_generation",
+        "aliases": [
+          "INV-151"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Pedagogy/Progression",
+        "activeFamily": "TPF-17",
+        "candidateFamily": "TPF-17",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.progression.resit_preparation_plan_generation",
+        "aliases": [
+          "INV-152"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Pedagogy/Progression",
+        "activeFamily": "TPF-17",
+        "candidateFamily": "TPF-17",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.progression.targeted_verification_design_instead_of_whole_resit",
+        "aliases": [
+          "INV-153"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Assessment/Progression",
+        "activeFamily": "TPF-17",
+        "candidateFamily": "TPF-17",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.progression.recovery_programme_generation",
+        "aliases": [
+          "INV-154"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Pedagogy/Progression",
+        "activeFamily": "TPF-17",
+        "candidateFamily": "TPF-17",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.progression.repeat_course_diagnostic_compression_plan",
+        "aliases": [
+          "INV-155"
+        ],
+        "authorityCeiling": "T3",
+        "owner": "Curriculum/Pedagogy",
+        "activeFamily": "TPF-17",
+        "candidateFamily": "TPF-17",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.progression.final_topic_academic_interpretation",
+        "aliases": [
+          "INV-156"
+        ],
+        "authorityCeiling": "T2",
+        "owner": "Learning Analysis",
+        "activeFamily": "TPF-09",
+        "candidateFamily": "TPF-09",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.progression.final_academic_narrative_generation",
+        "aliases": [
+          "INV-157"
+        ],
+        "authorityCeiling": "T1",
+        "owner": "AI Teacher/Translation",
+        "activeFamily": "TPF-19",
+        "candidateFamily": "TPF-19",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.progression.progression_explanation_generation",
+        "aliases": [
+          "INV-158"
+        ],
+        "authorityCeiling": "T1",
+        "owner": "Translation Layer",
+        "activeFamily": "TPF-19",
+        "candidateFamily": "TPF-19",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.crosscutting.student_facing_explanation_of_authoritative_decisions",
+        "aliases": [
+          "INV-159"
+        ],
+        "authorityCeiling": "T1",
+        "owner": "Translation Layer",
+        "activeFamily": "TPF-19",
+        "candidateFamily": "TPF-19",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.crosscutting.request_rationale_alternative_explanation",
+        "aliases": [
+          "INV-160"
+        ],
+        "authorityCeiling": "T1",
+        "owner": "Translation Layer",
+        "activeFamily": "TPF-19",
+        "candidateFamily": "TPF-19",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.crosscutting.course_coverage_explanation",
+        "aliases": [
+          "INV-161"
+        ],
+        "authorityCeiling": "T1",
+        "owner": "Translation Layer",
+        "activeFamily": "TPF-19",
+        "candidateFamily": "TPF-19",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.crosscutting.system_ai_failure_recovery_messaging",
+        "aliases": [
+          "INV-162"
+        ],
+        "authorityCeiling": "T1",
+        "owner": "Reliability/Translation",
+        "activeFamily": "TPF-19",
+        "candidateFamily": "TPF-19",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.crosscutting.model_output_schema_domain_validation",
+        "aliases": [
+          "INV-163"
+        ],
+        "authorityCeiling": "T0",
+        "owner": "Domain Validation",
+        "activeFamily": null,
+        "candidateFamily": null,
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.crosscutting.model_output_provenance_version_capture",
+        "aliases": [
+          "INV-164"
+        ],
+        "authorityCeiling": "T0",
+        "owner": "Observability/Audit",
+        "activeFamily": null,
+        "candidateFamily": null,
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.crosscutting.untrusted_content_instruction_isolation",
+        "aliases": [
+          "INV-165"
+        ],
+        "authorityCeiling": "T0",
+        "owner": "Security Boundary",
+        "activeFamily": null,
+        "candidateFamily": null,
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.preparation.workspace_state_transition",
+        "aliases": [],
+        "authorityCeiling": "T0",
+        "owner": "Preparation Runtime / target domain owner gate",
+        "activeFamily": null,
+        "candidateFamily": null,
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.preparation.materiality_staleness_reconciliation",
+        "aliases": [],
+        "authorityCeiling": "T0",
+        "owner": "Preparation Runtime + referenced authoritative domain versions",
+        "activeFamily": null,
+        "candidateFamily": null,
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.preparation.finalization_readiness_gate",
+        "aliases": [],
+        "authorityCeiling": "T0",
+        "owner": "Preparation Runtime + target authoritative owner",
+        "activeFamily": null,
+        "candidateFamily": null,
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.preparation.protected_content_isolation",
+        "aliases": [],
+        "authorityCeiling": "T0",
+        "owner": "Security / context-assembly boundary",
+        "activeFamily": null,
+        "candidateFamily": null,
+        "candidateModes": [],
+        "retirementAuthorized": false
+      },
+      {
+        "id": "teaching.study.class_grounded_note_generation",
+        "aliases": [],
+        "authorityCeiling": "T3",
+        "owner": "Teaching Study Pack publication owner",
+        "activeFamily": "TPF-20",
+        "candidateFamily": "TPF-20",
+        "candidateModes": [],
+        "retirementAuthorized": false
+      }
+    ],
+    "counts": {
+      "families": 21,
+      "capabilities": 170,
+      "modelEligible": 148,
+      "replacementBindings": 22,
+      "retiredActiveBindings": 0
+    }
+  },
+  "sha256": "8a0d5aedf1eb177f3c5a2e85f8c70c6df2f92b1921dc175a37626b576335a759"
+}

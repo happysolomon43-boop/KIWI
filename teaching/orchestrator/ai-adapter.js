@@ -19,12 +19,13 @@ function executionProfileForInvocation(invocation){
   :null;
 }
 
-function createTeachingAIAdapter({promptControl,aiBoundary,resolveCentralTaskId=null,assertRouteExecutable=null}={}){
+function createTeachingAIAdapter({promptControl,aiBoundary,resolveCentralTaskId=null,assertRouteExecutable=null,allowCandidateEvaluation=false}={}){
  if(!promptControl||typeof promptControl.createInvocation!=='function')throw new TypeError('Teaching AI adapter requires the D03 prompt control plane.');
  if(!aiBoundary||typeof aiBoundary.execute!=='function')throw new TypeError('Teaching AI adapter requires the D02 central AI execution boundary.');
  const routeGuard=assertRouteExecutable||((route)=>promptControl.assertRouteQualified(route));
- function prepare({envelope,taskMode,directive,contextLanes,contextAllowlist=null,outputSchema,capabilityCriticalityOverride=null,preparation=null}={}){if(!envelope?.capability?.id)throw new TypeError('Teaching AI adapter requires an execution envelope.');return promptControl.createInvocation({capabilityId:envelope.capability.id,taskMode,directive,contextLanes,contextAllowlist,stateReference:envelope.state_reference,outputSchema,capabilityCriticalityOverride,preparation,audit:{correlation_id:envelope.correlation_id,causation_id:envelope.causation_id}});}
+ function prepare({envelope,taskMode,directive,contextLanes,contextAllowlist=null,outputSchema,capabilityCriticalityOverride=null,preparation=null,candidatePromptBinding=null}={}){if(candidatePromptBinding&&!allowCandidateEvaluation)throw Object.assign(new Error('Candidate prompt execution requires an explicit isolated evaluation adapter'),{code:'CLASSROOM_CANDIDATE_EVALUATION_DISABLED'});if(!envelope?.capability?.id)throw new TypeError('Teaching AI adapter requires an execution envelope.');return promptControl.createInvocation({capabilityId:envelope.capability.id,taskMode,directive,contextLanes,contextAllowlist,stateReference:envelope.state_reference,outputSchema,capabilityCriticalityOverride,preparation,candidatePromptBinding,audit:{correlation_id:envelope.correlation_id,causation_id:envelope.causation_id}});}
  async function execute({invocation,academicInput={},generation={},schemaValidator,domainValidator,provenanceValidator=null,deterministicChecks=[],validationContext={},safeCommunicationFallback=null,signal=null,beforeAttempt=null}={}){
+  if(invocation?.prompt?.candidate_binding&&!allowCandidateEvaluation)throw Object.assign(new Error('Candidate execution is not authorized'),{code:'CLASSROOM_CANDIDATE_EVALUATION_DISABLED'});
   if(!invocation?.capability?.id)throw new TypeError('Teaching AI execution requires a prepared structural invocation.');
   if(authorityAtLeast(invocation.capability.authority_ceiling,'T2')&&typeof provenanceValidator!=='function'){const error=new Error('T2–T4 Teaching execution requires explicit provenance validation.');error.code='TEACHING_D05_PROVENANCE_VALIDATOR_REQUIRED';throw error;}
   const d28=getD28RuntimeService();let lease=null,completed=false;
