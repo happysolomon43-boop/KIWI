@@ -141,7 +141,7 @@ function createD11Service({
   function publicContext(context, now = clock()) {
     if (!context) return null;
     const time=classTimeEnvelope({
-      scheduledStartAt:recoveryStart||context.classRow.scheduled_start_at,
+      scheduledStartAt:context.classRow.scheduled_start_at,
       scheduledEndAt:context.classRow.scheduled_end_at,
       overtimeCeilingAt:context.session?.overtime_ceiling_at || null,
       serverNow:now,
@@ -375,9 +375,11 @@ function createD11Service({
       }
       throw error;
     }
+    // Validate against exactly the same remaining live window used for model
+    // planning. The authoritative Class schedule is never rewritten.
     const validation=validateLessonBlueprintProposal(output,{
       learningUnits:context.learningUnits,
-      scheduledStartAt:context.classRow.scheduled_start_at,
+      scheduledStartAt:recoveryStart||context.classRow.scheduled_start_at,
       scheduledEndAt:context.classRow.scheduled_end_at,
       ...(reservePolicy ? { reservePolicy } : {}),
     });
