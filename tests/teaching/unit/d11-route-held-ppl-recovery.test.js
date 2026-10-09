@@ -50,7 +50,7 @@ test('D11 parent-fenced artifact capture does not universally reject an existing
  const section=source.slice(source.indexOf('  async function recordPreparationArtifactUsing('),
    source.indexOf('  async function getPreparationArtifactPayload('));
  assert.match(section,/allowLateStartRecovery===true/);
- assert.match(section,/lateStartRecoveryEligibility\(\{classRow:klass,session,now:clock\(\)\}\)\.allowed/);
+ assert.match(section,/lateStartRecoveryEligibility\(\{classRow:klass,plan,session,now:clock\(\)\}\)\.allowed/);
  assert.match(section,/\(!session \|\| \(allowLateStartRecovery===true/);
  assert.match(section,/klass\.source_timetable_state==='APPROVED'/);
  assert.match(section,/workspace\.lifecycle_state==='ACTIVE'/);
