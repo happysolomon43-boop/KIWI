@@ -1559,16 +1559,27 @@ function createD11LessonControllerRepository({
         // inherited as finalized without a fresh owner commit.
         const stages=['SKELETON','STRUCTURED','CANDIDATE'];
         const index=Math.min(2,Math.max(0,stages.indexOf(decision.sourceMaturity||'SKELETON')));
+        // Record the validated draft's new current version, not the previous
+        // workspace version from before artifact capture. Every maturity
+        // transition is CAS-fenced and must actually commit.
+        let expectedWorkspaceVersion=Number(copy.workspace.state_version);
         for(let i=1;i<=index;i++){
           const from=stages[i-1],to=stages[i];
-          evaluateWorkspaceTransition({
+          const decisionForStage=evaluateWorkspaceTransition({
             currentLifecycle:'ACTIVE',currentMaturity:from,nextMaturity:to,
             gateResults:[{id:'d11-inherited-artifact-new-authority-validated',passed:true}],
             routePosture:to==='CANDIDATE'?'strong_design':'bounded_interpretive',
           });
-          await tx.query(
-            "update teaching_preparation.workspaces set maturity_stage=$2,state_version=state_version+1,updated_at=now() where workspace_id=$1 and maturity_stage=$3",
-            [prep.workspace.workspace_id,to,from]);
+          const advanced=await tx.query(
+            "update teaching_preparation.workspaces set maturity_stage=$2,state_version=state_version+1,updated_at=now()"+
+            " where workspace_id=$1 and maturity_stage=$3 and state_version=$4 and lifecycle_state='ACTIVE' returning state_version",
+            [prep.workspace.workspace_id,decisionForStage.nextMaturity,from,expectedWorkspaceVersion]);
+          if(advanced.rows?.length!==1){
+            const e=new Error('Validated inherited PPL maturity changed before commit.');
+            e.code='TEACHING_D11_PPL_INHERITANCE_VERSION_CONFLICT';
+            e.status=409;throw e;
+          }
+          expectedWorkspaceVersion=Number(advanced.rows[0].state_version);
         }
       }
       await tx.query(`
