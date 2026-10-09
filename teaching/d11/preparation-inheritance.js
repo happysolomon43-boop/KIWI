@@ -46,7 +46,7 @@ function retimeCompatibleDraft(payload,{source,target,learningUnits}){
 function evaluateLessonInheritance({
   source,target,plan,sourceSlot,targetSlot,sourceBlueprint=null,
   sourcePreparation=null,learningUnits=[],sourceHasSession=false,targetHasSession=false,
-  now=new Date(),requestId=null,
+  now=new Date(),requestId=null,approvedRequest=null,
 }={}){
   const blocked=reason=>Object.freeze({mode:'FRESH_PREPARATION',reason});
   if(!source||!target||!plan)return blocked('INCOMPLETE_AUTHORITY');
@@ -56,8 +56,19 @@ function evaluateLessonInheritance({
   if(source.lifecycle_state!=='CANCELLED'||target.lifecycle_state!=='SCHEDULED'
     ||target.course_lifecycle_state!=='ACTIVE'||target.source_timetable_state!=='APPROVED')
     return blocked('NOT_CURRENT_APPROVED_REPLACEMENT');
-  if(requestId && (String(source.source_request_id||'')!==String(requestId)
-    ||String(target.source_request_id||'')!==String(requestId)))
+  // The OLD Class predates this request (its source_request_id may be null
+  // or refer to an earlier timetable). Only the replacement is created by
+  // this request. Validate the formal Request's old target and expected
+  // original Class version instead of requiring impossible old lineage.
+  if(!requestId||!approvedRequest
+    ||approvedRequest.request_id!==requestId
+    ||approvedRequest.student_id!==source.student_id
+    ||approvedRequest.course_id!==source.course_id
+    ||approvedRequest.request_type!=='SINGLE_CLASS_RESCHEDULE'
+    ||approvedRequest.target_ref!==source.class_id
+    ||approvedRequest.target_version_ref!=='class-schedule:'+String(source.schedule_version)
+    ||!approvedRequest.applied_at
+    ||String(target.source_request_id||'')!==String(requestId))
     return blocked('RESCHEDULE_REQUEST_MISMATCH');
   if(String(source.source_timetable_version_id||'')===String(target.source_timetable_version_id||''))
     return blocked('NO_TIMETABLE_REPLACEMENT');
