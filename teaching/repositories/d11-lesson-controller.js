@@ -85,7 +85,7 @@ function createD11LessonControllerRepository({
   async function loadLearningUnits(studentId, planId, runner = null) {
     if (!planId) return [];
     const { rows } = await q(runner,
-      "select * from public.teaching_learning_units where student_id=$1 and course_plan_id=$2 order by sequence_no,learning_unit_id",
+      "select * from public.teaching_learning_units where student_id=$1 and course_plan_id=$2 order by created_at,learning_unit_id",
       [studentId, planId]
     );
     return rows || [];

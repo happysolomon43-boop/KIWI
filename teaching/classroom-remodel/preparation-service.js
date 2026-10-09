@@ -35,7 +35,6 @@ function createClassroomPreparationService({repository,d11Repository,preparation
   const priorBinding=await repository.loadBinding(String(user.id),classId);
   if(expectedBindingVersion!==null&&String(priorBinding?.binding_version)!==String(expectedBindingVersion))c.fail('CLASSROOM_BINDING_REVISION_REQUIRED');
   const requirements=await getRequirements(context);const workflow=preparationWorkflow(requirements.profile);
-  const workspace=await d11Repository.ensurePreparationWorkspace({studentId:String(user.id),classId});if(!workspace?.workspace)c.fail('CLASSROOM_PPL_WORKSPACE_UNAVAILABLE');
   const parent=parentChapterId?await repository.loadArtifact(String(user.id),parentChapterId):null;
   if(parentChapterId&&(!parent||parent.class_id!==classId||parent.artifact_kind!=='chapter'))c.fail('CLASSROOM_CONTINUATION_PARENT_INVALID');
   const inherited=inheritChapterId?await repository.loadArtifact(String(user.id),inheritChapterId):null;
@@ -48,6 +47,8 @@ function createClassroomPreparationService({repository,d11Repository,preparation
   const cachedPlan=await repository.loadOperation(String(user.id),classId,'plan',operationKey+':plan');
   if(cachedPlan&&cachedPlan.validity_state!=='CURRENT')c.fail('CLASSROOM_PREPARATION_OPERATION_STALE');
   const cachedAuthor=cachedChapter||cachedPlan;
+  const recoverySnapshot=cachedAuthor?.workspace_id?await preparationRepository.getWorkspaceSnapshot(cachedAuthor.workspace_id):null;
+  const workspace=recoverySnapshot?.workspace?.lifecycle_state==='HANDED_OFF'&&recoverySnapshot.workspace.student_id===String(user.id)&&recoverySnapshot.workspace.target_ref===classId?recoverySnapshot:await d11Repository.ensurePreparationWorkspace({studentId:String(user.id),classId});if(!workspace?.workspace)c.fail('CLASSROOM_PPL_WORKSPACE_UNAVAILABLE');
   const output=cachedAuthor?cachedAuthor.generation_context:await intelligence.author({context,requirements,previousChapter:(reused||inherited||parent)?.payload||null,producer:producer('chapter'),workflow,operationKey:operationKey+':author'});validateAuthor(output,{mode:'pre_class_lesson_blueprint'});
   if(output.artifacts.chapter)validateDepth(output.artifacts.chapter,requirements.depth);
   if(!output.artifacts.chapter)return {prepared:false,published:false,hold:output.status};
