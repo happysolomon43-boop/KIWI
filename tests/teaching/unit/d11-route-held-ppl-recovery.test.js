@@ -17,14 +17,17 @@ const emptyProgress={
  completed_segment_refs:[],completed_objective_refs:[],evidence_event_refs:[],
  independent_evidence_objective_refs:[]
 };
+const plan={course_plan_id:'plan-1',version_no:3};
 const session={
+ course_plan_id:'plan-1',source_course_plan_version:3,
  lifecycle_state:'INTERRUPTED',instructional_substate:'INTERRUPTED',
  lesson_blueprint_id:null,resume_instructional_substate:null,
  source_course_state_version:10,source_class_schedule_version:28,
  source_timetable_version_id:'tt28',progress_state:emptyProgress
 };
 const eligibility=(minutes,override={})=>lateStartRecoveryEligibility({
- classRow:{...klass,...(override.klass||{})},session:override.session===undefined?session:override.session,
+ classRow:{...klass,...(override.klass||{})},plan:override.plan===undefined?plan:override.plan,
+ session:override.session===undefined?session:override.session,
  now:new Date(time+minutes*60000)
 });
 
@@ -42,6 +45,8 @@ test('Only never-taught route-held Controllers can complete validated PPL during
  assert.equal(eligibility(1,{session:{...session,resume_instructional_substate:'INSTRUCTION'}}).allowed,false);
  assert.equal(eligibility(1,{session:{...session,progress_state:{...emptyProgress,evidence_event_refs:['e1']}}}).allowed,false);
  assert.equal(eligibility(1,{session:{...session,source_timetable_version_id:'superseded'}}).reason,'ROUTE_HELD_AUTHORITY_STALE');
+ assert.equal(eligibility(1,{plan:{...plan,version_no:4}}).reason,'ROUTE_HELD_AUTHORITY_STALE');
+ assert.equal(eligibility(1,{plan:null}).allowed,false);
  assert.equal(eligibility(1,{klass:{source_timetable_state:'SUPERSEDED'}}).allowed,false);
 });
 
