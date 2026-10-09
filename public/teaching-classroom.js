@@ -205,8 +205,11 @@ async function joinCurrentClass(classId,host){
       }
     }catch(error){
       if(state.host!==host||state.classId!==classId)return;
-      state.joinNeedsConfirmation=true;
-      connectionFeedback('Your lesson is still available. KIWI could not confirm JOIN yet; use Check / Retry Join when the connection improves.');
+      const transient=error?.code==='KIWI_API_TIMEOUT'||error?.status==null||error.status>=500;
+      state.joinNeedsConfirmation=transient;
+      connectionFeedback(transient
+        ?'Your lesson is still available. KIWI could not confirm JOIN yet; use Check / Retry Join when the connection improves.'
+        :'KIWI could not confirm entry: '+(error?.message||'The current Class no longer permits JOIN.'));
       render();
     }
   })();
