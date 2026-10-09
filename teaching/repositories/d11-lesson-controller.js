@@ -1435,7 +1435,10 @@ function createD11LessonControllerRepository({
       const already=await latestBlueprint(studentId,toClassId,tx,true);
       if(already)return Object.freeze({mode:'ALREADY_PREPARED',reason:'TARGET_BLUEPRINT_EXISTS'});
       const targetWorkspace=await getPreparationWorkspace(studentId,toClassId,tx,true);
-      if(targetWorkspace?.current_artifact_version_ref)return Object.freeze({mode:'ALREADY_PREPARED',reason:'TARGET_ARTIFACT_EXISTS'});
+      // A provisional new-Class artifact must not suppress reuse of an older
+      // fully validated, still-compatible lesson. Decide the source quality
+      // first; only an inherited VALIDATED Blueprint may supersede provisional
+      // new-Class work (with all pending AI jobs fenced and audited).
       const {rows:oldBlueprints=[]}=await tx.query(
         "select * from public.teaching_lesson_blueprints where student_id=$1 and class_id=$2 and blueprint_state in ('VALIDATED','SUPERSEDED') order by version_no desc limit 1",
         [studentId,fromClassId]);
@@ -1462,20 +1465,24 @@ function createD11LessonControllerRepository({
         now:clock(),requestId,
       });
       if(decision.mode==='FRESH_PREPARATION')return decision;
+      if(decision.mode!=='INHERIT_VALIDATED_BLUEPRINT'
+        &&targetWorkspace?.current_artifact_version_ref)
+        return Object.freeze({mode:'ALREADY_PREPARED',reason:'TARGET_ARTIFACT_EXISTS'});
       const blueprint=decision.validatedContent;
       let newBlueprintId=null,newArtifactId=null;
       if(decision.mode==='INHERIT_VALIDATED_BLUEPRINT'){
         // An earlier REQUEST_APPLIED materiality pass may have seeded an
         // empty successor SKELETON. Retire it before publishing a completely
         // validated inherited Blueprint: otherwise D11 start would mistake
-        // the empty workspace for unfinished current lesson preparation.
-        if(targetWorkspace&&!targetWorkspace.current_artifact_version_ref){
+        // the unfinished (possibly already provisional) new preparation for
+        // an authoritative completed lesson that has independently revalidated.
+        if(targetWorkspace){
           await tx.query(`
             update teaching_preparation.workspaces set lifecycle_state='SUPERSEDED',
               cancellation_reason='BLUEPRINT_INHERITED_REVALIDATED',
               state_version=state_version+1,next_review_due_at=null,updated_at=now()
-            where workspace_id=$1 and state_version=$2 and lifecycle_state='ACTIVE'
-              and current_artifact_version_ref is null
+            where workspace_id=$1 and state_version=$2
+              and lifecycle_state in ('ACTIVE','FINALIZATION_DUE','FINALIZED')
           `,[targetWorkspace.workspace_id,targetWorkspace.state_version]);
           await tx.query(`
             update teaching_runtime.event_outbox set status='CANCELLED',
