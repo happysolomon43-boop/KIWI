@@ -318,7 +318,7 @@ function createD11Service({
     assertModelRoute();
     let context=await repository.getClassContext(user.id,classId);
     assertClassPlanningEligible(context);
-    if(allowLateStartRecovery && !lateStartRecoveryEligibility({classRow:context.classRow,session:context.session,now:clock()}).allowed)
+    if(allowLateStartRecovery && !lateStartRecoveryEligibility({classRow:context.classRow,plan:context.plan,session:context.session,now:clock()}).allowed)
       fail('Late Lesson recovery is outside its authorized live Class window.','TEACHING_D11_LATE_RECOVERY_NOT_ALLOWED',409);
     const prep=await repository.ensurePreparationWorkspace({studentId:user.id,classId,correlationId:requestKey});
     context=await repository.getClassContext(user.id,classId);
