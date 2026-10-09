@@ -10,7 +10,7 @@ const {TEACHING_EVENTS}=require('../../../teaching/events/names');
 const start='2027-04-15T11:00:00Z',end='2027-04-15T12:00:00Z';
 const source={
  class_id:'old-phy101',student_id:'student-1',course_id:'phy101',
- lifecycle_state:'CANCELLED',source_request_id:'reschedule-01',
+ lifecycle_state:'CANCELLED',source_request_id:null,
  scheduled_start_at:'2027-04-14T10:00:00Z',scheduled_end_at:'2027-04-14T11:00:00Z',
  schedule_version:12,source_timetable_version_id:'timetable-12',
  source_timetable_slot_id:'old-slot',course_state_version:4
@@ -54,10 +54,14 @@ const candidate={
  }
 };
 const base={source,target,plan,sourceSlot,targetSlot,learningUnits,sourceBlueprint:blueprint,
- now:new Date('2026-11-01T10:00:00Z'),requestId:'reschedule-01'};
+ now:new Date('2026-11-01T10:00:00Z'),requestId:'reschedule-01',
+ approvedRequest:{request_id:'reschedule-01',student_id:'student-1',course_id:'phy101',
+ request_type:'SINGLE_CLASS_RESCHEDULE',target_ref:'old-phy101',target_version_ref:'class-schedule:12',
+ applied_at:'2026-10-09T06:00:00Z'}};
 const assess=changes=>evaluateLessonInheritance({...base,...changes});
 
 test('Same-duration legitimate reschedule transfers revalidated lesson content, not academic status',()=>{
+ assert.equal(assess({source:{...source,source_request_id:'earlier-schedule-request'}}).mode,'INHERIT_VALIDATED_BLUEPRINT');
  const d=assess({});
  assert.equal(d.mode,'INHERIT_VALIDATED_BLUEPRINT');
  assert.equal(d.originBlueprintId,'b-old');
@@ -83,8 +87,8 @@ test('A shorter rescheduled Class preserves content as a provisional, safely ret
  assert.equal(d.reason,'DURATION_RETIMED_REQUIRES_FINAL_AI_RECONCILIATION');
  assert.equal(d.sourceMaturity,'CANDIDATE');
  assert.equal(d.validatedContent.scheduled_minutes,45);
- assert.equal(d.validatedContent.adaptive_reserve_minutes,7);
- assert.equal(d.validatedContent.segments[0].planned_minutes,38);
+ assert.equal(d.validatedContent.adaptive_reserve_minutes,6);
+ assert.equal(d.validatedContent.segments[0].planned_minutes,39);
  assert.equal(d.validatedContent.objectives[0].label,'Explain Newton laws');
  const impossible=assess({target:{...target,scheduled_end_at:'2027-04-15T11:09:00Z'}});
  assert.equal(impossible.mode,'FRESH_PREPARATION');
@@ -101,6 +105,9 @@ test('No reuse when topic, Plan, student, ownership, request, session or time di
  [{sourceHasSession:true},'SESSION_HISTORY_PROTECTED'],
  [{targetHasSession:true},'SESSION_HISTORY_PROTECTED'],
  [{target:{...target,source_request_id:'other-request'}},'RESCHEDULE_REQUEST_MISMATCH'],
+ [{approvedRequest:{...base.approvedRequest,target_ref:'unrelated-class'}},'RESCHEDULE_REQUEST_MISMATCH'],
+ [{approvedRequest:{...base.approvedRequest,target_version_ref:'class-schedule:11'}},'RESCHEDULE_REQUEST_MISMATCH'],
+ [{approvedRequest:null},'RESCHEDULE_REQUEST_MISMATCH'],
  [{source:{...source,lifecycle_state:'SCHEDULED'}},'NOT_CURRENT_APPROVED_REPLACEMENT'],
  [{target:{...target,source_timetable_version_id:'timetable-12'}},'NO_TIMETABLE_REPLACEMENT'],
  [{target:{...target,source_timetable_slot_id:'missing'}},'SLOT_AUTHORITY_CHANGED'],
@@ -204,6 +211,7 @@ test('D11 transactional repository really copies a newly versioned Blueprint and
      assert.equal(args[0],'student-1');
      return {rows:[v]};
    }
+   if(sql.includes('from public.teaching_requests'))return {rows:[base.approvedRequest]};
    if(sql.includes('from public.teaching_course_plans'))return {rows:[plan]};
    if(sql.includes('from public.teaching_class_sessions'))return {rows:[]};
    if(sql.includes('from public.teaching_timetable_slots')){
