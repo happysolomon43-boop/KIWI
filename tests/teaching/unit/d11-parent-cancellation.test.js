@@ -117,7 +117,7 @@ test('bounded scan cannot overlap and separates Class retirement failures',async
 
 test('late AI artifact capture is fenced inside a Class/Course/Plan lock',()=>{
   const text=fs.readFileSync(path.resolve(__dirname,'../../../teaching/repositories/d11-lesson-controller.js'),'utf8');
-  const from=text.indexOf('async function recordPreparationArtifact(');
+  const from=text.indexOf('async function recordPreparationArtifactUsing(');
   const until=text.indexOf('async function getPreparationArtifactPayload(',from);
   const section=text.slice(from,until);
   assert.ok(section.includes('await loadClassBase(studentId,classId,tx,true)'));
@@ -127,4 +127,7 @@ test('late AI artifact capture is fenced inside a Class/Course/Plan lock',()=>{
   assert.ok(section.includes("error.code='TEACHING_D11_PREPARATION_PARENT_SUPERSEDED'"));
   assert.ok(section.includes('error.retryable=false'));
   assert.ok(section.indexOf('if(!stillCurrent)')<section.indexOf('insert into teaching_preparation.artifact_versions'));
+  assert.ok(section.includes('withTransaction')===false,'Core artifact mutation takes caller-owned transaction');
+  assert.match(text,/async function recordPreparationArtifact\(args=\{\}\)\{\s*return withTransaction\(tx=>recordPreparationArtifactUsing\(tx,args\)\)/);
+  assert.match(text,/await recordPreparationArtifactUsing\(tx,\{\s*studentId,classId:toClassId,blueprint/);
 });
