@@ -5,6 +5,7 @@ const { classClosureTranslation } = require('../d14/fact-pack');
 const {
   validateLessonBlueprintProposal,
   validateLiveReplanProposal,
+  reserveBounds,
 } = require('./contracts');
 
 // D11 repository records originate in PostgreSQL. node-postgres materializes
@@ -225,6 +226,33 @@ function plannerInput(context, signals) {
   });
 }
 
+// Give the model the precise integer-minute envelope checked by D11, rather
+// than asking it to infer reserve ratios and whole minutes from timestamps.
+// This is prompt input only; the authoritative validator remains independent.
+function lessonBlueprintTimeBudget(context,reservePolicy) {
+  const start=new Date(context.classRow.scheduled_start_at).getTime();
+  const end=new Date(context.classRow.scheduled_end_at).getTime();
+  if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start){
+    const error=new Error('D11 Lesson time window is invalid.');
+    error.code='TEACHING_D11_CLASS_DURATION_INVALID';throw error;
+  }
+  const scheduledMinutes=Math.floor((end-start)/60000);
+  if(scheduledMinutes<1) {
+    const error=new Error('D11 Lesson has no whole teaching minute available.');
+    error.code='TEACHING_D11_CLASS_DURATION_INVALID';throw error;
+  }
+  const reserve=reserveBounds(scheduledMinutes,reservePolicy);
+  return Object.freeze({
+    scheduled_minutes:scheduledMinutes,
+    adaptive_reserve_min_minutes:reserve.minimum_minutes,
+    adaptive_reserve_target_minutes:reserve.target_minutes,
+    adaptive_reserve_max_minutes:reserve.maximum_minutes,
+    maximum_segment_minutes_total:scheduledMinutes-reserve.minimum_minutes,
+    arithmetic_rule:'ALL numerical *_minutes fields MUST be JSON integer numbers, not strings, decimals, ranges, or units. adaptive_reserve_minutes MUST be an integer between min and max. sum(segments[].planned_minutes) + adaptive_reserve_minutes MUST be <= scheduled_minutes; segment minimum_safe_minutes <= segment planned_minutes. Each segment planned_minutes >= 1.',
+    no_schedule_override:true
+  });
+}
+
 function lessonPlanRequest({ context, signals, requestKey = null, preparation = null, reservePolicy = undefined, repairFeedback = null }) {
   const validate = async (out) => validateLessonBlueprintProposal(out, {
     learningUnits: context.learningUnits,
@@ -257,7 +285,7 @@ function lessonPlanRequest({ context, signals, requestKey = null, preparation = 
       context_kind: 'lesson_blueprint_planning',
       access_purpose: 'bounded_pre_class_instructional_planning',
     },
-    academicInput: plannerInput(context, signals),
+    academicInput: Object.freeze({...plannerInput(context,signals),lesson_time_budget:lessonBlueprintTimeBudget(context,reservePolicy)}),
     outputSchema,
     provenanceRefs: refs,
     declaredAuthorityLevel: 'T3',
@@ -464,6 +492,7 @@ function createD11Intelligence({ orchestrator } = {}) {
 module.exports = {
   normalizeD11AcademicInput,
   plannerInput,
+  lessonBlueprintTimeBudget,
   lessonPlanRequest,
   liveReplanRequest,
   closureAnalysisRequest,
