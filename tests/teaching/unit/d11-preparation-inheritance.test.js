@@ -98,6 +98,7 @@ test('A shorter rescheduled Class preserves content as a provisional, safely ret
 test('No reuse when topic, Plan, student, ownership, request, session or time differs',()=>{
  const failures=[
  [{sourceSlot:{...sourceSlot,learning_unit_refs:['old-syllabus']}},'LESSON_SCOPE_CHANGED'],
+ [{sourceSlot:{...sourceSlot,learning_unit_refs:[]},targetSlot:{...targetSlot,learning_unit_refs:[]}},'LESSON_SCOPE_CHANGED'],
  [{plan:{...plan,version_no:5}},'BLUEPRINT_PROVENANCE_CHANGED'],
  [{target:{...target,student_id:'other'}},'WRONG_CLASS_IDENTITY'],
  [{target:{...target,lifecycle_state:'CANCELLED'}},'NOT_CURRENT_APPROVED_REPLACEMENT'],
