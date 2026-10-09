@@ -76,6 +76,21 @@ test('Compatible provisional work remains a candidate requiring normal finalizat
  assert.match(changed.reason,/DURATION_CHANGED/);
 });
 
+test('A shorter rescheduled Class preserves content as a provisional, safely retimed Candidate only',()=>{
+ const resized={...target,scheduled_end_at:'2027-04-15T11:45:00Z'};
+ const d=assess({target:resized});
+ assert.equal(d.mode,'INHERIT_PREPARATION_CANDIDATE');
+ assert.equal(d.reason,'DURATION_RETIMED_REQUIRES_FINAL_AI_RECONCILIATION');
+ assert.equal(d.sourceMaturity,'CANDIDATE');
+ assert.equal(d.validatedContent.scheduled_minutes,45);
+ assert.equal(d.validatedContent.adaptive_reserve_minutes,7);
+ assert.equal(d.validatedContent.segments[0].planned_minutes,38);
+ assert.equal(d.validatedContent.objectives[0].label,'Explain Newton laws');
+ const impossible=assess({target:{...target,scheduled_end_at:'2027-04-15T11:09:00Z'}});
+ assert.equal(impossible.mode,'FRESH_PREPARATION');
+ assert.equal(impossible.reason,'CONTENT_REVALIDATION_FAILED');
+});
+
 test('No reuse when topic, Plan, student, ownership, request, session or time differs',()=>{
  const failures=[
  [{sourceSlot:{...sourceSlot,learning_unit_refs:['old-syllabus']}},'LESSON_SCOPE_CHANGED'],
