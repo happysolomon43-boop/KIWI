@@ -58,11 +58,10 @@ test('concurrent identical saves commit exactly one PPL version and one set of s
   const counts=(await pool.query('select count(*)::int n from teaching_preparation.artifact_versions where workspace_id=$1',[ids.workspaceId])).rows[0];assert.equal(counts.n,1);
   assert.equal((await pool.query('select count(*)::int n from public.teaching_classroom_source_elements where artifact_version_id=$1',[results[0].artifact_version_id])).rows[0].n,3);
  }finally{
-  if(ids)await withTransaction(async client=>{
-   const records=(await client.query('select artifact_version_id from public.teaching_classroom_academic_artifacts where class_id=$1',[ids.classId])).rows.map(r=>r.artifact_version_id);
-   for(const name of ['teaching_classroom_artifact_dependencies','teaching_classroom_source_elements','teaching_classroom_academic_private','teaching_classroom_academic_artifacts'])await client.query('delete from public.'+name+' where artifact_version_id=any($1::text[])',[records]);
-   await client.query('delete from teaching_preparation.artifact_versions where workspace_id=$1',[ids.workspaceId]);await client.query('delete from teaching_preparation.authoritative_input_bundles where workspace_id=$1',[ids.workspaceId]);await client.query('delete from teaching_preparation.workspaces where workspace_id=$1',[ids.workspaceId]);
-   for(const [name,column,id]of [['teaching_lesson_blueprints','lesson_blueprint_id',ids.blueprint],['teaching_classes','class_id',ids.classId],['teaching_course_plans','course_plan_id',ids.coursePlanId],['teaching_curriculum_audits','curriculum_audit_id',ids.audit],['teaching_timetable_versions','timetable_version_id',ids.timetable],['teaching_schedule_profiles','profile_id',ids.profile],['teaching_courses','course_id',ids.course],['teaching_semesters','semester_id',ids.semester],['subjects','id',ids.subject],['users','id',ids.studentId]])await client.query('delete from public.'+name+' where '+column+'=$1',[id]);
-  });await pool.end();
+  // Concurrent transactions commit independently. Keep their uniquely named,
+  // explicitly marked fixture history: PPL input bundles forbid deletion as
+  // well as updates. CI owns and discards this isolated database; never weaken
+  // the immutable trigger merely to remove test data.
+  await pool.end();
  }
 });
