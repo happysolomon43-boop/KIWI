@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const { mountClassroomChapterRoute } = require('./teaching/classroom-remodel/chapter-routes');
 const { createTeachingFoundation } = require('./teaching');
 const { mountD15Routes } = require('./teaching/d15/routes');
 const { mountD16Routes } = require('./teaching/d16/routes');
@@ -48,6 +49,7 @@ function createTeachingRouter({
   d17Intelligence = null,
   publishedEventRegistry = null,
   teachingRuntimePlatform = null,
+  classroomPreparationService = null,
 } = {}) {
   if (typeof authenticate !== 'function') {
     throw new TypeError('KIWI Teaching backend requires the existing authenticate middleware.');
@@ -806,6 +808,7 @@ function createTeachingRouter({
     }
   });
 
+  mountClassroomChapterRoute(router,{service:classroomPreparationService,sendError});
   return router;
 }
 
