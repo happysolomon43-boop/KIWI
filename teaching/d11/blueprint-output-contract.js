@@ -43,7 +43,7 @@ const D11_BLUEPRINT_OUTPUT_FORMAT=Object.freeze({
     representation:'Short description or null',
     stopping_condition:'Bounded stopping rule or null',
   }),
-  time_rules:'adaptive_reserve_minutes is a required integer (not a nested object). It must be within the supplied reserve policy bounds; sum(segments.planned_minutes) + adaptive_reserve_minutes <= scheduled Class minutes; CORE minimum safe load + reserve <= scheduled Class minutes. Never assume overtime.',
+  time_rules:'All fields ending in _minutes must be JSON integer numbers only (no strings, fractions, ranges, or units). Apply academic_input.lesson_time_budget EXACTLY: reserve min <= adaptive_reserve_minutes <= reserve max; sum(segments.planned_minutes) + adaptive_reserve_minutes <= scheduled_minutes; CORE minimum safe load + reserve <= scheduled_minutes. When late-start recovery reduces remaining time, use the supplied reduced time budget, NEVER original Class duration or overtime.',
   supporting_arrays:'stopping_conditions is an array of strings; prerequisite_checks, likely_misconceptions, examples, guided_work, independent_evidence_opportunities, remediation_branches, homework_candidates, unresolved_items are ARRAYS OF OBJECTS. Return [] where legitimately empty; do not omit the keys.',
   frozen_tpf05_projection:Object.freeze({
     'lesson_plan.phases':'segments, with each phase assigned an id, objective_refs and integer planned_minutes',
