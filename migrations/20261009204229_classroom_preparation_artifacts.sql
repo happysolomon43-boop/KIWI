@@ -50,15 +50,20 @@ CREATE TABLE public.teaching_classroom_source_elements (
  artifact_version_id text NOT NULL REFERENCES public.teaching_classroom_academic_artifacts(artifact_version_id) ON DELETE RESTRICT,
  anchor text NOT NULL,
  parent_anchor text,
+ parent_kind text GENERATED ALWAYS AS (CASE WHEN parent_anchor IS NULL THEN NULL ELSE 'chapter_unit' END) STORED,
  element_kind text NOT NULL CHECK (element_kind IN ('chapter_unit','source_element')),
  sequence_no integer NOT NULL CHECK (sequence_no>=0),
  content_sha256 text NOT NULL CHECK (content_sha256 ~ '^[a-f0-9]{64}$'),
  public_payload jsonb NOT NULL CHECK (jsonb_typeof(public_payload)='object'),
  PRIMARY KEY (artifact_version_id,anchor),
+ UNIQUE (artifact_version_id,anchor,element_kind),
  FOREIGN KEY (artifact_version_id,parent_anchor) REFERENCES public.teaching_classroom_source_elements(artifact_version_id,anchor) ON DELETE RESTRICT,
+ FOREIGN KEY (artifact_version_id,parent_anchor,parent_kind) REFERENCES public.teaching_classroom_source_elements(artifact_version_id,anchor,element_kind) ON DELETE RESTRICT,
  CHECK ((element_kind='chapter_unit' AND parent_anchor IS NULL) OR (element_kind='source_element' AND parent_anchor IS NOT NULL))
 );
 CREATE INDEX teaching_classroom_elements_parent_idx ON public.teaching_classroom_source_elements(artifact_version_id,parent_anchor);
+CREATE UNIQUE INDEX teaching_classroom_elements_order_key ON public.teaching_classroom_source_elements(artifact_version_id,coalesce(parent_anchor,''),sequence_no);
+CREATE INDEX teaching_classroom_elements_parent_kind_idx ON public.teaching_classroom_source_elements(artifact_version_id,parent_anchor,parent_kind);
 CREATE TABLE public.teaching_classroom_artifact_dependencies (
  artifact_version_id text NOT NULL REFERENCES public.teaching_classroom_academic_artifacts(artifact_version_id) ON DELETE RESTRICT,
  dependency_kind text NOT NULL CHECK (dependency_kind IN ('source','objective','scope','chapter','plan','guide','schedule','evidence','schema','route','asset')),
@@ -109,6 +114,7 @@ END $$;
 CREATE FUNCTION public.teaching_classroom_immutable_content() RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog AS $$
 BEGIN
  IF TG_TABLE_NAME='teaching_classroom_academic_artifacts' THEN
+  IF OLD.validation_state='VALIDATED' AND NEW.validation_receipt IS DISTINCT FROM OLD.validation_receipt THEN RAISE EXCEPTION 'CLASSROOM_ACCEPTED_REVIEW_IMMUTABLE'; END IF;
   IF (to_jsonb(NEW)-'validation_state'-'validation_receipt') IS DISTINCT FROM (to_jsonb(OLD)-'validation_state'-'validation_receipt') THEN RAISE EXCEPTION 'CLASSROOM_ARTIFACT_CONTENT_IMMUTABLE'; END IF;
  ELSE
   IF NEW IS DISTINCT FROM OLD THEN RAISE EXCEPTION 'CLASSROOM_ARTIFACT_CONTENT_IMMUTABLE'; END IF;

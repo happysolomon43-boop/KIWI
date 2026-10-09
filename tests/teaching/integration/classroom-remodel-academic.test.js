@@ -3,6 +3,7 @@ const test=require('node:test');const assert=require('node:assert/strict');const
 const {assertNonProductionDatabase,integrationConfig,createIntegrationPool}=require('./test-db');
 const {createClassroomAcademicRepository}=require('../../../teaching/repositories/classroom-academic-artifacts');
 const f=require('../fixtures/classroom-remodel-academic');
+const {Pool}=require('pg');
 const {connectionString,projectRef,skipReason:skip}=integrationConfig('Classroom academic artifacts');
 async function fixture(client){
  const prefix='classroom-fixture-'+randomUUID();const ids={studentId:prefix,subject:prefix+'-subject',semester:prefix+'-semester',course:prefix+'-course',classId:prefix+'-class',coursePlanId:prefix+'-plan',workspaceId:prefix+'-workspace',inputBundleId:prefix+'-bundle',blueprint:prefix+'-blueprint',audit:prefix+'-audit',profile:prefix+'-profile',timetable:prefix+'-timetable'};
@@ -47,4 +48,21 @@ test('real repository saves, reviews, binds and invalidates artifacts without pu
   const stale=await repository.invalidate({studentId:ids.studentId,kind:'schedule',ref:ids.classId,currentVersion:'2'});assert.equal(stale.length,3);assert.equal((await repository.loadArtifact(ids.studentId,chapter.artifact_version_id)).validity_state,'CURRENT');assert.equal((await repository.loadArtifact(ids.studentId,opening.artifact_version_id)).validity_state,'STALE');
   const sourceStale=await repository.invalidate({studentId:ids.studentId,kind:'source',ref:'source1',currentVersion:'2'});assert.equal(sourceStale.length,1);
  }finally{await client.query('ROLLBACK');client.release();await pool.end();}
+});
+test('concurrent identical saves commit exactly one PPL version and one set of source anchors',{skip},async()=>{
+ assertNonProductionDatabase({connectionString,projectRef});const local=['localhost','127.0.0.1','::1'].includes(new URL(connectionString).hostname);const pool=new Pool({connectionString,ssl:local?false:{rejectUnauthorized:false},max:3});let ids;
+ const withTransaction=async fn=>{const client=await pool.connect();try{await client.query('BEGIN');const out=await fn(client);await client.query('COMMIT');return out;}catch(e){await client.query('ROLLBACK');throw e;}finally{client.release();}};
+ try{ids=await withTransaction(fixture);const repository=createClassroomAcademicRepository({query:(...args)=>pool.query(...args),withTransaction,randomUUID});
+  const input={...ids,expectedScheduleVersion:1,expectedPlanVersion:1,operationKey:'concurrent-op',logicalId:'chapter1',logicalVersion:'1',kind:'chapter',payload:f.chapter(),producer:f.producer('chapter'),context:{requiredUnits:['U01']},dependencies:[]};
+  const results=await Promise.all([repository.saveCandidate(input),repository.saveCandidate(input)]);assert.equal(results[0].artifact_version_id,results[1].artifact_version_id);
+  const counts=(await pool.query('select count(*)::int n from teaching_preparation.artifact_versions where workspace_id=$1',[ids.workspaceId])).rows[0];assert.equal(counts.n,1);
+  assert.equal((await pool.query('select count(*)::int n from public.teaching_classroom_source_elements where artifact_version_id=$1',[results[0].artifact_version_id])).rows[0].n,3);
+ }finally{
+  if(ids)await withTransaction(async client=>{
+   const records=(await client.query('select artifact_version_id from public.teaching_classroom_academic_artifacts where class_id=$1',[ids.classId])).rows.map(r=>r.artifact_version_id);
+   for(const name of ['teaching_classroom_artifact_dependencies','teaching_classroom_source_elements','teaching_classroom_academic_private','teaching_classroom_academic_artifacts'])await client.query('delete from public.'+name+' where artifact_version_id=any($1::text[])',[records]);
+   await client.query('delete from teaching_preparation.artifact_versions where workspace_id=$1',[ids.workspaceId]);await client.query('delete from teaching_preparation.authoritative_input_bundles where workspace_id=$1',[ids.workspaceId]);await client.query('delete from teaching_preparation.workspaces where workspace_id=$1',[ids.workspaceId]);
+   for(const [name,column,id]of [['teaching_lesson_blueprints','lesson_blueprint_id',ids.blueprint],['teaching_classes','class_id',ids.classId],['teaching_course_plans','course_plan_id',ids.coursePlanId],['teaching_curriculum_audits','curriculum_audit_id',ids.audit],['teaching_timetable_versions','timetable_version_id',ids.timetable],['teaching_schedule_profiles','profile_id',ids.profile],['teaching_courses','course_id',ids.course],['teaching_semesters','semester_id',ids.semester],['subjects','id',ids.subject],['users','id',ids.studentId]])await client.query('delete from public.'+name+' where '+column+'=$1',[id]);
+  });await pool.end();
+ }
 });

@@ -20,6 +20,11 @@ test('unqualified preparation returns a scoped hold before invoking providers',a
  const {createClassroomPreparationService}=require('../../../teaching/classroom-remodel/preparation-service');let calls=0;
  const service=createClassroomPreparationService({repository:{saveCandidate(){calls++;}},d11Repository:{getClassContext(){calls++;}},preparationRepository:{getWorkspaceSnapshot(){calls++;}}});const result=await service.prepare({id:'s1'},'c1',{operationKey:'op1'});assert.equal(result.prepared,false);assert.equal(result.published,false);assert.equal(calls,0);
 });
+test('chapter reader requires the server-pinned accepted chapter and Blueprint identities',async()=>{
+ const {createClassroomPreparationService}=require('../../../teaching/classroom-remodel/preparation-service');let payloadReads=0;
+ const service=createClassroomPreparationService({repository:{saveCandidate(){},loadBinding:async()=>({schedule_version:1,course_plan_version:1,course_plan_id:'p1',chapter_artifact_id:'chapter1',lesson_blueprint_id:'blueprint1'}),loadArtifact:async()=>{payloadReads++;}},d11Repository:{getClassContext:async()=>({classRow:{schedule_version:1},plan:{version_no:1,course_plan_id:'p1'},session:{classroom_engine:'CLASSROOM_V1',classroom_chapter_artifact_id:'other',lesson_blueprint_id:'blueprint1'}})},preparationRepository:{getWorkspaceSnapshot(){}},releaseGate:async()=>({delivery1GatePassed:true,routesQualified:true,evidence:'FIXTURE'})});
+ await assert.rejects(()=>service.getPublicChapter({id:'s1'},'c1'),{code:'CLASSROOM_CHAPTER_SESSION_PIN_MISMATCH'});assert.equal(payloadReads,0);
+});
 test('classroom workflow preserves existing independent review requirements and canonical stage order',()=>{
  const {preparationWorkflow}=require('../../../teaching/classroom-remodel/preparation-service');const plan=preparationWorkflow({profile_id:'fixture',version:'1',required_independent_review_stages:['Independent Validation','Whole-Artifact Review']});assert.equal(plan.stages.filter(s=>s.independent).length,2);assert.throws(()=>preparationWorkflow({profile_id:'fixture',version:'1',required_independent_review_stages:['Challenge']}));
 });
