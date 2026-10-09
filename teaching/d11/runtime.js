@@ -48,8 +48,9 @@ function scheduledEvent({eventType,eventId,studentId,classRow,dueAt,payload={}})
 async function seedClassRuntime({
   repository,dueEventStore,studentId,classRow,causationId=null,
   expectedTimetableVersionId=null,expectedScheduleVersion=null,
+  validatedBlueprintInherited=false,
 }) {
-  const prep=await repository.ensurePreparationWorkspace({
+  const prep=validatedBlueprintInherited?null:await repository.ensurePreparationWorkspace({
     studentId,
     classId:classRow.class_id,
     correlationId:causationId,
@@ -57,7 +58,7 @@ async function seedClassRuntime({
       expectedTimetableVersionId,expectedScheduleVersion,
     }:{}),
   });
-  if(!prep)return Object.freeze({
+  if(!prep&&!validatedBlueprintInherited)return Object.freeze({
     classId:classRow.class_id,skipped:true,reason:'AUTHORITATIVE_CLASS_SUPERSEDED',
   });
   const startId='d11-class-start:'+classRow.class_id+':schedule-v'+Number(classRow.schedule_version);
@@ -198,7 +199,12 @@ function registerD11Runtime({
             idempotencyKey:id,
             payload:{class_id:classRow.class_id,course_id:classRow.course_id,
               timetable_version_id:classTimetableVersionId,schedule_version:Number(classRow.schedule_version),
-              reason:'APPROVED_TIMETABLE_RECONCILIATION'},
+              reason:'APPROVED_TIMETABLE_RECONCILIATION',
+              ...(event.payload?.request_type==='SINGLE_CLASS_RESCHEDULE'
+                &&event.payload?.reschedule_inheritance?.to_class_id===classRow.class_id
+                ?{inheritance_from_class_id:event.payload.reschedule_inheritance.from_class_id,
+                  governing_request_id:event.payload.request_id}:{}),
+            },
             auditRefs:[],provenanceRefs:['timetable:'+classTimetableVersionId,'class:'+classRow.class_id],
           });
         }
@@ -237,13 +243,26 @@ function registerD11Runtime({
         ||Date.parse(klass.scheduled_start_at)<=Date.now()){
         return Object.freeze({accepted:true,noop:true,reason:'CLASS_NOT_CURRENTLY_PREPARABLE'});
       }
+      let inherited=null;
+      if(event.payload?.inheritance_from_class_id&&event.payload?.governing_request_id){
+        if(typeof service.inheritRescheduledPreparation!=='function'){
+          const error=new Error('D11 Class inheritance owner unavailable.');
+          error.code='TEACHING_D11_INHERITANCE_OWNER_UNAVAILABLE';throw error;
+        }
+        inherited=await service.inheritRescheduledPreparation(
+          studentId,event.payload.inheritance_from_class_id,classId,
+          event.payload.governing_request_id);
+      }
       const result=await seedClassRuntime({
         repository,dueEventStore,studentId,classRow:klass,causationId:event.eventId,
         expectedTimetableVersionId:timetableVersionId,
         expectedScheduleVersion:Number(event.payload?.schedule_version),
+        validatedBlueprintInherited:inherited?.mode==='INHERIT_VALIDATED_BLUEPRINT'
+          ||inherited?.mode==='ALREADY_PREPARED'&&inherited?.reason==='TARGET_BLUEPRINT_EXISTS',
       });
       return result.skipped?Object.freeze({accepted:true,noop:true,reason:result.reason})
-        :Object.freeze({accepted:true,seeded:true,classId,workspaceId:result.preparationWorkspaceId});
+        :Object.freeze({accepted:true,seeded:true,classId,workspaceId:result.preparationWorkspaceId,
+          inheritance:inherited?Object.freeze({mode:inherited.mode,reason:inherited.reason}):null});
     },
   }));
 

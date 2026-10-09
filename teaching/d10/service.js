@@ -264,11 +264,22 @@ function createD10Service({
       const classes=await d09Repository.materializeApprovedTimetableUsing(tx,{
         studentId,semesterId:context.semester.semester_id,timetable:saved.timetable,slots:saved.slots,requestId:request.request_id,
       });
+      // A new timetable always creates new Class IDs. Carry only the explicit
+      // source->replacement correspondence to D11; D10 must not modify a
+      // protected Lesson Blueprint or PPL workspace itself.
+      const matchingClasses=classes.filter(c=>
+        String(c.course_id)===String(klass.course_id)
+        && new Date(c.scheduled_start_at).getTime()===new Date(change.startsAt).getTime()
+        && new Date(c.scheduled_end_at).getTime()===new Date(change.endsAt).getTime());
+      const rescheduleInheritance=matchingClasses.length===1
+        ?{from_class_id:klass.class_id,to_class_id:matchingClasses[0].class_id}
+        :null;
       const refreshedContext=await d09Repository.getSchedulingContextUsing(tx,studentId,courseId);
       const expansion=await buildPendingExpansionUsing(tx,{
         studentId,courseId,requestId:request.request_id,context:refreshedContext,
       });
       return {
+        rescheduleInheritance,
         timetableVersionId:saved.timetable.timetable_version_id,
         targetVersionAfter:`timetable:${saved.timetable.timetable_version_id}:version:${saved.timetable.version_no}`,
         safeMetadata:{
@@ -322,7 +333,7 @@ function createD10Service({
         if(workRequestOwner&&typeof workRequestOwner.observeAppliedRequestUsing==='function'&&['ACADEMIC_BREAK','COURSE_PAUSE','COURSE_RESUME'].includes(request.request_type)) await workRequestOwner.observeAppliedRequestUsing(tx,request,requestChange(request));
         if(outboxStore&&typeof outboxStore.appendUsing==='function'){
           const occurredAt=serverNow().toISOString(),eventId=`d10-request-applied:${request.request_id}:${application.request_version}`,queryFn=typeof tx==='function'?tx:tx.query.bind(tx);
-          await outboxStore.appendUsing(queryFn,{eventId,schemaVersion:1,eventType:TEACHING_EVENTS.REQUEST_APPLIED,eventCategory:EVENT_CATEGORIES.COMMITTED_DOMAIN_EVENT,triggerType:'committed_domain_event',source:'request',origin:'d10',actorId:request.student_id,aggregateType:'REQUEST',aggregateId:request.request_id,aggregateVersion:Number(request.state_version),occurredAt,effectiveAt:request.applied_at?new Date(request.applied_at).toISOString():occurredAt,dueAt:null,correlationId:eventId,causationId:null,idempotencyKey:eventId,payload:{request_id:request.request_id,course_id:request.course_id,request_type:request.request_type,target_owner:request.target_owner,target_ref:request.target_ref,application_ref:application.application_ref,target_version_after:targetResult?.targetVersionAfter||null,timetable_version_id:targetResult?.timetableVersionId||null},auditRefs:[],provenanceRefs:[`request:${request.request_id}`,`request-application:${application.request_application_id}`]});
+          await outboxStore.appendUsing(queryFn,{eventId,schemaVersion:1,eventType:TEACHING_EVENTS.REQUEST_APPLIED,eventCategory:EVENT_CATEGORIES.COMMITTED_DOMAIN_EVENT,triggerType:'committed_domain_event',source:'request',origin:'d10',actorId:request.student_id,aggregateType:'REQUEST',aggregateId:request.request_id,aggregateVersion:Number(request.state_version),occurredAt,effectiveAt:request.applied_at?new Date(request.applied_at).toISOString():occurredAt,dueAt:null,correlationId:eventId,causationId:null,idempotencyKey:eventId,payload:{request_id:request.request_id,course_id:request.course_id,request_type:request.request_type,target_owner:request.target_owner,target_ref:request.target_ref,application_ref:application.application_ref,target_version_after:targetResult?.targetVersionAfter||null,timetable_version_id:targetResult?.timetableVersionId||null,reschedule_inheritance:targetResult?.rescheduleInheritance||null},auditRefs:[],provenanceRefs:[`request:${request.request_id}`,`request-application:${application.request_application_id}`]});
         }
       },
       applyTargetUsing:async(tx,request)=>{
