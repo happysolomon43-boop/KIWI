@@ -1,6 +1,44 @@
 'use strict';
 
-const {validateLessonBlueprintProposal}=require('./contracts');
+const {validateLessonBlueprintProposal,reserveBounds}=require('./contracts');
+
+// This never publishes a Blueprint. It is merely a conservative re-timing
+// of previously validated content for D11's new PPL workspace. Preserve the
+// learning objectives, academic examples, evidence and minimum-safe loads.
+// The final model reconciliation is still mandatory for the new duration.
+function retimeCompatibleDraft(payload,{source,target,learningUnits}){
+  const before=validateLessonBlueprintProposal(payload,{
+    learningUnits,scheduledStartAt:source.scheduled_start_at,scheduledEndAt:source.scheduled_end_at,
+  });
+  if(!before.ok)return null;
+  const duration=Math.floor((Date.parse(target.scheduled_end_at)-Date.parse(target.scheduled_start_at))/60000);
+  if(duration<1)return null;
+  const bounds=reserveBounds(duration),reserve=bounds.target_minutes;
+  const original=before.value.segments;
+  const minimum=original.map(s=>Math.max(1,s.minimum_safe_minutes));
+  const capacity=duration-reserve;
+  const required=minimum.reduce((n,m)=>n+m,0);
+  if(capacity<required)return null;
+  const available=Math.max(0,capacity-required);
+  const extras=original.map((s,i)=>Math.max(0,s.planned_minutes-minimum[i]));
+  const plan=[...minimum],priority=[...original.keys()].sort((a,b)=>{
+    const aCore=original[a].criticality==='CORE'?0:1;
+    const bCore=original[b].criticality==='CORE'?0:1;
+    return aCore-bCore||a-b;
+  });
+  let left=available;
+  for(const i of priority){
+    if(left<=0)break;
+    const more=Math.min(left,extras[i]);
+    plan[i]+=more;left-=more;
+  }
+  const draft={...payload,adaptive_reserve_minutes:reserve,
+    segments:original.map((segment,i)=>({...segment,planned_minutes:plan[i]}))};
+  const validated=validateLessonBlueprintProposal(draft,{
+    learningUnits,scheduledStartAt:target.scheduled_start_at,scheduledEndAt:target.scheduled_end_at,
+  });
+  return validated.ok?validated.value:null;
+}
 
 // No historical session, attendance or academic state is ever moved.
 // This gate decides only whether already-validated *content* may be copied
@@ -61,18 +99,28 @@ function evaluateLessonInheritance({
       ||String(pre.timetable_version_id||'')!==String(source.source_timetable_version_id||''))
       return blocked('PREPARATION_PROVENANCE_CHANGED');
   }
+  const sameDuration=(end-start)===(origEnd-origStart);
   const validation=validateLessonBlueprintProposal(payload,{
     learningUnits,scheduledStartAt:target.scheduled_start_at,scheduledEndAt:target.scheduled_end_at,
   });
-  if(!validation.ok)return blocked('CONTENT_REVALIDATION_FAILED');
-  const sameDuration=(end-start)===(origEnd-origStart);
+  // Domain-invalid content is never accepted on inheritance. Only a
+  // source-validated draft may be conservatively re-timed for the NEW PPL;
+  // even then it is explicitly provisional, never an owner-committed Blueprint.
+  const candidateContent=validation.ok?validation.value:
+    !sameDuration&&['TEACHING_D11_BLUEPRINT_DURATION_OVERFLOW','TEACHING_D11_NUMBER_INVALID']
+      .includes(validation.reason)
+      ?retimeCompatibleDraft(payload,{source,target,learningUnits})
+      :null;
+  if(!candidateContent)return blocked('CONTENT_REVALIDATION_FAILED');
   return Object.freeze({
     mode:sourceBlueprint&&sameDuration?'INHERIT_VALIDATED_BLUEPRINT':'INHERIT_PREPARATION_CANDIDATE',
-    reason:sameDuration?'AUTHORITATIVE_CONTENT_REVALIDATED':'DURATION_CHANGED_REQUIRES_FINAL_AI_RECONCILIATION',
-    validatedContent:validation.value,
+    reason:sameDuration?'AUTHORITATIVE_CONTENT_REVALIDATED':
+      validation.ok?'DURATION_CHANGED_REQUIRES_FINAL_AI_RECONCILIATION':
+      'DURATION_RETIMED_REQUIRES_FINAL_AI_RECONCILIATION',
+    validatedContent:candidateContent,
     originBlueprintId:sourceBlueprint?.lesson_blueprint_id||null,
     originArtifactId:sourcePreparation?.artifact_version_id||null,
-    sourceMaturity:sourcePreparation?.maturity_stage||null,
+    sourceMaturity:sourceBlueprint?'CANDIDATE':sourcePreparation?.maturity_stage||null,
   });
 }
-module.exports={evaluateLessonInheritance};
+module.exports={evaluateLessonInheritance,retimeCompatibleDraft};
