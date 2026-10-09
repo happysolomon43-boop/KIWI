@@ -2,7 +2,7 @@
 const c=require('./contracts');
 const {object,string,list,bool,exact,enumeration,fail,claim}=c;
 const AUTHOR_BLOCKS={
- pre_class_lesson_blueprint:['chapter','unit_map','teaching_plan','learning_trajectory','homework_proposal','preparation_update'],
+ pre_class_lesson_blueprint:['chapter','unit_map','teaching_plan','learning_trajectory','homework_proposal','preparation_update','controller_blueprint'],
  core_optional_selection:['teaching_plan','unit_map'],adaptive_reserve_allocation:['teaching_plan'],purposeful_retrieval_selection:['teaching_plan','learning_trajectory'],
  live_lesson_replan:['teaching_plan','closure_or_replan','learning_trajectory','unit_map'],lateness_replan:['teaching_plan','closure_or_replan','learning_trajectory','unit_map'],
  lesson_closure_analysis:['closure_or_replan','homework_proposal'],rolling_planning_horizon:['teaching_plan','preparation_update'],homework_design_generate:['homework_proposal'],homework_to_next_lesson_synthesis:['closure_or_replan'],
@@ -16,6 +16,7 @@ function validateAuthor(v,{mode=v?.task_mode,chapter=null}={}){
  if(v.status!=='ok'&&!v.review_reasons.length)fail('CLASSROOM_AUTHOR_REASON_REQUIRED');
  if(v.artifacts.chapter){c.validateChapter(v.artifacts.chapter);if(v.completion.chapter!==v.artifacts.chapter.completeness)fail('CLASSROOM_CHAPTER_COMPLETION_MISMATCH');}
  if(v.artifacts.teaching_plan){if(!v.artifacts.chapter&&!chapter)fail('CLASSROOM_PLAN_CHAPTER_REQUIRED');c.validatePlan(v.artifacts.teaching_plan,v.artifacts.chapter||chapter);}
+ if(v.artifacts.controller_blueprint)object(v.artifacts.controller_blueprint,'controller_blueprint');
  if(v.artifacts.learning_trajectory){exact(v.artifacts.learning_trajectory,['current_stage','evidence_goals','next_stage_requirements'],'learning_trajectory');enumeration(v.artifacts.learning_trajectory.current_stage,['demonstration','guided','independent_familiar','independent_varied','method_selection','delayed_retrieval','integration_transfer','unknown','not_applicable'],'current_stage');list(v.artifacts.learning_trajectory.evidence_goals,'evidence_goals');list(v.artifacts.learning_trajectory.next_stage_requirements,'next_stage_requirements');}
  if(v.artifacts.preparation_update){exact(v.artifacts.preparation_update,['dependency_refs','required_stages','pending_artifacts'],'preparation_update');for(const k of Object.keys(v.artifacts.preparation_update))list(v.artifacts.preparation_update[k],k);}
  if(v.artifacts.unit_map)list(v.artifacts.unit_map,'unit_map').forEach(r=>c.resolveAnchor(r,v.artifacts.chapter||chapter));
@@ -42,6 +43,6 @@ function validatePresenter(v,{mode=v?.task_mode,directive=null,chapter=null,supp
 function getModeSchema(role,mode,context={}){
  const validator=role==='coordinator'?v=>c.validateCoordinator(v,{...context,mode}):role==='author'?v=>validateAuthor(v,{...context,mode}):role==='presenter'?v=>validatePresenter(v,{...context,mode}):null;
  if(!validator)fail('CLASSROOM_SCHEMA_ROLE_UNKNOWN');
- return c.schemaDescriptor(role,mode,async v=>{try{if(role==='coordinator'&&v?.artifacts?.legacy_consumer){if(!context.legacyRequest)fail('CLASSROOM_LEGACY_REQUEST_CONTEXT_REQUIRED');await require('./legacy-consumer-adapter').unwrapLegacyConsumer({request:context.legacyRequest,extension:v.artifacts.legacy_consumer});}return {ok:true,value:validator(v)};}catch(e){return {ok:false,reason:e.code||'CLASSROOM_CONTRACT_INVALID',fieldPath:e.fieldPath||null};}});
+ return Object.freeze({...c.schemaDescriptor(role,mode,async v=>{try{if(role==='coordinator'&&v?.artifacts?.legacy_consumer){if(!context.legacyRequest)fail('CLASSROOM_LEGACY_REQUEST_CONTEXT_REQUIRED');await require('./legacy-consumer-adapter').unwrapLegacyConsumer({request:context.legacyRequest,extension:v.artifacts.legacy_consumer});}return {ok:true,value:validator(v)};}catch(e){return {ok:false,reason:e.code||'CLASSROOM_CONTRACT_INVALID',fieldPath:e.fieldPath||null};}}),declared_fields:role==='coordinator'?c.COORDINATOR_FIELDS:role==='author'?['task_mode','input_state_reference','status','review_required','review_reasons','completion','provenance','artifacts','handoff']:PRESENTER_FIELDS,format_contract:require('./output-format').classroomOutputFormat(role,mode,context)});
 }
 module.exports={AUTHOR_BLOCKS,REQUIRED_AUTHOR,PRESENTER_FIELDS,validateAuthor,validatePresenter,getModeSchema};

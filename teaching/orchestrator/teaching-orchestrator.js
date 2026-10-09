@@ -28,6 +28,7 @@ function createTeachingOrchestrator({promptControl,aiAdapter,executionStore,stat
   async function cancelled(envelope,phase){const result=await cancellationReader(envelope,{phase});return result===true||(result&&result.cancelled===true)?Object.freeze({cancelled:true,reason:result?.reason==null?'ORCHESTRATION_CANCELLED':String(result.reason)}):Object.freeze({cancelled:false,reason:null});}
 
   async function execute(request={}) {
+    if(request.candidatePromptBinding&&request.commit===true)throw Object.assign(new Error('Candidate evaluation cannot mutate academic authority'),{code:'CLASSROOM_CANDIDATE_COMMIT_FORBIDDEN'});
     const executionId=String(request.executionId||randomUUID());
     const trigger=request.trigger;
     const triggerType=String(trigger?.type||'').trim();
@@ -75,7 +76,7 @@ function createTeachingOrchestrator({promptControl,aiAdapter,executionStore,stat
       const beforeModelCancellation=await cancelled(envelope,'before_model');
       if(controller.signal.aborted || beforeModelCancellation.cancelled){const policy=authorityFailurePolicy(capability.authority_ceiling);await safeMark(executionId,'CANCELLED',{failureCode:beforeModelCancellation.reason||'CANCELLED_PARENT_SUPERSEDED',validationOutcome:'CANCELLED_BEFORE_MODEL_DISPATCH',safeMetadata:{...auditCancellation(),model_dispatch_avoided:true}});return Object.freeze({executionId,replay:false,cancelled:true,failureDisposition:policy.disposition,authoritativeMutationPerformed:false});}
       const contextLanes=await contextAssembler.assemble({capability,contextSpec:request.contextSpec||{},accessContext:request.accessContext||{}});
-      const invocation=aiAdapter.prepare({envelope,taskMode:request.taskMode,directive:request.directive,contextLanes,contextAllowlist:request.contextAllowlist||null,outputSchema:request.outputSchema,capabilityCriticalityOverride:request.capabilityCriticalityOverride||null,preparation:request.preparation||null});
+      const invocation=aiAdapter.prepare({envelope,taskMode:request.taskMode,directive:request.directive,contextLanes,contextAllowlist:request.contextAllowlist||null,outputSchema:request.outputSchema,capabilityCriticalityOverride:request.capabilityCriticalityOverride||null,preparation:request.preparation||null,candidatePromptBinding:request.candidatePromptBinding||null});
       cancellationAudit.queuedAt=nowIso();
       await safeMark(executionId,'MODEL_PENDING',{safeMetadata:{prompt_family_id:invocation.prompt.family_id,prompt_family_version:invocation.prompt.family_version,model_queued_at:cancellationAudit.queuedAt}});
       // Read durable state on every worker. A remote Course/Class/Plan revision
@@ -115,7 +116,7 @@ function createTeachingOrchestrator({promptControl,aiAdapter,executionStore,stat
       const currentSnapshot=await stateReader(envelope,{phase:'post_model'});
       const freshness=revalidateAuthoritativeState({expectedState:envelope.state_reference,currentState:currentSnapshot?.stateReference,expectedPreconditions:envelope.preconditions,currentPreconditions:currentSnapshot?.preconditions||{}});
       if(freshness.stale){await safeMark(executionId,'STALE_REJECTED',{validationOutcome:'STALE_REJECTED',staleReasons:freshness.reasons});return Object.freeze({executionId,replay:false,accepted:false,stale:true,staleReasons:freshness.reasons,authoritativeMutationPerformed:false});}
-      if(request.commit!==true){await safeMark(executionId,'COMPLETED',{validationOutcome:'VALIDATED_PROVISIONAL'});return Object.freeze({executionId,replay:false,accepted:true,provisional:true,validatedResult:modelResult.validatedResult,authoritativeMutationPerformed:false});}
+      if(request.commit!==true){if(typeof request.provisionalResultSink==='function')await request.provisionalResultSink(modelResult.validatedResult,{executionId,invocation,modelMetadata:modelResult.modelMetadata});await safeMark(executionId,'COMPLETED',{validationOutcome:'VALIDATED_PROVISIONAL'});return Object.freeze({executionId,replay:false,accepted:true,provisional:true,validatedResult:modelResult.validatedResult,authoritativeMutationPerformed:false});}
       await safeMark(executionId,'COMMIT_PENDING',{validationOutcome:'VALIDATED'});
       const receipt=await ownerRouter.commit({ownerBoundary:capability.authoritative_owner_boundary,validatedResult:modelResult.validatedResult,preconditions:{stateReference:envelope.state_reference,...envelope.preconditions},mutationContext:{executionId,correlationId:envelope.correlation_id,causationId:envelope.causation_id,capabilityId:capability.id,triggerRef:envelope.trigger.ref}});
       await safeMark(executionId,'COMPLETED',{validationOutcome:'VALIDATED_AND_HANDED_OFF',mutationRef:receipt?.mutationRef||receipt?.id||null});

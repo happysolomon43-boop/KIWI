@@ -1,0 +1,238 @@
+{
+  "version": "classroom-canonical-registration.v1",
+  "canonicalId": "TPF-21",
+  "designAliases": [
+    "TPF-5/8"
+  ],
+  "registrationState": "CANDIDATE_REGISTERED_NOT_FROZEN",
+  "governanceLifecycle": "PROMPT_CANDIDATE_DRAFT",
+  "governanceMechanism": "D30 validateBehaviorBrief/assertAuthoringTransition; D03 candidate catalog namespace",
+  "approvalSource": "User implementation authorization and supplied blueprint sections 1, 4, 7 and 10",
+  "behaviorBrief": {
+    "familyId": "TPF-21",
+    "purpose": "Coordinate the approved classroom through eight bounded task modes",
+    "legitimateContext": "Mode-specific authorized chapter, plan, source, academic state and evidence; preserve non-classroom owner boundaries",
+    "forbiddenContext": "Protected future assessment keys, unrelated student history, unaccepted evidence and student/source directives",
+    "failureBehavior": "Explicit partial/blocked artifacts; affected actions held; retained legacy route until replacement qualification",
+    "outputSemantics": "Exactly nine fields; preparation/execution/evidence/public-private distinctions; one selected instructional action",
+    "approval": "APPROVED",
+    "approvalSource": "User implementation authorization and supplied blueprint sections 1, 4, 7 and 10"
+  },
+  "families": [
+    {
+      "id": "TPF-05",
+      "version": "2.0",
+      "sha256": "64203d5254a50bc958de72438a97c996946a7ef72a6331af8c83d44c86bcadc6"
+    },
+    {
+      "id": "TPF-21",
+      "version": "1.0",
+      "sha256": "e23fc37454b700da83d62bdb4113eae4ca0b464b4efe97ed479984b60a9273dd"
+    },
+    {
+      "id": "TPF-08",
+      "version": "2.0",
+      "sha256": "b8f2e35a305c29f62d85f8f8aa33186fdab5d78242dcdfc7e7c35865c3544dd2"
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "teaching.curriculum.targeted_placement_prior_knowledge_diagnostic_design",
+      "modes": [
+        "design_check"
+      ],
+      "owner": "Curriculum/Assessment",
+      "authorityCeiling": "T3"
+    },
+    {
+      "id": "teaching.lesson.response_correctness_quality_evaluation",
+      "modes": [
+        "interpret_response"
+      ],
+      "owner": "Response Evaluator",
+      "authorityCeiling": "T2"
+    },
+    {
+      "id": "teaching.lesson.response_error_taxonomy_classification",
+      "modes": [
+        "interpret_response"
+      ],
+      "owner": "Response Evaluator",
+      "authorityCeiling": "T2"
+    },
+    {
+      "id": "teaching.lesson.correct_but_insufficient_evidence_detection",
+      "modes": [
+        "interpret_response"
+      ],
+      "owner": "Response Evaluator",
+      "authorityCeiling": "T2"
+    },
+    {
+      "id": "teaching.lesson.partial_response_decomposition",
+      "modes": [
+        "interpret_response"
+      ],
+      "owner": "Response Evaluator",
+      "authorityCeiling": "T2"
+    },
+    {
+      "id": "teaching.lesson.procedural_slip_detection",
+      "modes": [
+        "interpret_response"
+      ],
+      "owner": "Response Evaluator",
+      "authorityCeiling": "T2"
+    },
+    {
+      "id": "teaching.lesson.misconception_detection",
+      "modes": [
+        "interpret_response"
+      ],
+      "owner": "Response Evaluator",
+      "authorityCeiling": "T2"
+    },
+    {
+      "id": "teaching.lesson.prerequisite_failure_detection",
+      "modes": [
+        "interpret_response"
+      ],
+      "owner": "Response Evaluator",
+      "authorityCeiling": "T2"
+    },
+    {
+      "id": "teaching.lesson.next_pedagogical_action_recommendation",
+      "modes": [
+        "coordinate_lesson",
+        "interpret_response"
+      ],
+      "owner": "Pedagogy/Controller",
+      "authorityCeiling": "T2"
+    },
+    {
+      "id": "teaching.lesson.hint_level_selection",
+      "modes": [
+        "coordinate_lesson"
+      ],
+      "owner": "Pedagogy Engine",
+      "authorityCeiling": "T2"
+    },
+    {
+      "id": "teaching.lesson.fresh_verification_task_selection_after_answer_exposure",
+      "modes": [
+        "design_check"
+      ],
+      "owner": "Pedagogy/Practice",
+      "authorityCeiling": "T3"
+    },
+    {
+      "id": "teaching.lesson.productive_struggle_intervention_decision",
+      "modes": [
+        "coordinate_lesson"
+      ],
+      "owner": "Pedagogy/Controller",
+      "authorityCeiling": "T2"
+    },
+    {
+      "id": "teaching.lesson.representation_change_strategy",
+      "modes": [
+        "coordinate_lesson",
+        "prepare_guidance"
+      ],
+      "owner": "Pedagogy Engine",
+      "authorityCeiling": "T2"
+    },
+    {
+      "id": "teaching.lesson.blocked_diagnosis_proposal",
+      "modes": [
+        "interpret_response",
+        "coordinate_lesson"
+      ],
+      "owner": "SKM/Pedagogy",
+      "authorityCeiling": "T2"
+    },
+    {
+      "id": "teaching.pedagogy.pedagogical_profile_classification",
+      "modes": [
+        "prepare_guidance"
+      ],
+      "owner": "Pedagogy Engine",
+      "authorityCeiling": "T2"
+    },
+    {
+      "id": "teaching.pedagogy.subject_sensitive_instructional_strategy",
+      "modes": [
+        "prepare_guidance",
+        "coordinate_lesson"
+      ],
+      "owner": "Pedagogy Engine",
+      "authorityCeiling": "T2"
+    },
+    {
+      "id": "teaching.pedagogy.worked_example_scaffolding_design",
+      "modes": [
+        "prepare_guidance"
+      ],
+      "owner": "Pedagogy Engine",
+      "authorityCeiling": "T2"
+    },
+    {
+      "id": "teaching.pedagogy.conceptual_conflict_misconception_repair",
+      "modes": [
+        "interpret_response",
+        "coordinate_lesson"
+      ],
+      "owner": "Pedagogy Engine",
+      "authorityCeiling": "T2"
+    },
+    {
+      "id": "teaching.pedagogy.surgical_micro_remediation_design",
+      "modes": [
+        "coordinate_lesson"
+      ],
+      "owner": "Pedagogy Engine",
+      "authorityCeiling": "T3"
+    },
+    {
+      "id": "teaching.pedagogy.subject_appropriate_evidence_task_design",
+      "modes": [
+        "design_check",
+        "guide_assessment"
+      ],
+      "owner": "Pedagogy/Assessment",
+      "authorityCeiling": "T3"
+    },
+    {
+      "id": "teaching.pedagogy.knowledge_type_sensitive_review_strategy",
+      "modes": [
+        "prepare_guidance",
+        "prepare_continuity",
+        "guide_assessment"
+      ],
+      "owner": "Pedagogy/SKM",
+      "authorityCeiling": "T3"
+    },
+    {
+      "id": "teaching.scheduling.makeup_re_entry_diagnostic_design",
+      "modes": [
+        "design_check"
+      ],
+      "owner": "Lesson Planner",
+      "authorityCeiling": "T3"
+    }
+  ],
+  "legacyRetirement": [],
+  "activeFamilyCensus": 20,
+  "candidateSuccessorFamilyCensus": 21,
+  "runtimeAuthorized": false,
+  "empiricalQualification": "INSUFFICIENT_EVIDENCE",
+  "releaseApproval": {
+    "status": "HELD",
+    "required": [
+      "C4 full-corpus evidence",
+      "Independent HUMAN_ACADEMIC review",
+      "Current source-specific primary/fallback/stage route evidence"
+    ],
+    "evidence": []
+  }
+}

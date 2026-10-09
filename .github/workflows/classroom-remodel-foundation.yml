@@ -6,6 +6,7 @@ on:
       - 'docs/teaching/classroom-remodel/**'
       - 'scripts/*classroom*'
       - 'tests/teaching/unit/classroom-remodel-foundation.test.js'
+      - 'tests/teaching/unit/classroom-remodel-invocation.test.js'
       - '.github/workflows/classroom-remodel-foundation.yml'
   push:
     branches: [main]
@@ -14,6 +15,7 @@ on:
       - 'docs/teaching/classroom-remodel/**'
       - 'scripts/*classroom*'
       - 'tests/teaching/unit/classroom-remodel-foundation.test.js'
+      - 'tests/teaching/unit/classroom-remodel-invocation.test.js'
 permissions:
   contents: read
 jobs:
@@ -29,5 +31,5 @@ jobs:
       - run: python scripts/build-classroom-prompt-candidates.py
       - run: git diff --exit-code -- teaching/classroom-remodel/prompts
       - run: node scripts/verify-classroom-remodel-foundation.js
-      - run: node --test tests/teaching/unit/classroom-remodel-foundation.test.js tests/teaching/unit/d03-control-plane.test.js tests/teaching/unit/d03-prompt-bodies.test.js tests/teaching/unit/d12-response-pedagogy.test.js
+      - run: node --test tests/teaching/unit/classroom-remodel-foundation.test.js tests/teaching/unit/classroom-remodel-invocation.test.js tests/teaching/unit/d03-control-plane.test.js tests/teaching/unit/d03-prompt-bodies.test.js tests/teaching/unit/d12-response-pedagogy.test.js
       - run: npm run build:web

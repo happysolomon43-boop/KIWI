@@ -2,13 +2,13 @@
   "version": "classroom-remodel-checkpoint.v1",
   "recordedAt": "2026-10-09",
   "branch": "feat/classroom-remodel-delivery-1",
-  "implementationCommit": "a4bc08c1c76563fbc64a39c2bef00becb9ba83ef",
-  "testedTree": "759e7058b362462193086d9d5fca17db5daf13bd",
+  "implementationCommit": "THIS_SOURCE_COMMIT",
+  "testedTree": "THIS_SOURCE_TREE",
   "pr": "https://github.com/happysolomon43-boop/KIWI/pull/329",
   "prState": "OPEN_DRAFT",
   "baseline": "a77aec6fbd49b89a4538610e434151e2f5fb8cde",
   "delivery": 1,
-  "acceptance": "IN_PROGRESS_NOT_COMPLETE",
+  "acceptance": "IMPLEMENTED_CANDIDATE_ACCEPTANCE_HELD",
   "completed": [
     "All five required documents read in full and preserved unchanged with byte-pinned inputs",
     "Current main and Render deployment baseline verified; production Supabase migration history and Class session columns inspected",
@@ -27,7 +27,13 @@
     "Allowlisted public snapshot/delta contracts rejecting prepared teacher output and cursor gaps",
     "D12 interpretation receipt schema with pinned task/response/criterion/exposure versions",
     "Structured artifact ownership and public/private visibility records",
-    "Registered coordinator legacy_consumer extension validates through original schema/domain/provenance lanes and rejects mutation or inflated held statuses"
+    "Registered coordinator legacy_consumer extension validates through original schema/domain/provenance lanes and rejects mutation or inflated held statuses",
+    "Canonical TPF-21/TPF-5/8 inactive registration verified through retained D30 behavior-brief/authoring lifecycle and exact prompt/capability hashes",
+    "Trusted candidate binding enters existing D03 prompt composition and D05 central AI boundary; default runtime adapters reject candidates and candidates cannot commit owner state",
+    "All 22 preserved legacy contracts traverse central candidate execution and return original branded validated payloads without changing owners or authority ceilings",
+    "Actual D07 diagnostic and D12 profile caller factories retain original validators; stale-state and wrong-scope results rejected",
+    "Model-visible closed output formats reconcile candidate prompt envelopes with registered mode schemas and retained D11 Blueprint fields",
+    "Provisional output sink persists accepted output before execution completion; sink failure cannot record completed execution"
   ],
   "effectiveVersions": {
     "registry": "1.3",
@@ -40,7 +46,7 @@
       "coordinator": "TPF-21 v1.0 proposal; TPF-5/8 alias",
       "presenter": "TPF-08 v2.0 candidate"
     },
-    "coordinatorRegistration": "PROPOSED_NOT_FROZEN",
+    "coordinatorRegistration": "CANDIDATE_REGISTERED_NOT_FROZEN",
     "runtimeActivation": "INACTIVE"
   },
   "migrationsApplied": [],
@@ -48,8 +54,8 @@
   "legacyRetirement": [],
   "validation": {
     "localFullSuite": {
-      "tests": 1642,
-      "pass": 1642,
+      "tests": 1647,
+      "pass": 1647,
       "fail": 0,
       "skip": 0
     },
@@ -65,7 +71,7 @@
       "workflows": 34,
       "passed": 34
     },
-    "currentCommitCI": "PENDING_CHECK_GITHUB_BEFORE_CLAIMING_PASS",
+    "currentCommitCI": "PENDING",
     "liveProviderEvidence": "NOT_RUN",
     "newDatabaseTransactionTests": "NOT_IMPLEMENTED",
     "browserAccessibilityChecks": "NOT_RUN",
@@ -277,7 +283,8 @@
           "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913316"
         }
       ]
-    }
+    },
+    "candidateExecutionEvidence": "OBSERVED_REAL_D03_D05_CENTRAL_BOUNDARY_WITH_SYNTHETIC_PROVIDER; NOT_LIVE_PROVIDER"
   },
   "topology": {
     "api": {
@@ -295,21 +302,21 @@
     "vercel": "No KIWI project identified in either connected account; repository has static Vercel config; no ownership assumed"
   },
   "remaining": [
-    "Complete inactive canonical candidate approval/freeze records through existing governance; candidate lookup is not active or design-frozen registration",
-    "Construct and qualify real orchestrator compatibility requests using registered coordinator extension schema; do not switch active legacy prompt bindings",
-    "Qualify specialized D11/D12/D07 legacy adapters for every actual caller and generic/external contract reader",
-    "Complete semantic domain validation and current-state/provenance rejection fixtures beyond structural positive fixtures",
-    "Finish required contract integration at Controller/PPL/D12/D14 boundaries before Delivery 1 acceptance",
-    "Delivery 1 acceptance gate must pass before Delivery 2"
+    "Observed live-provider semantic qualification for revised 05/21/08 candidate modes and all replacement/non-classroom caller contracts",
+    "Required D30 C4 full corpus and independent HUMAN_ACADEMIC review before candidate freeze/activation",
+    "Adopt server-owned versioned preparation requirements and numeric policy through established owners; absent fields hold only dependent actions"
   ],
-  "nextUnfinishedAction": "Integrate real orchestrator compatibility request construction and qualification using the registered legacy_consumer schema, starting with D07 diagnostic and D12 profile/fresh-verification; preserve active legacy callers and downstream acceptance owners.",
+  "nextUnfinishedAction": "Run candidate qualification through configured central provider routes; obtain independently observed reviewer evidence and C4 human academic review; freeze only after those gates pass.",
   "compatibility": {
     "legacySessions": "Unaffected; existing active contracts retained",
     "newSessionAdmission": "Not mounted",
     "routes": "Manifest only; not Express registered",
     "rollback": "Candidate code is unmounted; no new persisted runtime records; future pinned-session rollback contract fixture-tested only"
   },
-  "externalBlockers": [],
-  "deliveries2Through8": "NOT_STARTED; dependency gate not passed",
+  "externalBlockers": [
+    "Local executor has no configured AI provider credentials; observed live-provider qualification not available",
+    "No qualified independent review route evidence or C4 HUMAN_ACADEMIC approval for revised candidates supplied"
+  ],
+  "deliveries2Through8": "Delivery 2 inactive implementation exists on stacked PR 330; Deliveries 3-8 not activated",
   "scenarios1Through44": "NOT_QUALIFIED; foundational fixtures are only partial support for scenarios 39 and 40"
 }
