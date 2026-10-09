@@ -187,7 +187,7 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
     if(result.decision!=='ANSWER_NOW')return {accepted:true,noop:true,reason:'LESSON_EVIDENCE_INSUFFICIENT'};
     try{
       const blocks=result.visualRequest&&visualService?await visualService.prepare({studentId,classId,context:ctx,visualRequest:result.visualRequest,turnKey:key}):[];
-      await repository.publishTeacherTurn({studentId,classId,message:result.teacherMessage,blocks,idempotencyKey:key,expectedControllerVersion:controllerVersion,expectedBlueprintId:ctx.blueprint.lesson_blueprint_id,expectedBlueprintVersion:ctx.blueprint.version_no,expectedScheduleVersion:ctx.classRow.schedule_version,expectedCourseStateVersion:ctx.classRow.course_state_version,expectedPlanId:ctx.plan?.course_plan_id||null,expectedPlanVersion:ctx.plan?.version_no||null});
+      await repository.publishTeacherTurn({studentId,classId,message:result.teacherMessage,blocks:[...(result.boardBlocks||[]),...blocks],idempotencyKey:key,expectedControllerVersion:controllerVersion,expectedBlueprintId:ctx.blueprint.lesson_blueprint_id,expectedBlueprintVersion:ctx.blueprint.version_no,expectedScheduleVersion:ctx.classRow.schedule_version,expectedCourseStateVersion:ctx.classRow.course_state_version,expectedPlanId:ctx.plan?.course_plan_id||null,expectedPlanVersion:ctx.plan?.version_no||null});
       return {accepted:true,published:true};
     }catch(error){if(['TEACHING_D14_HELP_STALE','TEACHING_D14_TEACHER_TURN_STALE','TEACHING_D14_PARENT_AUTHORITY_REVOKED'].includes(error.code))return {accepted:true,noop:true,reason:'LESSON_MOVED_ON'};throw error;}
   }

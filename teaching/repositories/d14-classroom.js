@@ -125,6 +125,15 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
     const {validateBlock}=require('../d14/board');
     if(typeof message!=='string'||!message.trim()||message.length>5000||!Array.isArray(blocks)||blocks.length>30)throw Object.assign(new Error('Teacher turn invalid.'),{code:'TEACHING_D14_TEACHER_TURN_INVALID',status:422});
     const safe=blocks.map(validateBlock);
+    // A Teacher message is never silently disconnected from the teaching
+    // surface. Generated images/diagrams are supplementary; the Board must
+    // still contain readable, owner-validated instructional text when no
+    // independent notation was provided by the lesson model. This also
+    // repairs normal raised-hand publication and works without visual AI.
+    if(!safe.some(block=>!['image','diagram'].includes(block.type))) {
+      if(safe.length>=30)throw Object.assign(new Error('Teacher Board block limit exceeded.'),{code:'TEACHING_D14_TEACHER_TURN_INVALID',status:422});
+      safe.unshift(validateBlock({type:'text',content:{text:message.trim()}}));
+    }
     return withTransaction(async(tx)=>{
       const existing=await tx.query('select * from public.teaching_teacher_communications where student_id=$1 and idempotency_key=$2',[studentId,idempotencyKey]);
       if(existing.rows[0])return existing.rows[0];
