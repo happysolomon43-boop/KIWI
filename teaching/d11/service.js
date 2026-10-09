@@ -805,6 +805,15 @@ function createD11Service({
     return Object.freeze({idempotent:false,session:changed.session});
   }
 
+  async function inheritRescheduledPreparation(studentId,fromClassId,toClassId,requestId){
+    if(typeof repository.inheritRescheduledPreparation!=='function'){
+      const error=new Error('D11 verified reschedule inheritance is not installed.');
+      error.code='TEACHING_D11_INHERITANCE_OWNER_UNAVAILABLE';
+      error.status=503;throw error;
+    }
+    return repository.inheritRescheduledPreparation({studentId,fromClassId,toClassId,requestId});
+  }
+
   async function refreshCoursePreparation(studentId,courseId,{correlationId=null,interruptActive=true}={}) {
     const classes=await repository.listClassesForCourse(studentId,courseId);
     const results=[];
@@ -1114,6 +1123,7 @@ function createD11Service({
     startBreak,
     resumeBreakFromDueEvent,
     refreshCoursePreparation,
+    inheritRescheduledPreparation,
     authorizeOvertime,
     markOvertimeStarted,
     closeClass,
