@@ -49,19 +49,29 @@
     ".github/workflows/teaching-d24-responsive-accessibility.yml",
     ".github/workflows/teaching-d25-reliability.yml",
     ".github/workflows/teaching-integration-database.yml",
+    "docs/teaching/classroom-remodel/delivery-2-checkpoint.v1.json",
     "docs/teaching/classroom-remodel/migration-inventory.v1.json",
+    "docs/teaching/classroom-remodel/qualification-ledger.v1.json",
     "migrations/20261009204229_classroom_preparation_artifacts.sql",
+    "migrations/20261009212755_classroom_preparation_revisions.sql",
     "scripts/setup-teaching-integration-db.js",
     "teaching-backend.js",
     "teaching/classroom-remodel/academic-artifacts.js",
     "teaching/classroom-remodel/chapter-routes.js",
+    "teaching/classroom-remodel/independent-review.js",
+    "teaching/classroom-remodel/preparation-intelligence.js",
+    "teaching/classroom-remodel/preparation-runtime.js",
     "teaching/classroom-remodel/preparation-service.js",
+    "teaching/d11/service.js",
+    "teaching/index.js",
     "teaching/preparation/index.js",
     "teaching/repositories/classroom-academic-artifacts.js",
+    "teaching/repositories/d11-lesson-controller.js",
     "teaching/repositories/index.js",
     "tests/teaching/fixtures/classroom-remodel-academic.js",
     "tests/teaching/integration/classroom-remodel-academic.test.js",
-    "tests/teaching/unit/classroom-remodel-academic.test.js"
+    "tests/teaching/unit/classroom-remodel-academic.test.js",
+    "tests/teaching/unit/classroom-remodel-runtime.test.js"
   ],
   "migrations": {
     "authored": [
@@ -385,5 +395,6 @@
     "Qualified independent reviewer route and C4 academic human review not yet supplied",
     "Production preparation requirements/numeric policy adoption missing; no numerical values invented"
   ],
-  "currentCheckpointCommitCI": "Documentation-only checkpoint commit; inspect GitHub before claiming this metadata commit passed"
+  "currentCheckpointCommitCI": "Documentation-only checkpoint commit; inspect GitHub before claiming this metadata commit passed",
+  "changedFilesReference": "https://github.com/happysolomon43-boop/KIWI/pull/330/files"
 }

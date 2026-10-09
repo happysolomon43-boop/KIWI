@@ -47,7 +47,12 @@
       "presenter": "TPF-08 v2.0 candidate"
     },
     "coordinatorRegistration": "CANDIDATE_REGISTERED_NOT_FROZEN",
-    "runtimeActivation": "INACTIVE"
+    "runtimeActivation": "INACTIVE",
+    "candidateBodyHashes": {
+      "TPF-05": "64203d5254a50bc958de72438a97c996946a7ef72a6331af8c83d44c86bcadc6",
+      "TPF-21": "e23fc37454b700da83d62bdb4113eae4ca0b464b4efe97ed479984b60a9273dd",
+      "TPF-08": "b8f2e35a305c29f62d85f8f8aa33186fdab5d78242dcdfc7e7c35865c3544dd2"
+    }
   },
   "migrationsApplied": [],
   "infrastructureMutations": [],
@@ -323,5 +328,53 @@
     "No qualified independent review route evidence or C4 HUMAN_ACADEMIC approval for revised candidates supplied"
   ],
   "deliveries2Through8": "Delivery 2 inactive implementation exists on stacked PR 330; Deliveries 3-8 not activated",
-  "scenarios1Through44": "NOT_QUALIFIED; foundational fixtures are only partial support for scenarios 39 and 40"
+  "scenarios1Through44": "NOT_QUALIFIED; foundational fixtures are only partial support for scenarios 39 and 40",
+  "changedFiles": [
+    ".gitattributes",
+    ".github/workflows/classroom-remodel-foundation.yml",
+    "docs/teaching/classroom-remodel/checkpoint.v1.json",
+    "docs/teaching/classroom-remodel/migration-inventory.v1.json",
+    "docs/teaching/classroom-remodel/qualification-ledger.v1.json",
+    "docs/teaching/classroom-remodel/sources/KIWI_Classroom_Implementation_Plan_8_Deliveries.md",
+    "docs/teaching/classroom-remodel/sources/KIWI_Classroom_Remodeling_Blueprint.md",
+    "docs/teaching/classroom-remodel/sources/TPF-08-1.md",
+    "docs/teaching/classroom-remodel/sources/TPF_05_v2-1.md",
+    "docs/teaching/classroom-remodel/sources/TPF_5_8_v2-1.md",
+    "package.json",
+    "scripts/build-classroom-prompt-candidates.py",
+    "scripts/build-classroom-release-proposal.js",
+    "scripts/build-classroom-remodel-inventory.js",
+    "scripts/verify-classroom-remodel-foundation.js",
+    "teaching/capability-registry/index.js",
+    "teaching/classroom-remodel/artifact-shapes.js",
+    "teaching/classroom-remodel/candidate-governance.js",
+    "teaching/classroom-remodel/candidate-registry.js",
+    "teaching/classroom-remodel/canonical-registration.v1.json",
+    "teaching/classroom-remodel/contracts.js",
+    "teaching/classroom-remodel/domain-contracts.js",
+    "teaching/classroom-remodel/invocation-binding.js",
+    "teaching/classroom-remodel/legacy-consumer-adapter.js",
+    "teaching/classroom-remodel/legacy-invocation.js",
+    "teaching/classroom-remodel/migration-proposal.v1.json",
+    "teaching/classroom-remodel/mode-schemas.js",
+    "teaching/classroom-remodel/output-format.js",
+    "teaching/classroom-remodel/ownership-visibility.js",
+    "teaching/classroom-remodel/prompts/TPF-05_Classroom_v2.0_REVISED_CANDIDATE.md",
+    "teaching/classroom-remodel/prompts/TPF-08_Classroom_v2.0_REVISED_CANDIDATE.md",
+    "teaching/classroom-remodel/prompts/TPF-21_Classroom_v1.0_REVISED_CANDIDATE.md",
+    "teaching/classroom-remodel/prompts/candidate-manifest.v1.json",
+    "teaching/classroom-remodel/release-proposal.v1.json",
+    "teaching/classroom-remodel/result-semantics.js",
+    "teaching/classroom-remodel/route-manifest.js",
+    "teaching/classroom-remodel/session-selection.js",
+    "teaching/classroom-remodel/state-policy.js",
+    "teaching/orchestrator/ai-adapter.js",
+    "teaching/orchestrator/teaching-orchestrator.js",
+    "teaching/prompt-runtime/contracts.js",
+    "teaching/prompt-runtime/prompt-catalog.js",
+    "teaching/prompt-runtime/prompt-composer.js",
+    "tests/teaching/unit/classroom-remodel-foundation.test.js",
+    "tests/teaching/unit/classroom-remodel-invocation.test.js"
+  ],
+  "changedFilesReference": "https://github.com/happysolomon43-boop/KIWI/pull/329/files"
 }
