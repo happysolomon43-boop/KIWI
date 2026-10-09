@@ -41,7 +41,8 @@ test('PPL record guard retains preclass rule unless explicitly authorized late r
   assert.match(repo,/allowLateStartRecovery=false/);
   assert.match(repo,/lateStartRecoveryEligibility\(\{classRow:klass,session,now:clock\(\)\}\)\.allowed/);
   assert.match(repo,/Date\.parse\(klass\.scheduled_start_at\)>clock\(\)\.getTime\(\)/);
-  assert.match(repo,/&&\s*!session/);
+  assert.match(repo,/\(!session \|\| \(allowLateStartRecovery===true/);
+  assert.match(repo,/lateStartRecoveryEligibility\(\{classRow:klass,session,now:clock\(\)\}\)\.allowed/);
   assert.match(repo,/source_timetable_state==='APPROVED'/);
 });
 
