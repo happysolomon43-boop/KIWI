@@ -18,7 +18,7 @@ function isRecoverableRouteHeldSession(session) {
     'independent_evidence_objective_refs'].every(k=>Array.isArray(progress[k])&&progress[k].length===0);
 }
 
-function lateStartRecoveryEligibility({classRow,session=null,now=new Date()}={}) {
+function lateStartRecoveryEligibility({classRow,plan=null,session=null,now=new Date()}={}) {
   const t=now instanceof Date?now.getTime():new Date(now).getTime();
   const start=Date.parse(classRow?.scheduled_start_at||'');
   const end=Date.parse(classRow?.scheduled_end_at||'');
@@ -27,7 +27,10 @@ function lateStartRecoveryEligibility({classRow,session=null,now=new Date()}={})
   if(session&&!isRecoverableRouteHeldSession(session))
     return Object.freeze({allowed:false,reason:'SESSION_ALREADY_HAS_ACADEMIC_WORK'});
   if(session&&(
-    String(session.source_course_state_version)!==String(classRow.course_state_version)
+    !plan
+    ||String(session.course_plan_id||'')!==String(plan.course_plan_id||'')
+    ||String(session.source_course_plan_version)!==String(plan.version_no)
+    ||String(session.source_course_state_version)!==String(classRow.course_state_version)
     ||String(session.source_class_schedule_version)!==String(classRow.schedule_version)
     ||String(session.source_timetable_version_id||'')!==String(classRow.source_timetable_version_id||'')))
     return Object.freeze({allowed:false,reason:'ROUTE_HELD_AUTHORITY_STALE'});
