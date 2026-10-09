@@ -2,8 +2,8 @@
   "version": "classroom-remodel-checkpoint.v1",
   "recordedAt": "2026-10-09",
   "branch": "feat/classroom-remodel-delivery-1",
-  "implementationCommit": "54834e4bf0edb552acf204e5a36fd8237133f200",
-  "testedTree": "f3bd3ea91a2f965fbcee977fafcc843e6152ee03",
+  "implementationCommit": "46bdcd1a6ced9151673a3062fa87589994a45707",
+  "testedTree": "5f24ce37fe8199d5713fa23f66cfb012f6ccc7d3",
   "pr": "https://github.com/happysolomon43-boop/KIWI/pull/329",
   "prState": "OPEN_DRAFT",
   "baseline": "a77aec6fbd49b89a4538610e434151e2f5fb8cde",
@@ -19,7 +19,14 @@
     "Versioned policy definitions with missing fields blocking only dependent capabilities",
     "Existing D11/D12 assistance ceiling mapping preserved",
     "Session pinning and rollback disposition contracts",
-    "Dedicated candidate fixture CI"
+    "Dedicated candidate fixture CI",
+    "Candidate canonical alias/mode lookup integrated into existing catalog and registry without granting active bindings",
+    "Generated successor proposal census and hash with all 22 replacement bindings and zero retirements",
+    "D07 diagnostic and D12 profile/fresh-verification payload-preserving adapters executing original validators",
+    "Complete/partial/blocked structural fixtures for all ten author modes",
+    "Allowlisted public snapshot/delta contracts rejecting prepared teacher output and cursor gaps",
+    "D12 interpretation receipt schema with pinned task/response/criterion/exposure versions",
+    "Structured artifact ownership and public/private visibility records"
   ],
   "effectiveVersions": {
     "registry": "1.3",
@@ -40,14 +47,14 @@
   "legacyRetirement": [],
   "validation": {
     "localFullSuite": {
-      "tests": 1633,
-      "pass": 1633,
+      "tests": 1641,
+      "pass": 1641,
       "fail": 0,
       "skip": 0
     },
     "foundationSuite": {
-      "tests": 25,
-      "pass": 25
+      "tests": 33,
+      "pass": 33
     },
     "webBuild": "PASS",
     "legacyBodyCatalogRegistryIntegrity": "PASS",
@@ -57,7 +64,215 @@
       "workflows": 34,
       "passed": 34
     },
-    "currentCommitCI": "CHECK_GITHUB_RUNS_BEFORE_CLAIMING_PASS",
+    "currentCommitCI": {
+      "status": "IN_PROGRESS",
+      "observed": [
+        {
+          "name": "Teaching D10 Course Lifecycle Requests",
+          "status": "in_progress",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913301"
+        },
+        {
+          "name": "Teaching D07 Course Intake",
+          "status": "in_progress",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913265"
+        },
+        {
+          "name": "Integrity Session Guard Amendment",
+          "status": "in_progress",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913333"
+        },
+        {
+          "name": "AI Orchestrator Tests",
+          "status": "in_progress",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913381"
+        },
+        {
+          "name": "Teaching D11 Lesson Controller",
+          "status": "in_progress",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913349"
+        },
+        {
+          "name": "Teaching D15 Attendance",
+          "status": "in_progress",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913441"
+        },
+        {
+          "name": "Teaching D13 Student Knowledge Model",
+          "status": "in_progress",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913259"
+        },
+        {
+          "name": "Teaching D23 Information Architecture",
+          "status": "in_progress",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913599"
+        },
+        {
+          "name": "Teaching D26 Coordination Notifications",
+          "status": "in_progress",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913447"
+        },
+        {
+          "name": "Teaching D04 Kernel Persistence",
+          "status": "in_progress",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913267"
+        },
+        {
+          "name": "Teaching D30 Canonical Qualification",
+          "status": "in_progress",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913469"
+        },
+        {
+          "name": "Classroom Remodeling Foundation",
+          "status": "in_progress",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913248"
+        },
+        {
+          "name": "Teaching D27 Integration Boundaries",
+          "status": "in_progress",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913376"
+        },
+        {
+          "name": "Teaching D05 Orchestrator Runtime",
+          "status": "in_progress",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913378"
+        },
+        {
+          "name": "Teaching D22 Teacher Identity",
+          "status": "queued",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913278"
+        },
+        {
+          "name": "Teaching D08 Course Plan and Coverage",
+          "status": "queued",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913312"
+        },
+        {
+          "name": "Teaching D24 Responsive Accessibility",
+          "status": "queued",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913253"
+        },
+        {
+          "name": "Teaching D20 Formal Marking and Gradebook",
+          "status": "queued",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913316"
+        },
+        {
+          "name": "Teaching D14 Classroom",
+          "status": "queued",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913297"
+        },
+        {
+          "name": "Teaching D28 Operational Hardening",
+          "status": "queued",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913493"
+        },
+        {
+          "name": "Teaching D09 Semester Scheduling Time",
+          "status": "queued",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913243"
+        },
+        {
+          "name": "Teaching D18 Assessment Shell",
+          "status": "queued",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913321"
+        },
+        {
+          "name": "Teaching D19 Assessment Types",
+          "status": "queued",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913601"
+        },
+        {
+          "name": "Teaching D06 Decision Gates",
+          "status": "queued",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913375"
+        },
+        {
+          "name": "Teaching D03 Control Foundation",
+          "status": "queued",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913293"
+        },
+        {
+          "name": "Teaching D16 Homework Integrity",
+          "status": "queued",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913287"
+        },
+        {
+          "name": "Teaching Integration Database",
+          "status": "queued",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913631"
+        },
+        {
+          "name": "Platform Security Audit",
+          "status": "queued",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913318"
+        },
+        {
+          "name": "Teaching D25 Reliability Recovery",
+          "status": "queued",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913721"
+        },
+        {
+          "name": "Teaching D21 Progression and GPA",
+          "status": "queued",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913252"
+        },
+        {
+          "name": "Teaching D12 Response Pedagogy",
+          "status": "queued",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913251"
+        },
+        {
+          "name": "Teaching D02 Runtime",
+          "status": "queued",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913358"
+        },
+        {
+          "name": "Teaching D01 Foundation",
+          "status": "queued",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913395"
+        },
+        {
+          "name": "Teaching D17 Assessment Domain",
+          "status": "in_progress",
+          "conclusion": null,
+          "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/37987913323"
+        }
+      ]
+    },
     "liveProviderEvidence": "NOT_RUN",
     "newDatabaseTransactionTests": "NOT_IMPLEMENTED",
     "browserAccessibilityChecks": "NOT_RUN"
@@ -78,15 +293,14 @@
     "vercel": "No KIWI project identified in either connected account; repository has static Vercel config; no ownership assumed"
   },
   "remaining": [
-    "Canonical candidate registration through existing body/catalog/registry/governance rather than proposal-only identity",
-    "Complete specialized legacy-shaped consumer adapters and output schema equivalence tests",
-    "Complete positive/missing/partial/blocked fixtures and semantic domain validation for all thirty modes",
-    "Complete mode-specific confirmation, reference and public/private guards before runtime invocation",
-    "Adopt successor manifest/count/hash and historical-reader qualification without changing active legacy bindings",
-    "Finish required domain schema and owner/configuration adoption records",
+    "Complete inactive canonical candidate approval/freeze records through existing governance; candidate lookup is not active or design-frozen registration",
+    "Integrate registered legacy-consumer extensions into the coordinator mode schemas and real orchestrator requests, preserving nine top-level fields",
+    "Qualify specialized D11/D12/D07 legacy adapters for every actual caller and generic/external contract reader",
+    "Complete semantic domain validation and current-state/provenance rejection fixtures beyond structural positive fixtures",
+    "Finish required contract integration at Controller/PPL/D12/D14 boundaries before Delivery 1 acceptance",
     "Delivery 1 acceptance gate must pass before Delivery 2"
   ],
-  "nextUnfinishedAction": "Implement inactive canonical coordinator registration and compatible legacy consumer/schema adapters; start with D07 targeted diagnostic, D12 profile/fresh-verification and D11 author output bindings.",
+  "nextUnfinishedAction": "Integrate the payload-preserving legacy-consumer extension into registered coordinator mode schemas and orchestrator request construction; qualify D07 diagnostic and D12 profile/fresh-verification consumers before expanding to the remaining migrated capabilities.",
   "compatibility": {
     "legacySessions": "Unaffected; existing active contracts retained",
     "newSessionAdmission": "Not mounted",
