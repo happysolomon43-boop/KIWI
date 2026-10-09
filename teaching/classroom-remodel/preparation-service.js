@@ -71,6 +71,9 @@ function createClassroomPreparationService({repository,d11Repository,preparation
  async function getPublicChapter(user,classId){
   c.string(user?.id,'student identity');const authorization=await gate();if(!authorization.delivery1GatePassed)c.fail('CLASSROOM_CONTRACT_OR_ROUTE_NOT_QUALIFIED');
   const context=await d11Repository.getClassContext(String(user.id),classId);if(context?.session?.classroom_engine!=='CLASSROOM_V1')c.fail('CLASSROOM_SESSION_NOT_REMODELED');
+  // D14 restricts instructional material during D16 Classwork and D17
+  // assessment takeover. Re-evaluate the authoritative substate on every read.
+  if(['ASSESSMENT','CLASSWORK'].includes(context.session.instructional_substate))throw Object.assign(new Error('Chapter access is restricted by the current academic owner'),{code:'CLASSROOM_CHAPTER_PROTECTED_MODE',status:403});
   const binding=await repository.loadBinding(String(user.id),classId);if(!binding||String(binding.schedule_version)!==String(context.classRow.schedule_version)||String(binding.course_plan_version)!==String(context.plan.version_no)||binding.course_plan_id!==context.plan.course_plan_id)c.fail('CLASSROOM_CHAPTER_BINDING_STALE');
   if(context.session.classroom_chapter_artifact_id!==binding.chapter_artifact_id||context.session.lesson_blueprint_id!==binding.lesson_blueprint_id)c.fail('CLASSROOM_CHAPTER_SESSION_PIN_MISMATCH');
   const ids=[binding.chapter_artifact_id,binding.plan_artifact_id,binding.guide_artifact_id,binding.opening_artifact_id];if((await dependenciesCurrent(String(user.id),ids)).length)c.fail('CLASSROOM_CHAPTER_DEPENDENCIES_STALE');
