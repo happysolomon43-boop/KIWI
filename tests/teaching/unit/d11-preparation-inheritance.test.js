@@ -16,7 +16,7 @@ const source={
  source_timetable_slot_id:'old-slot',course_state_version:4
 };
 const target={
- ...source,class_id:'new-phy101',lifecycle_state:'SCHEDULED',
+ ...source,class_id:'new-phy101',lifecycle_state:'SCHEDULED',source_request_id:'reschedule-01',
  scheduled_start_at:start,scheduled_end_at:end,
  schedule_version:13,source_timetable_version_id:'timetable-13',
  source_timetable_slot_id:'new-slot',source_timetable_state:'APPROVED',
