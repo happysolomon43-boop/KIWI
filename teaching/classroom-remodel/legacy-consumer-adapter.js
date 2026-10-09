@@ -5,6 +5,7 @@ const crypto=require('node:crypto');
 const {exact,string,noAuthority,fail}=require('./contracts');
 const proposal=require('./migration-proposal.v1.json');
 const VERSION='classroom-legacy-consumer.v1';
+const validatedExtensions=new WeakMap();
 function clone(value){return JSON.parse(JSON.stringify(value));}
 function digest(value){return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');}
 function requestIdentity(request){
@@ -37,6 +38,8 @@ async function unwrapLegacyConsumer({request,extension}){
  if(extension.schema_version!==VERSION||extension.capability_id!==request.capabilityId||!binding.modes.includes(extension.coordinator_mode)||extension.legacy_schema_id!==schema.id||extension.legacy_schema_version!==schema.version||extension.authority_owner!==binding.owner||extension.authority_ceiling!==binding.authorityCeiling||extension.acceptance!=='CANDIDATE_NOT_COMMITTED')fail('CLASSROOM_LEGACY_BINDING_MISMATCH');
  if(digest(extension.payload)!==extension.payload_sha256)fail('CLASSROOM_LEGACY_PAYLOAD_CHANGED');
  await validatedPayload(request,extension.payload);
+ validatedExtensions.set(extension,{mode:extension.coordinator_mode,digest:digest(extension)});
  return clone(extension.payload);
 }
-module.exports={VERSION,wrapLegacyConsumer,unwrapLegacyConsumer};
+function assertValidatedExtension(extension,mode){const proof=validatedExtensions.get(extension);if(!proof||proof.mode!==mode||proof.digest!==digest(extension))fail('CLASSROOM_LEGACY_EXTENSION_UNVALIDATED');return true;}
+module.exports={VERSION,wrapLegacyConsumer,unwrapLegacyConsumer,assertValidatedExtension};

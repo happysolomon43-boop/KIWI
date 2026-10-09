@@ -42,6 +42,6 @@ function validatePresenter(v,{mode=v?.task_mode,directive=null,chapter=null,supp
 function getModeSchema(role,mode,context={}){
  const validator=role==='coordinator'?v=>c.validateCoordinator(v,{...context,mode}):role==='author'?v=>validateAuthor(v,{...context,mode}):role==='presenter'?v=>validatePresenter(v,{...context,mode}):null;
  if(!validator)fail('CLASSROOM_SCHEMA_ROLE_UNKNOWN');
- return c.schemaDescriptor(role,mode,async v=>{try{return {ok:true,value:validator(v)};}catch(e){return {ok:false,reason:e.code||'CLASSROOM_CONTRACT_INVALID',fieldPath:e.fieldPath||null};}});
+ return c.schemaDescriptor(role,mode,async v=>{try{if(role==='coordinator'&&v?.artifacts?.legacy_consumer){if(!context.legacyRequest)fail('CLASSROOM_LEGACY_REQUEST_CONTEXT_REQUIRED');await require('./legacy-consumer-adapter').unwrapLegacyConsumer({request:context.legacyRequest,extension:v.artifacts.legacy_consumer});}return {ok:true,value:validator(v)};}catch(e){return {ok:false,reason:e.code||'CLASSROOM_CONTRACT_INVALID',fieldPath:e.fieldPath||null};}});
 }
 module.exports={AUTHOR_BLOCKS,REQUIRED_AUTHOR,PRESENTER_FIELDS,validateAuthor,validatePresenter,getModeSchema};

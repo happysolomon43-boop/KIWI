@@ -16,6 +16,16 @@ test('legacy adapters preserve D07 diagnostic fields and execute original scope 
  await assert.rejects(()=>a.wrapLegacyConsumer({request,payload:{...payload,targets:['lu2']},mode:'design_check'}));
  await assert.rejects(()=>a.wrapLegacyConsumer({request,payload,mode:'coordinate_lesson'}));
 });
+test('coordinator compatibility extension needs original validators and cannot inflate a held legacy status',async()=>{
+ const a=require('../../../teaching/classroom-remodel/legacy-consumer-adapter');
+ const request=require('../../../teaching/d07/intelligence').diagnosticRequest({course:{course_id:'c1',state_version:1},requirement:{targets:['lu1']},audit:{curriculum_audit_id:'a1'}});
+ const payload={purpose:'Verify prior knowledge',targets:['lu1'],opportunities:[{id:'o1'},{id:'o2'}],critical_criteria:[],non_graded:true};
+ const extension=await a.wrapLegacyConsumer({request,payload,mode:'design_check'});const v=coordinator('design_check','complete');v.artifacts={legacy_consumer:extension};
+ assert.throws(()=>c.validateCoordinator(v));assert.equal((await schemas.getModeSchema('coordinator','design_check').validate(v)).ok,false);
+ const schema=schemas.getModeSchema('coordinator','design_check',{legacyRequest:request});assert.equal((await schema.validate(v)).ok,true);assert.equal(Object.keys(v).length,9);
+ extension.payload.purpose='Changed after validation';assert.throws(()=>c.validateCoordinator(v));assert.equal((await schema.validate(v)).ok,false);
+ const held=await a.wrapLegacyConsumer({request,payload:{...payload,status:'validation_needed'},mode:'design_check'});v.artifacts={legacy_consumer:held};assert.equal((await schema.validate(v)).ok,false);
+});
 test('legacy profile and fresh verification extensions retain D12 detailed schemas and state guards',async()=>{
  const a=require('../../../teaching/classroom-remodel/legacy-consumer-adapter');const d=require('../../../teaching/d12/intelligence');
  const context={classRow:{class_id:'c1',student_id:'s1',course_lifecycle_state:'ACTIVE',course_state_version:1,schedule_version:1},session:{class_session_id:'session1',state_version:2},plan:{course_plan_id:'p1',version_no:1}};
