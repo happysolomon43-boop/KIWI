@@ -194,6 +194,10 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
   }
   async function addNotebook({studentId,classId,content,sourceKind,boardItemId=null,idempotencyKey,sourceRef=null}){
     return withTransaction(async(tx)=>{
+      // Match presentation/admission parent-before-session order. The Notebook
+      // insert also acquires a Class FK lock; taking it after the session can
+      // deadlock with a concurrent authoritative snapshot or message admission.
+      await tx.query('select class_id from public.teaching_classes where student_id=$1 and class_id=$2 for update',[studentId,classId]);
       const session=(await tx.query("select *,to_jsonb(teaching_class_sessions)->>'classroom_engine' as classroom_engine from public.teaching_class_sessions where student_id=$1 and class_id=$2 for update",[studentId,classId])).rows[0];
       if(protectedMode(session))throw Object.assign(new Error('Notebook restricted.'),{code:'TEACHING_D14_NOTEBOOK_RESTRICTED',status:403});
       await tx.query('select pg_advisory_xact_lock(hashtextextended($1,0))',[studentId+':notebook:'+idempotencyKey]);
@@ -215,6 +219,7 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
     return withTransaction(async(tx)=>{
       const existing=await tx.query('select * from public.teaching_classroom_interactions where student_id=$1 and idempotency_key=$2',[studentId,idempotencyKey]);
       if(existing.rows[0]){if(existing.rows[0].class_id!==classId||existing.rows[0].interaction_kind!==kind||existing.rows[0].body!==body)throw Object.assign(new Error('Conflicting interaction retry.'),{status:409,code:'TEACHING_D14_IDEMPOTENCY_CONFLICT'});if(['ASK_TEACHER','NEED_HELP'].includes(kind)){const {rows:h=[]}=await tx.query('select help_request_id from public.teaching_classroom_help_requests where interaction_id=$1',[existing.rows[0].interaction_id]);return {...existing.rows[0],help_request_id:h[0]?.help_request_id||null};}return existing.rows[0];}
+      await tx.query('select class_id from public.teaching_classes where student_id=$1 and class_id=$2 for update',[studentId,classId]);
       if(['JOIN','ASK_TEACHER','NEED_HELP'].includes(kind))await assertCurrentTeachingAuthority(tx,studentId,classId);
       const current=await tx.query("select class_session_id,state_version,lifecycle_state,to_jsonb(teaching_class_sessions)->>'classroom_engine' as classroom_engine from public.teaching_class_sessions where student_id=$1 and class_id=$2 for update",[studentId,classId]);
       if(session && (current.rows[0]?.class_session_id!==session.class_session_id||Number(current.rows[0]?.state_version)!==Number(session.state_version)))throw Object.assign(new Error('Class changed. Reload before acting.'),{status:409,code:'TEACHING_D14_STALE_CONTROLLER'});

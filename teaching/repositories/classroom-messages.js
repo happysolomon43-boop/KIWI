@@ -59,7 +59,7 @@ function createClassroomMessageRepository({presentationRepository,randomUUID,qua
  });}
  async function claim(studentId,classId,messageId){return lock(studentId,classId,async(tx,a,d,reason)=>{
   if(reason)return {held:true,reason};assertPolicy(d.policy);
-  const q=(await tx.query('select q.*,m.content,m.source_ref,m.context_anchor,m.admitted_lane,m.reply_to from public.teaching_classroom_message_queue q join public.teaching_classroom_messages m using(message_id,session_id) where q.session_id=$1 and q.message_id=$2 for update of q',[d.session_id,messageId])).rows[0];
+  const q=(await tx.query('select q.*,m.content,m.source_ref,m.context_anchor,m.admitted_lane,m.reply_to,m.receipt from public.teaching_classroom_message_queue q join public.teaching_classroom_messages m using(message_id,session_id) where q.session_id=$1 and q.message_id=$2 for update of q',[d.session_id,messageId])).rows[0];
   if(!q||q.accepted_proposal||['HELD','DONE'].includes(q.processing_state)||q.state==='answered'||q.state==='unresolved at closure')return {held:true,reason:'MESSAGE_NOT_ROUTABLE'};
   if(q.next_attempt_at&&new Date(q.next_attempt_at)>new Date(a.now)||q.lease_expires_at&&new Date(q.lease_expires_at)>new Date(a.now))return {held:true,reason:'MESSAGE_ROUTING_LEASE_HELD'};
   if(Number(q.attempts)>=value(d.policy,'messageRoutingRetryLimit')+1){await tx.query("update public.teaching_classroom_message_queue set processing_state='HELD',lease_token=null,lease_expires_at=null where message_id=$1",[messageId]);return {held:true,reason:'CLASSROOM_MESSAGE_ROUTING_BUDGET_EXHAUSTED'};}
@@ -68,7 +68,9 @@ function createClassroomMessageRepository({presentationRepository,randomUUID,qua
   // Durable recovery is scheduled before provider execution; worker crashes do not lose work.
   await presentationRepository.emitUsing(tx,a,d,E.CLASSROOM_MESSAGE_ROUTING_DUE,{message_id:messageId},{dueAt:iso(until),key:'message-recover:'+messageId+':'+token});
   const inputs=await presentationRepository.preparationInputsUsing(tx,a);
-  return {messageId,token,authority:presentationRepository.stamp(a),deliveryEpoch:Number(d.delivery_epoch),policy:d.policy,queue:q,chapter:inputs.chapter,guide:inputs.guide,resumeAnchor:d.resume_anchor,studentId,classId};
+  const queueContext=(await tx.query(`select m.message_id,m.content,m.source_ref,m.context_anchor,m.accepted_at,q.state,q.disposition,q.commitment_kind,q.commitment_anchor,q.reply_event_id,q.group_id from public.teaching_classroom_messages m join public.teaching_classroom_message_queue q using(message_id,session_id) where m.session_id=$1 and m.admitted_lane in ('conversation','clarification') order by m.accepted_at,m.message_id limit $2`,[d.session_id,value(d.policy,'deltaPageSize')])).rows;
+  const currentTeaching=(await tx.query('select c.payload,p.confirmed_at from public.teaching_classroom_conversation c join public.teaching_classroom_portions p using(portion_id,session_id) where c.session_id=$1 and c.server_sequence=$2',[d.session_id,d.last_published])).rows[0]||null;
+  return {messageId,token,queueContext,currentTeaching,authority:presentationRepository.stamp(a),deliveryEpoch:Number(d.delivery_epoch),policy:d.policy,queue:q,chapter:inputs.chapter,guide:inputs.guide,resumeAnchor:d.resume_anchor,studentId,classId};
  });}
  async function acceptDisposition(studentId,classId,claim,output){return lock(studentId,classId,async(tx,a,d,reason)=>{
   const q=(await tx.query('select * from public.teaching_classroom_message_queue where session_id=$1 and message_id=$2 for update',[d.session_id,claim.messageId])).rows[0];

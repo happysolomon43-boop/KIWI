@@ -76,6 +76,7 @@ test('actual D03/D05 candidate coordinator boundary validates and persists nativ
  const {repository:r,body}=setup(h),one=await r.admit(h.ids.studentId,h.ids.classId,body());const claim=await r.claim(h.ids.studentId,h.ids.classId,one.message_id);let ownerWrites=0,providerCalls=0;
  const d11=require('../../../teaching/repositories/d11-lesson-controller').createD11LessonControllerRepository({...h,randomUUID});
  const orchestrator={execute:async request=>{
+  assert.equal(request.academicInput.acceptance_receipt.message_id,one.message_id);assert.equal(request.academicInput.question_queue[0].message_id,one.message_id);assert.equal(request.academicInput.question_queue[0].content,'Why does the condition matter?');assert.ok(request.contextSpec.untrusted_refs.some(r=>r.ref==='message:'+one.message_id));
   const promptControl=require('../../../teaching/prompt-runtime').createTeachingPromptControlPlane();
   const aiBoundary=require('../../../teaching/ai/central-orchestrator-boundary').createCentralAIExecutionBoundary({aiRun:async()=>{providerCalls++;return {text:JSON.stringify(proposal(one.message_id)),modelId:'FIXTURE_ONLY',provider:'FIXTURE_ONLY'};}});
   const aiAdapter=require('../../../teaching/orchestrator/ai-adapter').createTeachingAIAdapter({promptControl,aiBoundary,allowCandidateEvaluation:true,assertRouteExecutable:()=>true,resolveCentralTaskId:()=> 'MAIN_CBT'});
@@ -108,3 +109,9 @@ test('group coverage is an explicit trusted decision; missing coverage keeps ori
  for(const [id,group] of [[one.message_id,[]],[two.message_id,[one.message_id]]]){const claim=await r.claim(h.ids.studentId,h.ids.classId,id);await r.acceptDisposition(h.ids.studentId,h.ids.classId,claim,proposal(id,{timing:'immediately',group}));}
  let called=0;const service=require('../../../teaching/classroom-remodel/message-service').createClassroomMessageService({repository:r,presentationRepository:h.repository,presentationService:{prepareSpan:async()=>{called++;return {accepted:true};}},directiveReader:async()=>f.directive()});await service.pump({studentId:h.ids.studentId,classId:h.ids.classId});assert.equal(called,0);const questions=(await h.read()).messages.questions;assert.equal(questions.every(q=>q.state==='ready'&&!q.reply_event_id),true);const rows=(await h.query('select lease_token,failure_code from public.teaching_classroom_message_queue where session_id=$1',[h.sessionId])).rows;assert.equal(rows.every(q=>q.lease_token===null&&q.failure_code==='CLASSROOM_MESSAGE_GROUP_COVERAGE_REQUIRED'),true);
 }));
+
+test('concurrent message admission, Notebook capture and authoritative reads share parent-first lock order',{skip},async()=>harness(async h=>{
+ const {repository:r,body}=setup(h),input=body(),note={studentId:h.ids.studentId,classId:h.ids.classId,content:'The condition matters.',sourceKind:'PERSONAL',idempotencyKey:'concurrent-linked-note'};
+ for(let n=0;n<4;n++)await Promise.all([r.admit(h.ids.studentId,h.ids.classId,input),h.d14Repository.addNotebook(note),h.read()]);
+ assert.equal((await h.query('select count(*)::int n from public.teaching_classroom_messages where session_id=$1',[h.sessionId])).rows[0].n,1);assert.equal((await h.query('select count(*)::int n from public.teaching_student_notebook_items where student_id=$1 and idempotency_key=$2',[h.ids.studentId,note.idempotencyKey])).rows[0].n,1);assert.equal((await h.read()).messages.remaining,1);
+},{policy:messagePolicy(),concurrent:true}));

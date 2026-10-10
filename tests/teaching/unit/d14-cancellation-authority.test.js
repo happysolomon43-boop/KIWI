@@ -10,6 +10,7 @@ function classroomFake(parent={class_state:'CANCELLED',course_state:'ACTIVE',tim
     statements.push({sql,values});
     if(sql.includes('from public.teaching_teacher_communications where student_id=$1 and idempotency_key=$2'))return {rows:[]};
     if(sql.includes('from public.teaching_classroom_interactions where student_id=$1 and idempotency_key=$2'))return {rows:[]};
+    if(sql.startsWith('select class_id from public.teaching_classes'))return {rows:[{class_id:'c'}]};
     if(sql.includes('from public.teaching_classes c')&&sql.includes('for share of c,co'))return {rows:[parent]};
     if(sql.includes('from public.teaching_class_sessions where student_id=$1 and class_id=$2 for update'))
       return {rows:[{class_session_id:'session',state_version:2,lifecycle_state:'ACTIVE',instructional_substate:'INSTRUCTION'}]};
