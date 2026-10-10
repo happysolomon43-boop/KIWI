@@ -4,7 +4,7 @@ const {hash}=require('./academic-artifacts');
 const contracts=require('./task-contracts');
 // Internal evaluation worker. Public response/help controls remain gated until
 // the entire action, feedback, assistance and correction path is qualified.
-function createClassroomTaskService({repository,coordinator,reviewer,presentationRepository,presentationService,turnProvider,turnReviewer}={}){
+function createClassroomTaskService({repository,coordinator,reviewer,presentationRepository,presentationService,turnProvider,turnReviewer,revisionRepository,adjustmentProvider}={}){
  if(!repository)throw new TypeError('Durable task repository required');
  async function process({studentId,classId,admissionId}){
   const claim=await repository.claimEvaluation(studentId,classId,admissionId);
@@ -51,12 +51,43 @@ function createClassroomTaskService({repository,coordinator,reviewer,presentatio
 
   return pump({studentId,classId});
  }
+ async function adjust({studentId,classId,turnId}){
+  const ready=await repository.actionContext(studentId,classId,turnId);if(ready.held)return ready;
+  const action=ready.turn.selected_action,operationKey='task-adjustment:'+turnId;
+  if(action.action==='request replanning'){
+   if(!revisionRepository||typeof adjustmentProvider?.replan!=='function')throw failure('CLASSROOM_REPLAN_OWNER_ROUTE_HELD',503);
+   const actual=await revisionRepository.context(studentId,classId);if(actual.held)return actual;
+   const prepared=await adjustmentProvider.replan({studentId,classId,operationKey,actual,acceptedAction:action,policy:ready.policy});
+   const applied=await revisionRepository.replan({studentId,classId,operationKey,...prepared,expected:actual.expected,work:actual.work});
+   return repository.completeAction(studentId,classId,turnId,{action:action.action,revisionId:applied.revisionId});
+  }
+  if(!action.new_task_required)return repository.completeAction(studentId,classId,turnId,{action:action.action,handling:'Accepted instruction realized in the confirmed feedback turn'});
+  if(typeof coordinator?.design!=='function'||typeof reviewer?.acceptDesign!=='function'||typeof turnReviewer?.acceptQuestion!=='function')throw failure('CLASSROOM_TASK_ADJUSTMENT_ROUTE_HELD',503);
+  const controller=new AbortController();let timer;
+  const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>{controller.abort();reject(failure('CLASSROOM_TASK_HANDLING_TIMEOUT',503));},value(ready.policy,'generationTimeoutMs'));});
+  const run=async()=>{
+   const proposal=await coordinator.design({studentId,classId,operationKey,acceptedAction:action,priorTask:ready.priorTask,admission:ready.admission,chapter:ready.sources.chapter,expected:ready.expected,policy:ready.policy,signal:controller.signal});
+   const validation=await reviewer.acceptDesign({studentId,classId,proposal,priorTask:ready.priorTask,admission:ready.admission,expected:ready.expected,signal:controller.signal});
+   const candidate=proposal.artifacts?.checks?.[0];
+   if(!validation?.independent||validation.variationOfTaskId!==ready.priorTask.id||validation.constructPreserved!==true||validation.cosmeticOnly!==false||!validation.variationReviewRef||candidate?.student_facing?.question?.trim()===ready.priorTask.public_question.text.trim()||candidate?.target_objective!==ready.priorTask.target_ref.id)throw failure('CLASSROOM_FRESH_VARIATION_NOT_VALIDATED',503);
+   if(controller.signal.aborted)throw failure('CLASSROOM_TASK_HANDLING_TIMEOUT',503);
+   const designed=await repository.design({studentId,classId,operationKey,proposal,validation,targetRef:ready.priorTask.target_ref,expected:ready.expected});
+   const expected=await presentationRepository.capture(studentId,classId);if(expected.held)return expected;
+   const generated=await turnProvider.generate({studentId,classId,kind:'question',operationKey:operationKey+':question',publicTask:require('./domain-contracts').projectTask(designed.task),assistanceCeiling:designed.task.assistance_ceiling,request:null,selectedAction:action,feedbackPoints:[],acceptedEvaluation:null,chapter:ready.sources.chapter,expected,policy:ready.policy,signal:controller.signal});
+   const accepted=await turnReviewer.acceptQuestion({studentId,classId,task:designed.task,generated,expected,signal:controller.signal});
+   if(!accepted?.accepted||!accepted.independent||!accepted.ownerRef||!accepted.executionId||accepted.taskId!==designed.task.id||accepted.contentHash!==hash({output:generated.output,directive:generated.directive})||accepted.authorityHash!==hash(expected.authority))throw failure('CLASSROOM_TASK_QUESTION_REVIEW_REQUIRED',503);
+   if(controller.signal.aborted)throw failure('CLASSROOM_TASK_HANDLING_TIMEOUT',503);
+   await presentationRepository.acceptSequence({studentId,classId,operationKey:operationKey+':question',output:generated.output,directive:generated.directive,expected,types:['text'],classroomTaskId:designed.task.id});
+   return repository.completeAction(studentId,classId,turnId,{action:action.action,taskId:designed.task.id,variationReviewRef:validation.variationReviewRef,questionReview:accepted});
+  };
+  try{return await Promise.race([run(),timeout]);}finally{clearTimeout(timer);}
+ }
  async function pump({studentId,classId}){
   const turn=await repository.pendingTurn(studentId,classId);if(!turn)return {held:true};
   const expected=await presentationRepository.capture(studentId,classId);if(expected.held)return expected;
   return presentationRepository.acceptSequence({studentId,classId,operationKey:'task-turn:'+turn.turn_id,output:turn.output,directive:turn.directive,expected,types:['text'],classroomTaskId:turn.task_id});
  }
  const owner=(user,id)=>{if(!user?.id||typeof id!=='string'||!id.trim())throw failure('CLASSROOM_OWNER_REQUIRED',401);return [user.id,id];};
- return Object.freeze({process,prepareHandling,pump,submit:(user,id,body)=>repository.submit(...owner(user,id),body),extend:(user,id,body)=>repository.extend(...owner(user,id),body),support:(user,id,body)=>repository.support(...owner(user,id),body)});
+ return Object.freeze({process,prepareHandling,adjust,pump,submit:(user,id,body)=>repository.submit(...owner(user,id),body),extend:(user,id,body)=>repository.extend(...owner(user,id),body),support:(user,id,body)=>repository.support(...owner(user,id),body)});
 }
 module.exports={createClassroomTaskService};

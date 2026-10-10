@@ -1,6 +1,7 @@
 BEGIN;
 CREATE TABLE public.teaching_classroom_task_turns(
  turn_id text PRIMARY KEY,task_id text NOT NULL,session_id text NOT NULL,operation_key text NOT NULL,
+ adjustment_state text NOT NULL DEFAULT 'PENDING' CHECK(adjustment_state IN('PENDING','APPLIED','HELD')),adjustment_outcome jsonb,
  kind text NOT NULL CHECK(kind IN('feedback','assistance','clarification')),
  state text NOT NULL DEFAULT 'PREPARED' CHECK(state IN('PREPARED','RELEASED','CONFIRMED','SUPERSEDED')),
  output jsonb NOT NULL,directive jsonb NOT NULL,receipt jsonb NOT NULL,selected_action jsonb NOT NULL,
