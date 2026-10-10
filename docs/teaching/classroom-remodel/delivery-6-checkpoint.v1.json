@@ -16,7 +16,11 @@
     "browserRun": 38062576119,
     "browserJob": 114243660816,
     "browserScope": "Existing Delivery 4/5 scripts only; no Delivery 6 task UI evidence",
-    "latestChanges": "Additional worker, source snapshot, protected read and race/recovery tests awaiting CI"
+    "latestChanges": "All seven native task tests pass; remaining workflow results recorded separately",
+    "latestVerifiedNativeCommit": "8c83cdf1f5370038e0ae1e91c29f0d8331d1d174",
+    "latestNativeRun": 38062867983,
+    "latestNativeJob": 114244507173,
+    "latestNativeTestsPassed": 133
   },
   "implemented": [
     "Owner-validated text task contracts with private criteria and explicit evidence intent",
@@ -44,8 +48,10 @@
     "webBuild": "PASS",
     "foundationVerifier": "PASS",
     "nativeTaskTests": {
-      "firstThree": "PASS_ON_VERIFIED_COMMIT",
-      "fourAdditional": "PENDING_CI"
+      "passed": 7,
+      "failed": 0,
+      "skipped": 0,
+      "sourceCommit": "8c83cdf1f5370038e0ae1e91c29f0d8331d1d174"
     },
     "connectedTaskBrowser": "NOT_IMPLEMENTED",
     "liveProviderEvidence": false
@@ -57,7 +63,7 @@
     "candidatePromptsRuntimeEffective": false
   },
   "remaining": [
-    "Run additional concurrency, rollback, stale-worker and protected takeover tests in native CI",
+    "Single accepted action/feedback integration is the first unfinished functional gate",
     "Bounded accepted single-action selection and private-safe feedback publication",
     "Task-related assistance and clarification with released/accessibly rendered exposure accounting",
     "Explicit teacher corrections, Board successor links, stale-output invalidation and evidence-owner handoff",
@@ -73,5 +79,5 @@
     "productionChanged": false
   },
   "rollback": "Inactive additive candidate; no deployed data or active bindings changed",
-  "nextAction": "Resolve the latest native CI gates, then implement one bounded accepted action and private-safe feedback publication before connecting task controls"
+  "nextAction": "Implement one bounded accepted action and private-safe feedback publication, then assistance/correction/replan and the connected UI"
 }
