@@ -488,7 +488,7 @@ function renderWorkspace(s){
         try {
           const target=await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(classId)}/classroom/protected-activity`);
           if(state.classId!==classId||!launch.isConnected)return;
-          if(target.owner==='D16')courses.openSection?.('work',{protectedActivity:target});
+          if(target.owner==='D16'){close({restore:false});courses.openSection?.('work',{protectedActivity:target});}
           else if(target.owner==='D17'){
             const handoff=await kiwiApiRequest(`/teaching/assessments/${encodeURIComponent(target.id)}/launch`);
             if(state.classId!==classId||!launch.isConnected)return;
