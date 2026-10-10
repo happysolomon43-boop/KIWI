@@ -7,7 +7,7 @@ const iso=d=>new Date(d).toISOString();
 function createClassroomMessageRepository({presentationRepository,randomUUID,qualified=false}={}){
  if(typeof presentationRepository?.withAuthority!=='function'||typeof randomUUID!=='function')throw new TypeError('Existing presentation authority transaction required');
  const lock=presentationRepository.withAuthority;
- async function enabled(tx,a,d){return qualified&&require('../classroom-remodel/message-contracts').ready(d.policy)&&!!(await tx.query("select to_regclass('public.teaching_classroom_messages') ready")).rows[0].ready;}
+ async function enabled(tx,a,d){if(!qualified)return false;try{assertPolicy(d.policy);}catch{return false;}return !!(await tx.query("select to_regclass('public.teaching_classroom_messages') ready")).rows[0].ready;}
  async function counts(tx,d){return Number((await tx.query('select count(*)::int n from public.teaching_classroom_allowance_charges where session_id=$1',[d.session_id])).rows[0].n);}
  async function event(tx,a,d,{role='system',type='notice',text,refs=[],eventId=null}){
   d.cursor=Number(d.cursor)+1;d.state_version=Number(d.state_version)+1;
@@ -89,6 +89,7 @@ function createClassroomMessageRepository({presentationRepository,randomUUID,qua
   const retries=value(d.policy,'messageRoutingRetryLimit'),hold=q.attempts>retries||code==='CLASSROOM_MESSAGE_OWNER_DECISION_REQUIRED';
   const due=new Date(new Date(a.now).getTime()+value(d.policy,'messageRetryBackoffMs'));
   await tx.query("update public.teaching_classroom_message_queue set processing_state=$2,lease_token=null,lease_expires_at=null,next_attempt_at=$3,failure_code=$4,updated_at=$5 where message_id=$1",[q.message_id,hold?'HELD':'RETRY',hold?null:due,code,a.now]);
+  d.state_version=Number(d.state_version)+1;await presentationRepository.saveUsing(tx,d);
   if(!hold)await presentationRepository.emitUsing(tx,a,d,E.CLASSROOM_MESSAGE_ROUTING_DUE,{message_id:q.message_id},{dueAt:iso(due),key:'message-retry:'+q.message_id+':'+q.attempts});
  }
  async function failed(studentId,classId,claim,code){return lock(studentId,classId,async(tx,a,d)=>{const q=(await tx.query('select * from public.teaching_classroom_message_queue where session_id=$1 and message_id=$2 for update',[d.session_id,claim.messageId])).rows[0];if(q?.lease_token===claim.token)await failUsing(tx,a,d,q,code);return {pending:true};});}
@@ -102,7 +103,7 @@ function createClassroomMessageRepository({presentationRepository,randomUUID,qua
    const unit=next?.payload.source_refs.some(r=>r.anchor===q.commitment_anchor||r.anchor?.startsWith(q.commitment_anchor+'.'));
    const closure=new Date(a.end)-new Date(a.now)<=value(d.policy,'closureLeadMs');
    if(q.release_hold||q.state==='ready'||q.commitment_kind==='boundary'&&suitable||q.commitment_kind==='unit'&&unit||q.commitment_kind==='closure'&&closure){
-    if(q.state!=='ready')await tx.query("update public.teaching_classroom_message_queue set state='ready',release_hold=true,resume_anchor=$3,updated_at=$2 where message_id=$1",[q.message_id,a.now,d.resume_anchor]);
+    if(q.state!=='ready'){await tx.query("update public.teaching_classroom_message_queue set state='ready',release_hold=true,resume_anchor=$3,updated_at=$2 where message_id=$1",[q.message_id,a.now,d.resume_anchor]);d.state_version=Number(d.state_version)+1;await presentationRepository.saveUsing(tx,d);}
     return q.reply_sequence_id?{sequenceId:q.reply_sequence_id,messageId:q.message_id}:{held:true,messageId:q.message_id};
    }
   }
