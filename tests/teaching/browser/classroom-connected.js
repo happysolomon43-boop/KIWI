@@ -50,7 +50,7 @@ async function main(){await harness(async h=>{
     const item={type:'image',content:{src:'/api/teaching/classes/'+classId+'/classroom/assets/'+assetId,alt:'Pending fixture visual'}};
     const pending=section.renderBoardItem(item);document.body.append(pending);section.releaseBoardVisuals(pending);pending.remove();const cancelled=window.fixtureAssetSignal.aborted;
     window.fixtureHoldAsset=false;URL.revokeObjectURL=url=>{revoked.push(url);revoke(url);};
-    const loaded=section.renderBoardItem(item);document.body.append(loaded);const img=loaded.querySelector('img');await new Promise((resolve,reject)=>{img.addEventListener('load',resolve,{once:true});img.addEventListener('error',()=>reject(Error('Fixture visual failed')), {once:true});});
+    const loaded=section.renderBoardItem(item);document.body.append(loaded);const img=loaded.querySelector('img');img.loading='eager';await new Promise((resolve,reject)=>{img.addEventListener('load',resolve,{once:true});img.addEventListener('error',()=>reject(Error('Fixture visual failed')), {once:true});});
     const objectUrl=img.src;section.releaseBoardVisuals(loaded);loaded.remove();return {cancelled,objectUrl,revoked};
    }finally{window.fixtureHoldAsset=false;URL.revokeObjectURL=revoke;}
   },{assetId:visualJob.asset_id,classId:h.ids.classId});assert.equal(cleanup.cancelled,true);assert.match(cleanup.objectUrl,/^blob:/);assert.ok(cleanup.revoked.includes(cleanup.objectUrl));
