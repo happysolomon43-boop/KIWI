@@ -254,7 +254,7 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
     try{[cardSet,sourceSnapshot]=await Promise.all([cardSetReader({studentId,classId,stage}),sourceReader({studentId,classId})]);}
     catch(error){
       if(/^TEACHING_D27_CLASS_CARD_(SET_NOT_ADOPTED|SET_STALE|SOURCE_CHANGED|OWNER_UNAVAILABLE)$/.test(error?.code||'')||
-        error?.code==='TEACHING_D14_CARD_SET_CLASS_NOT_OWNED')
+        error?.code==='TEACHING_D14_CARD_SET_CLASS_NOT_OWNED'||/^TEACHING_D14_NOTE_(APPROVED_SCOPE_UNAVAILABLE|SOURCE_)/.test(error?.code||''))
         return {state:stage==='PRE_CLASS'?'ROUTE_HELD':'RECONCILIATION_HELD',reason:error.code,published:false};
       throw error;
     }
