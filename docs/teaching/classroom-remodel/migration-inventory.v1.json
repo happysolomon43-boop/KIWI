@@ -385,21 +385,21 @@
         },
         {
           "file": "teaching/repositories/d11-lesson-controller.js",
-          "line": 681,
+          "line": 682,
           "identities": [
             "teaching.lesson.pre_class_lesson_planning"
           ]
         },
         {
           "file": "teaching/repositories/d11-lesson-controller.js",
-          "line": 913,
+          "line": 914,
           "identities": [
             "teaching.lesson.pre_class_lesson_planning"
           ]
         },
         {
           "file": "teaching/repositories/d11-lesson-controller.js",
-          "line": 1561,
+          "line": 1579,
           "identities": [
             "teaching.lesson.pre_class_lesson_planning"
           ]
@@ -464,21 +464,21 @@
         },
         {
           "file": "teaching/repositories/d11-lesson-controller.js",
-          "line": 681,
+          "line": 682,
           "identities": [
             "teaching.lesson.pre_class_lesson_planning"
           ]
         },
         {
           "file": "teaching/repositories/d11-lesson-controller.js",
-          "line": 913,
+          "line": 914,
           "identities": [
             "teaching.lesson.pre_class_lesson_planning"
           ]
         },
         {
           "file": "teaching/repositories/d11-lesson-controller.js",
-          "line": 1561,
+          "line": 1579,
           "identities": [
             "teaching.lesson.pre_class_lesson_planning"
           ]
@@ -7219,5 +7219,5 @@
     }
   ],
   "searchMethod": "Tracked UTF-8 source exact canonical and legacy alias references; compiled registry decoded through its verified reader. Absence of literal references is not proof of no dynamic/external caller.",
-  "searchFilesSha256": "a1863b8feb13bb413f0f85dc126b7430cd55fe0072ffb31292202ca75cda6a75"
+  "searchFilesSha256": "4d0b0fa3ef696dd01f11e50ba56ce5e255462732452de740b6d304b05961aeb1"
 }

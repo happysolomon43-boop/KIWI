@@ -76,6 +76,12 @@ function assembleStudentFactPack({ snapshotRef, currentSnapshotRef = snapshotRef
 function classClosureTranslation(closure) {
   const source = closure?.fact_pack?.student_translation_fact_pack;
   if (!closure?.closure_fact_id || !Array.isArray(source?.facts)) fail('TEACHING_D14_CLOSURE_FACTS_REQUIRED');
-  return assembleStudentFactPack({ snapshotRef: `class-closure:${closure.closure_fact_id}@${closure.controller_version}`, facts: source.facts });
+  const classroom=closure.fact_pack.classroom;
+  const facts=[...source.facts];
+  if(classroom){
+    const values={classroom_published_portion_count:classroom.published.length,classroom_render_confirmed_portion_count:classroom.published.filter(p=>p.render_confirmed).length,classroom_pending_question_count:classroom.pending_questions.length,classroom_pending_evaluation_count:classroom.pending_evaluations.length,classroom_late_evaluation_count:classroom.evaluations.filter(e=>e.completed_after_closure).length,classroom_resume_anchor:classroom.position.resume_anchor,classroom_follow_up_scheduled:classroom.carry_forward.scheduled,classroom_rendering_proves_learning:false};
+    for(const [semantic_key,effective_state] of Object.entries(values))facts.push({...source.facts[0],semantic_key,effective_state,provenance_refs:[closure.classroom_record_ref?`classroom-record:${closure.classroom_record_ref}`:`class-closure:${closure.closure_fact_id}`],uncertainty:null});
+  }
+  return assembleStudentFactPack({ snapshotRef: `class-closure:${closure.closure_fact_id}@${closure.controller_version}${closure.classroom_record_hash?':'+closure.classroom_record_hash:''}`, facts });
 }
 module.exports = { assembleStudentFactPack, classClosureTranslation };

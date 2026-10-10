@@ -227,9 +227,16 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
     const ctx=await context(studentId,classId);
     if(!ctx.blueprint||ctx.blueprint.blueprint_state!=='VALIDATED')return {state:'ROUTE_HELD',reason:'APPROVED_LESSON_PLAN_REQUIRED'};
     const previous=await repository.latestNote(studentId,classId);
-    const closure=stage==='POST_CLASS'?await d11Repository.getClosureFact(studentId,classId):null;
+    async function closureForNote(){
+      const fact=stage==='POST_CLASS'?await d11Repository.getClosureFact(studentId,classId):null;
+      if(!fact?.fact_pack?.classroom||!d11Repository.classroomReconciliation)return fact;
+      const reconciled=await d11Repository.classroomReconciliation(studentId,classId);
+      return {...fact,fact_pack:{...fact.fact_pack,classroom:reconciled.record},classroom_record_ref:reconciled.record_id,classroom_record_hash:reconciled.content_hash};
+    }
+    const closure=await closureForNote();
     if(stage==='POST_CLASS'&&!closure)fail('TEACHING_D14_CLOSURE_REQUIRED');
     const summary=stage==='POST_CLASS'?await d11Repository.latestSummary(studentId,classId):null;
+    if(closure?.classroom_record_hash&&summary?.translation_provenance?.classroom_record_hash!==closure.classroom_record_hash)return {state:'RECONCILIATION_HELD',reason:'CURRENT_CLASSROOM_SUMMARY_REQUIRED'};
     if(stage==='POST_CLASS'&&!summary)return {state:'RECONCILIATION_HELD',reason:'FINAL_CLASS_SUMMARY_REQUIRED'};
     if(!cardSetReader||!sourceReader){
       const reason='D27_CARD_SET_OR_APPROVED_SOURCE_UNAVAILABLE';
@@ -241,9 +248,9 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
     const [cardSet,sourceSnapshot]=await Promise.all([cardSetReader({studentId,classId,stage}),sourceReader({studentId,classId})]);
     const planned=ctx.blueprint.planned_learning_unit_refs||[];
     const completed=new Set(closure?.fact_pack?.completed_objective_refs||[]);
-    const actual=[...new Set((ctx.blueprint.blueprint_payload?.objectives||[]).filter((o)=>completed.has(o.id)).map((o)=>o.learning_unit_ref))];
+    const actual=closure?.fact_pack?.classroom?closure.fact_pack.classroom.confirmed_taught_learning_unit_refs:[...new Set((ctx.blueprint.blueprint_payload?.objectives||[]).filter((o)=>completed.has(o.id)).map((o)=>o.learning_unit_ref))];
     const request=noteRequest({stage,context:ctx,cardSet,sourceSnapshot,closure,summary,priorNote:previous,plannedLearningUnits:planned,actualTaughtLearningUnits:actual});
-    const key=`d14-note:${classId}:${stage}:${request.binding.lessonPlanRef}:${request.binding.cardSetRef}:${request.binding.closureRef||'pre'}`;
+    const key=`d14-note:${classId}:${stage}:${request.binding.lessonPlanRef}:${request.binding.cardSetRef}:${request.binding.closureRef||'pre'}${request.binding.classroomRecordHash?':'+request.binding.classroomRecordHash:''}`;
     if(!studyIntelligence){
       const row=await repository.saveNote({studentId,classId,state:stage==='PRE_CLASS'?'ROUTE_HELD':'RECONCILIATION_HELD',stage,binding:request.binding,idempotencyKey:key});
       return {state:row.state,routeQualification:'UNQUALIFIED_UNTIL_D30',published:false};
@@ -251,7 +258,7 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
     // No database transaction spans the central Teaching Orchestrator call.
     const result=await studyIntelligence.execute(request);
     const current=await context(studentId,classId);
-    const fresh=noteRequest({stage,context:current,cardSet:await cardSetReader({studentId,classId,stage}),sourceSnapshot:await sourceReader({studentId,classId}),closure:stage==='POST_CLASS'?await d11Repository.getClosureFact(studentId,classId):null,summary:stage==='POST_CLASS'?await d11Repository.latestSummary(studentId,classId):null,priorNote:previous,plannedLearningUnits:planned,actualTaughtLearningUnits:actual});
+    const fresh=noteRequest({stage,context:current,cardSet:await cardSetReader({studentId,classId,stage}),sourceSnapshot:await sourceReader({studentId,classId}),closure:await closureForNote(),summary:stage==='POST_CLASS'?await d11Repository.latestSummary(studentId,classId):null,priorNote:previous,plannedLearningUnits:planned,actualTaughtLearningUnits:actual});
     if(JSON.stringify(fresh.binding)!==JSON.stringify(request.binding))fail('TEACHING_D14_STALE_NOTE_RESULT');
     const output=result?.validatedResult?.output;
     if(!result?.accepted||!output)return {state:'ROUTE_HELD',reason:'MODEL_RESULT_NOT_ACCEPTED'};

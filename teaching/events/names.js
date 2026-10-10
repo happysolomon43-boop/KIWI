@@ -23,6 +23,7 @@ const TEACHING_EVENTS = Object.freeze({
   CLASSROOM_TASK_SUPPORT_DUE: 'teaching.classroom.task_support_due',
   CLASSROOM_TASK_ADJUSTMENT_DUE: 'teaching.classroom.task_adjustment_due',
   CLASSROOM_TASK_TURN_DUE: 'teaching.classroom.task_turn_due',
+  CLASSROOM_CLOSURE_RECONCILIATION_DUE: 'teaching.classroom.closure_reconciliation_due',
   CLASSROOM_TASK_EVALUATION_DUE: 'teaching.classroom.task_evaluation_due',
   CLASSROOM_TASK_WINDOW_EXPIRY_DUE: 'teaching.classroom.task_window_expiry_due',
   CLASSROOM_MESSAGE_ROUTING_DUE: 'teaching.classroom.message_routing_due',

@@ -1,0 +1,32 @@
+{
+  "version": "classroom-delivery-7-checkpoint.v1",
+  "delivery": 7,
+  "status": "INACTIVE_IN_PROGRESS_CLOSURE_CONTINUITY_CORE_IMPLEMENTED",
+  "branch": "feat/classroom-remodel-delivery-7",
+  "baseCommit": "69c6a3cb975697a51947dd804a0edc45497a646d",
+  "activation": "INACTIVE",
+  "productionQualified": false,
+  "migration": "20261010192519_classroom_closure_continuity.sql",
+  "localEvidence": {
+    "unitTestsPassed": 1719,
+    "embeddedPostgresMigrationsApplied": 43,
+    "closureDatabaseTestsPassed": 4,
+    "closureDatabaseTestsSkipped": 0,
+    "nativeConcurrencyQualified": false,
+    "liveProviderQualified": false
+  },
+  "remainingDelivery7": [
+    "Reviewed coordinator continuity/closure mode workflow",
+    "Homework and formal assessment guidance adapters",
+    "Complete history availability, summaries and publication-state UI",
+    "Cross-Class owner workflow and connected browser acceptance"
+  ],
+  "inheritedAcceptanceBlockers": [
+    "Numerical configuration owner adoption",
+    "Live provider and independent reviewer qualification",
+    "Validated source-correction chapter, guide, plan and remap bundle",
+    "44-scenario qualification ledger remains NOT_QUALIFIED"
+  ],
+  "delivery8": "BLOCKED_BY_DELIVERIES_1_TO_7_ACCEPTANCE",
+  "sharedOrProductionMigrationsApplied": false
+}

@@ -1,16 +1,31 @@
 'use strict';
+const failureForRetry=code=>Object.assign(new Error(code),{code});
 const {TEACHING_EVENTS}=require('../events/names');
 const {RECONCILIATION_DISPOSITIONS:R}=require('../runtime/constants');
 const {createClassroomPresentationRepository}=require('../repositories/classroom-presentation');
 const {createClassroomPresentationService}=require('./presentation-service');
-function createClassroomPresentationRuntime({query,withTransaction,randomUUID,d14Repository,eventStore,outboxStore,eventRuntime,publishedEvents,d11Repository,d12Repository,...options}={}){
+function createClassroomPresentationRuntime({query,withTransaction,randomUUID,d14Repository,eventStore,outboxStore,eventRuntime,publishedEvents,d11Repository,d12Repository,d11Service,d14Service,...options}={}){
  const repository=createClassroomPresentationRepository({query,withTransaction,randomUUID,d14Repository,dueEventStore:eventStore,outboxStore});
  const presenter=options.presenter||(options.orchestrator&&options.requirementsReader?require('./presentation-intelligence').createClassroomPresentationIntelligence({orchestrator:options.orchestrator,repository,d11Repository,requirementsReader:options.requirementsReader}):null);
- const service=createClassroomPresentationService({...options,presenter,repository});
+ const continuity=d11Repository?require('../repositories/classroom-continuity').createClassroomContinuityRepository({query,withTransaction,randomUUID,presentationRepository:repository}):null;
+ if(continuity)d11Repository.connectClassroomContinuity(continuity);
+ const service=createClassroomPresentationService({...options,presenter,repository,continuity});
  if(!eventRuntime||!publishedEvents)throw new TypeError('Presentation requires the existing durable runtime');
  for(const type of [TEACHING_EVENTS.CLASSROOM_PORTION_RELEASE_DUE,TEACHING_EVENTS.CLASSROOM_DELIVERY_END_DUE])eventRuntime.register(type,{
   reconcile:async event=>{if(!event.payload?.student_id||!event.payload?.class_id)return {disposition:R.SUPERSEDED,reason:'CLASSROOM_EVENT_OWNER_MISSING'};return {disposition:R.ACTIONABLE};},
   handle:async event=>{const {student_id:studentId,class_id:classId}=event.payload;const result=type===TEACHING_EVENTS.CLASSROOM_PORTION_RELEASE_DUE?await repository.release(studentId,classId,{event}):await repository.reconcile(studentId,classId);return {safeMetadata:{released:result.released===true,held:result.held===true,reason:result.reason||null}};},
+ });
+ if(continuity)eventRuntime.register(TEACHING_EVENTS.CLASSROOM_CLOSURE_RECONCILIATION_DUE,{
+  reconcile:async event=>event.payload?.student_id&&event.payload?.class_id?{disposition:R.ACTIONABLE}:{disposition:R.SUPERSEDED,reason:'CLASSROOM_EVENT_OWNER_MISSING'},
+  handle:async event=>{
+   const {student_id:studentId,class_id:classId}=event.payload;
+   await continuity.latestRecord(studentId,classId);
+   if(!d11Service||!d14Service)return {safeMetadata:{held:true,reason:'CLASSROOM_RECONCILIATION_OWNERS_UNAVAILABLE'}};
+   const summary=await d11Service.processClassClosureArtifacts(event);
+   if(summary.held)throw failureForRetry(summary.reason);
+   const note=await d14Service.runStudyStage({studentId,classId,stage:'POST_CLASS'});
+   return {safeMetadata:{held:['ROUTE_HELD','RECONCILIATION_HELD'].includes(note.state),published:note.published===true}};
+  },
  });
  let messageRuntime=null;
  if(options.messages){
@@ -40,6 +55,6 @@ function createClassroomPresentationRuntime({query,withTransaction,randomUUID,d1
   const studentId=event.actorId||event.payload?.student_id,classId=event.payload?.class_id;if(!studentId||!classId)return {noop:true};
   try{return await repository.reconcile(studentId,classId);}catch(error){if(error.code==='CLASSROOM_DELIVERY_NOT_PREPARED'&&type===TEACHING_EVENTS.CLASSROOM_INSTRUCTION_READY){if(typeof options.initialPace!=='string')return {held:true,reason:'CLASSROOM_INITIAL_PACE_NOT_ADOPTED'};return service.prepare({studentId,classId,pace:options.initialPace});}if(['CLASSROOM_SESSION_NOT_REMODELED','CLASSROOM_DELIVERY_NOT_PREPARED','CLASSROOM_SESSION_NOT_FOUND'].includes(error.code))return {noop:true};throw error;}
  }}));
- return Object.freeze({repository,service,messages:messageRuntime,tasks:taskRuntime,revisions:revisionRepository,registrations,activation:'INACTIVE',productionQualified:false});
+ return Object.freeze({repository,service,continuity,messages:messageRuntime,tasks:taskRuntime,revisions:revisionRepository,registrations,activation:'INACTIVE',productionQualified:false});
 }
 module.exports={createClassroomPresentationRuntime};

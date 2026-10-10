@@ -19,12 +19,14 @@ async function harness(run,{concurrent=false,policy=fixturePolicy(),learningUnit
   const dueEventStore=require('../../../teaching/runtime/postgres-event-store').createPostgresTeachingEventStore({query,randomUUID});
   const outboxStore=require('../../../teaching/runtime/postgres-outbox-store').createPostgresTeachingOutboxStore({query,randomUUID});
   const repository=require('../../../teaching/repositories/classroom-presentation').createClassroomPresentationRepository({query,withTransaction,randomUUID,d14Repository,dueEventStore,outboxStore});
+  const continuity=require('../../../teaching/repositories/classroom-continuity').createClassroomContinuityRepository({query,withTransaction,randomUUID,presentationRepository:repository});
+  d11Repository.connectClassroomContinuity(continuity);
   await repository.initialize({studentId:ids.studentId,classId:ids.classId,policy,pace:'normal'});
   const read=()=>repository.read(ids.studentId,ids.classId,{snapshot:true});
   const args=(snapshot,extra)=>({schemaVersion:'classroom-domain.v1',sessionId,operationKey:randomUUID(),expectedControllerVersion:snapshot.controller_version,expectedDeliveryVersion:snapshot.delivery_version,deliveryEpoch:snapshot.delivery_epoch,controlEpoch:snapshot.control_epoch,clientId:'first',...extra});
   const accept=async output=>repository.acceptSequence({studentId:ids.studentId,classId:ids.classId,operationKey:randomUUID(),output:output||f.opening(),directive:f.directive(),expected:await repository.capture(ids.studentId,ids.classId),types:['text']});
   if(concurrent){await client.query('COMMIT');committed=true;}
-  await run({ids,sessionId,query,withTransaction,repository,read,args,accept,d14Repository,dueEventStore,d11Repository,academic,artifacts});
+  await run({ids,sessionId,query,withTransaction,repository,read,args,accept,d14Repository,dueEventStore,d11Repository,academic,artifacts,continuity});
  }finally{if(!committed)await client.query('ROLLBACK');client.release();await pool.end();}}
 
 module.exports={harness};

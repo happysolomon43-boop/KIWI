@@ -245,6 +245,7 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
   async function latestNote(studentId,classId){const {rows}=await query('select * from public.teaching_class_study_note_versions where student_id=$1 and class_id=$2 order by version_no desc limit 1',[studentId,classId]);return rows[0]||null;}
   async function saveNote({studentId,classId,state,stage,binding,payload={},validation={},closureFactId=null,idempotencyKey}){
     return withTransaction(async(tx)=>{
+      if(binding.classroomRecordHash)await d11Repository.assertClassroomReconciliationUsing(tx,studentId,classId,binding.classroomRecordHash);
       const previous=await tx.query('select * from public.teaching_class_study_note_versions where student_id=$1 and class_id=$2 order by version_no desc limit 1 for update',[studentId,classId]);
       const old=previous.rows[0];if(old?.idempotency_key===idempotencyKey)return old;
       const {rows}=await tx.query('insert into public.teaching_class_study_note_versions(note_version_id,student_id,class_id,version_no,state,stage,binding,note_payload,validation,closure_fact_id,idempotency_key) values($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10,$11) returning *',[randomUUID(),studentId,classId,Number(old?.version_no||0)+1,state,stage,JSON.stringify(binding),JSON.stringify(payload),JSON.stringify(validation),closureFactId,idempotencyKey]);return rows[0];

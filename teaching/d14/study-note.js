@@ -16,6 +16,7 @@ function bindingFrom({context,cardSet,closure=null,summary=null,sourceSnapshot})
     sourceSnapshotRef:sourceSnapshot.ref, cardSetRef:cardSet.ref,
     closureRef:closure?`${closure.closure_fact_id}@${closure.controller_version}`:null,
     summaryRef:summary?`${summary.class_summary_id}@${summary.version_no}`:null,
+    ...(closure?.classroom_record_hash?{classroomRecordRef:closure.classroom_record_ref,classroomRecordHash:closure.classroom_record_hash}:{}),
   });
 }
 function validateStageOutput({output,stage,binding,plannedLearningUnits,actualTaughtLearningUnits=[],sourceRefs=[],cardSet,priorNote=null}){

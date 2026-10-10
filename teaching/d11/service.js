@@ -1048,11 +1048,14 @@ function createD11Service({
   async function processClassClosureArtifacts(event) {
     const studentId=event?.payload?.student_id || canonicalEventField(event,'actorId','actor_id');
     const classId=event?.payload?.class_id;
-    const closure=await repository.getClosureFact(studentId,classId);
+    let closure=await repository.getClosureFact(studentId,classId);
     if(!closure) fail('Committed Class closure fact is missing.','TEACHING_D11_CLOSURE_FACT_MISSING',409);
     const context=await repository.closureContext(studentId,classId);
-    const summaryKey='d11-class-summary:'+closure.closure_fact_id;
-    const noteKey='d11-teacher-note:'+closure.closure_fact_id;
+    const reconciliation=closure.fact_pack?.classroom&&repository.classroomReconciliation?await repository.classroomReconciliation(studentId,classId):null;
+    if(reconciliation)closure={...closure,fact_pack:{...closure.fact_pack,classroom:reconciliation.record},classroom_record_ref:reconciliation.record_id,classroom_record_hash:reconciliation.content_hash};
+    const suffix=reconciliation?':'+reconciliation.content_hash:'';
+    const summaryKey='d11-class-summary:'+closure.closure_fact_id+suffix;
+    const noteKey='d11-teacher-note:'+closure.closure_fact_id+suffix;
 
     const { classClosureTranslation } = require('../d14/fact-pack');
     const translation=classClosureTranslation(closure);
@@ -1110,6 +1113,12 @@ function createD11Service({
       }
     }
 
+    if(reconciliation){
+      const current=await repository.classroomReconciliation(studentId,classId);
+      if(current.content_hash!==reconciliation.content_hash)return {held:true,reason:'CLASSROOM_CLOSURE_RESULT_STALE'};
+      summaryProvenance={...summaryProvenance,classroom_record_ref:reconciliation.record_id,classroom_record_hash:reconciliation.content_hash};
+      noteProvenance={...noteProvenance,classroom_record_ref:reconciliation.record_id,classroom_record_hash:reconciliation.content_hash};
+    }
     const [summary,teacherNote]=await Promise.all([
       repository.persistSummary({
         studentId,classId,classSessionId:closure.class_session_id,closureFactId:closure.closure_fact_id,
