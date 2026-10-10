@@ -23,7 +23,7 @@ function createClassroomPresentationIntelligence({orchestrator,repository,d11Rep
    resultContract:{...base.resultContract,output_schema_id:schema.id,output_schema_version:schema.version},
    academicInput:{chapter:args.chapter,explanation_guide:args.guide,interaction_directive:args.directive,pinned_numeric_policy:args.policy},
    schemaValidator:schema.validate,domainValidator:schema.validate,provenanceValidator:schema.validate,
-   provisionalResultSink:async validated=>repository.acceptSequence({studentId:args.studentId,classId:args.classId,operationKey:args.operationKey,output:validated.output,directive:args.directive,expected:args.expected,types:args.types,assets:args.assets,messageRefs:args.messageRefs||[]}),
+   provisionalResultSink:async validated=>repository.acceptSequence({studentId:args.studentId,classId:args.classId,operationKey:args.operationKey,output:validated.output,directive:args.directive,expected:args.expected,types:args.types,assets:args.assets,messageRefs:args.messageRefs||[],messageToken:args.messageToken}),
   };
   const pin=args.expected.authority.runtimeVersions?.promptBindings?.find(p=>p.artifact_kind==='opening');
   if(!pin||pin.prompt_sha256!==request.candidatePromptBinding.promptSha256||pin.schema_version!==schema.version)throw failure('CLASSROOM_GENERATION_PROMPT_PIN_CONFLICT',503);

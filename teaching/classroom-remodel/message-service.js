@@ -28,12 +28,12 @@ function createClassroomMessageService({repository,presentationRepository,presen
    // Trusted adopted policy supplies the entire Directive. Model guidance is
    // input to that reader, never timing/permission authority in its own right.
    const binding=await directiveReader({studentId,classId,question:q,proposal:q.accepted_proposal,expected});
-   if(binding.task_ref!==null||binding.response_window!==null||binding.accepted_evaluation!==null||binding.expected_student_action!=='none'||binding.evidence_intent!=='instruction_only'||binding.resume_at!==q.resume_anchor)throw failure('CLASSROOM_MESSAGE_DIRECTIVE_CONFLICT');
+   if(binding.task_ref!==null||binding.response_window!==null||binding.accepted_evaluation!==null||(q.disposition==='request clarification'?!['none','explanation','reasoning'].includes(binding.expected_student_action):binding.expected_student_action!=='none')||binding.evidence_intent!=='instruction_only'||binding.resume_at!==q.resume_anchor)throw failure('CLASSROOM_MESSAGE_DIRECTIVE_CONFLICT');
    const bound=bindDirective(selected,binding);if(!bound.directive)throw failure('CLASSROOM_MESSAGE_ACTION_UNAVAILABLE');
-   const result=await presentationService.prepareSpan({studentId,classId,operationKey:'message-reply:'+q.message_id+':'+expected.deliveryEpoch,directive:bound.directive,types:['text'],assets:[],messageRefs:[q.message_id]});
+   const result=await presentationService.prepareSpan({studentId,classId,operationKey:'message-reply:'+q.message_id+':'+expected.deliveryEpoch,directive:bound.directive,types:['text'],assets:[],messageRefs:[q.message_id],messageToken:q.lease_token});
    if(result.accepted!==true)throw failure(result.reason||'CLASSROOM_MESSAGE_REPLY_HELD',503);
    return result;
-  }catch(e){await repository.replyFailed(studentId,classId,q.message_id,e.code||'CLASSROOM_MESSAGE_REPLY_HELD');return {pending:true};}
+  }catch(e){await repository.replyFailed(studentId,classId,q.message_id,e.code||'CLASSROOM_MESSAGE_REPLY_HELD',q.lease_token);return {pending:true};}
  }
  return Object.freeze({admit:(user,id,input)=>repository.admit(...owner(user,id),input),questions:async(user,id)=>(await presentationRepository.read(...owner(user,id),{snapshot:true})).messages,process,pump});
 }

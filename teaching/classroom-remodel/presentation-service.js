@@ -27,7 +27,7 @@ function createClassroomPresentationService({repository,policyReader,openingDire
  }
  // Only a trusted coordinator calls this method. No public request supplies a directive.
  // Generation happens after capture and before acceptance, outside all DB transactions.
- async function prepareSpan({studentId,classId,operationKey,directive,types,assets,messageRefs=[]}){
+ async function prepareSpan({studentId,classId,operationKey,directive,types,assets,messageRefs=[],messageToken=null}){
   if(typeof presenter?.generate!=='function')return {accepted:false,reason:'CLASSROOM_PRESENTER_ROUTE_HELD'};
   const expected=await repository.capture(studentId,classId);if(expected.held)return expected;
   const config=expected.policy;if(!require('./state-policy').capabilityReadiness(config,'generation').ready)throw failure('CLASSROOM_GENERATION_POLICY_MISSING',503);
@@ -35,10 +35,10 @@ function createClassroomPresentationService({repository,policyReader,openingDire
   const abort=new AbortController();let timer;
   const expired=new Promise(resolve=>{timer=setTimeout(()=>{abort.abort();resolve({held:true,reason:'CLASSROOM_GENERATION_OUTCOME_UNKNOWN'});},value(config,'generationTimeoutMs'));});
   let output;
-  try{output=await Promise.race([presenter.generate({studentId,classId,operationKey,directive,chapter:prepared.chapter,guide:prepared.guide,authority:expected.authority,expected,types,assets,messageRefs,policy:config,signal:abort.signal,timeoutMs:value(config,'generationTimeoutMs'),retryLimit:value(config,'generationRetryLimit'),budget:value(config,'generationBudget')}),expired]);}
+  try{output=await Promise.race([presenter.generate({studentId,classId,operationKey,directive,chapter:prepared.chapter,guide:prepared.guide,authority:expected.authority,expected,types,assets,messageRefs,messageToken,policy:config,signal:abort.signal,timeoutMs:value(config,'generationTimeoutMs'),retryLimit:value(config,'generationRetryLimit'),budget:value(config,'generationBudget')}),expired]);}
   finally{clearTimeout(timer);}
   if(output?.held)return {accepted:false,reason:output.reason};
-  return repository.acceptSequence({studentId,classId,operationKey,directive,output,expected,types,assets,messageRefs});
+  return repository.acceptSequence({studentId,classId,operationKey,directive,output,expected,types,assets,messageRefs,messageToken});
  }
  function mutate(method,user,id,body,options){const checked=input(body,options);const owned=owner(user,id);return (async()=>{const result=await repository[method](...owned,checked);if(!result.serverTime)return result;
   const receipt=require('./domain-contracts').validateReceipt({operation_id:checked.operationKey,idempotency_key:checked.operationKey,session_id:result.sessionId,accepted:result.accepted,applied:result.applied,outcome:result.accepted?(result.replay?'already_applied':'applied'):'dependency_hold',controller_version:result.controllerVersion,delivery_version:result.deliveryVersion,delivery_epoch:result.deliveryEpoch,control_epoch:result.controlEpoch,server_time:result.serverTime,reconciliation_required:!result.accepted});return {...result,wire_schema_version:'classroom-presentation-wire.v1',receipt};})();}

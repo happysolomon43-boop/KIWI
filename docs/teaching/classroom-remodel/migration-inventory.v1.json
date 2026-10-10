@@ -3906,7 +3906,15 @@
       "activeBinding": "RETAINED_LEGACY",
       "replacementQualification": "NOT_QUALIFIED",
       "directRuntimeReferences": [],
-      "references": [],
+      "references": [
+        {
+          "file": "tests/teaching/unit/classroom-messages.test.js",
+          "line": 10,
+          "identities": [
+            "teaching.pedagogy.subject_sensitive_instructional_strategy"
+          ]
+        }
+      ],
       "consumerStatus": "NO_LITERAL_RUNTIME_CALLER_FOUND_GENERIC_OR_EXTERNAL_CALLERS_REQUIRE_REVIEW",
       "requiredExtension": null
     },
@@ -7197,5 +7205,5 @@
     }
   ],
   "searchMethod": "Tracked UTF-8 source exact canonical and legacy alias references; compiled registry decoded through its verified reader. Absence of literal references is not proof of no dynamic/external caller.",
-  "searchFilesSha256": "1e3da42fdf867ceb5bbfc7f713803d794281642a9ac9869aa0cc13f5c4f1fc0a"
+  "searchFilesSha256": "9abcefb3e0b6145694121d0d2e2e6214dd88d70ee6198c0c90161a2a30a6215e"
 }

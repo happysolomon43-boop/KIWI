@@ -21,6 +21,7 @@ CREATE TABLE public.teaching_classroom_message_queue (
  commitment_anchor text, committed_at timestamptz, resume_anchor text, release_hold boolean NOT NULL DEFAULT false,
  reply_sequence_id text, reply_event_id text, clarification_open boolean NOT NULL DEFAULT false,
  processing_state text NOT NULL DEFAULT 'PENDING' CHECK(processing_state IN('PENDING','PROCESSING','RETRY','DONE','HELD')),
+ answer_attempts integer NOT NULL DEFAULT 0 CHECK(answer_attempts>=0),
  attempts integer NOT NULL DEFAULT 0 CHECK(attempts>=0), lease_token text, lease_expires_at timestamptz, next_attempt_at timestamptz,
  failure_code text, accepted_proposal jsonb, updated_at timestamptz NOT NULL DEFAULT now(),
  FOREIGN KEY(message_id,session_id) REFERENCES public.teaching_classroom_messages(message_id,session_id) ON DELETE RESTRICT,

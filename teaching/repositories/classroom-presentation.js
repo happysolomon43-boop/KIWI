@@ -64,7 +64,7 @@ function createClassroomPresentationRepository({query,withTransaction,randomUUID
   });
  }
  async function capture(studentId,classId){return locked(studentId,classId,async(tx,a,d,reason)=>{if(reason)return {held:true,reason};return {authority:stamp(a),deliveryEpoch:Number(d.delivery_epoch),policy:d.policy,sessionId:d.session_id,binding:a.binding,pace:d.pace};});}
- async function acceptSequence({studentId,classId,operationKey,output,directive,expected,types=[],assets=[],messageRefs=[]}){
+ async function acceptSequence({studentId,classId,operationKey,output,directive,expected,types=[],assets=[],messageRefs=[],messageToken=null}){
   return locked(studentId,classId,async(tx,a,d,reason)=>{
    if(output?.status!=='ok'||output?.interaction?.preparation_completion!=='complete'||output.review_required!==false)throw failure('CLASSROOM_SEQUENCE_NOT_COMPLETE',422);
    const requestHash=hash({output,directive,...(messageRefs.length?{messageRefs}:{}),expected:{authority:expected.authority,deliveryEpoch:expected.deliveryEpoch},types,assets}),existing=(await tx.query('select * from public.teaching_classroom_sequences where session_id=$1 and operation_key=$2',[d.session_id,operationKey])).rows[0];if(existing){if(existing.request_hash!==requestHash)throw failure('CLASSROOM_SEQUENCE_IDEMPOTENCY_CONFLICT');return {accepted:true,sequenceId:existing.sequence_id,replay:true};}
@@ -76,7 +76,7 @@ function createClassroomPresentationRepository({query,withTransaction,randomUUID
    const refs=output.interaction.portions.flatMap(p=>p.source_refs.map(r=>r.anchor));if(new Set(refs).size>value(d.policy,'bufferSourceHorizon'))throw failure('CLASSROOM_BUFFER_SOURCE_HORIZON_EXCEEDED',422);
    require('../classroom-remodel/mode-schemas').validatePresenter(output,{directive,chapter,supportedBoardOperations:['add']});
    if(output.interaction.portions.some(p=>p.correction_of!==null))throw failure('CLASSROOM_CORRECTION_DEPENDENT_SEQUENCE_DISABLED',422);
-   if(output.interaction.expects_student_response||output.interaction.portions.some(p=>p.task_ref!==null||p.wait_requirement!=='none'||p.publication_dependencies.length))throw failure('CLASSROOM_RESPONSE_DEPENDENT_SEQUENCE_DISABLED',422);
+   if((output.interaction.expects_student_response&&!(messageRefs.length&&directive.allowed_interaction_kinds.includes('message_clarification')))||output.interaction.portions.some(p=>p.task_ref!==null||p.wait_requirement!=='none'||p.publication_dependencies.length))throw failure('CLASSROOM_RESPONSE_DEPENDENT_SEQUENCE_DISABLED',422);
    const boardTypes={equations:'equation',worked_steps:'worked_solution',sources:'source_passage',student_work_annotation:'annotation'};const blocks=new Map(output.board.map(b=>[b.id,require('../d14/board').projectPublicBlock({type:boardTypes[b.type]||b.type,content:b.content})]));
    if(assets.some(id=>!output.board.some(b=>b.content.assetId===id)))throw failure('CLASSROOM_ASSET_REPRESENTATION_MISSING',422);
    for(const p of output.interaction.portions)if(p.board_refs.some(ref=>!blocks.has(typeof ref==='string'?ref:ref.id)))throw failure('CLASSROOM_BOARD_REFERENCE_MISSING',422);
@@ -84,7 +84,7 @@ function createClassroomPresentationRepository({query,withTransaction,randomUUID
    const sequenceId=randomUUID();await tx.query("insert into public.teaching_classroom_sequences(sequence_id,session_id,operation_key,request_hash,authority,directive,payload,delivery_epoch,status) values($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7::jsonb,$8,'PREPARED')",[sequenceId,d.session_id,operationKey,requestHash,JSON.stringify(expected.authority),JSON.stringify(directive),JSON.stringify(output),d.delivery_epoch]);
    let ordinal=Number((await tx.query('select coalesce(max(ordinal),0) n from public.teaching_classroom_portions where session_id=$1',[d.session_id])).rows[0].n);
    for(const p of output.interaction.portions){const portionId=randomUUID();await tx.query("insert into public.teaching_classroom_portions(portion_id,session_id,sequence_id,ordinal,payload,public_payload,asset_ids,status) values($1,$2,$3,$4,$5::jsonb,$6::jsonb,$7::jsonb,'PREPARED')",[portionId,d.session_id,sequenceId,++ordinal,JSON.stringify({...p,...(messageRefs.length?{messageRefs}:{}),contentTypes:types,blocks:p.board_refs.map(id=>blocks.get(typeof id==='string'?id:id.id)).filter(Boolean)}),JSON.stringify({...projectPortion(p),id:portionId}),JSON.stringify(assets.filter(id=>p.board_refs.some(ref=>output.board.find(b=>b.id===(typeof ref==='string'?ref:ref.id))?.content.assetId===id)))]);}
-   if(messageRefs.length){if(!messages)throw failure('CLASSROOM_MESSAGE_ROUTE_HELD');await messages.bindReplyUsing(tx,a,d,messageRefs,sequenceId);}
+   if(messageRefs.length){if(!messages)throw failure('CLASSROOM_MESSAGE_ROUTE_HELD');await messages.bindReplyUsing(tx,a,d,messageRefs,sequenceId,messageToken);}
    if(d.delivery_state==='RECOVERING'){d.delivery_state='READY';d.stop_reason=null;}d.state_version=Number(d.state_version)+1;await save(tx,d);await schedule(tx,a,d);return {accepted:true,sequenceId,replay:false};
   });
  }
