@@ -22,15 +22,19 @@ Closure records now retain the already public teacher explanation and project as
 
 ## Validation
 
-- Unit suite: 1,729 passing before the final publication run.
+- Unit suite: 1,732 passing before the final publication run.
 - Isolated embedded PostgreSQL engine: all 43 migrations applied, four closure/continuity database tests passing, no skips. This is local SQL evidence, not native multi-client concurrency or live provider qualification.
 - Web build and foundation verification pass after regenerating the source inventory.
 - Native PostgreSQL and connected browser CI must be inspected at the published head. No current-head pass is claimed before those checks run.
 
 ## Remaining work and gates
 
-Delivery 7 still needs the before-end `close_class`/Presenter workflow, consumption of reviewed planning proposals in D16/D17, complete history availability/summaries UI, cross-Class owner workflow and connected-browser acceptance. The current candidate capability mapping does not yet authorize a `close_class` invocation; this adapter does not bypass that boundary. Those contracts must preserve D13/D16/D17–20/D27 authority and keep TPF-20 notes private until authorized publication.
+Delivery 7 still needs the before-end `close_class`/Presenter workflow, consumption of reviewed planning proposals in D16/D17, source-linked summaries, older-summary conflict handling and notes publication-state UI, cross-Class owner workflow and connected-browser acceptance. The current candidate capability mapping does not yet authorize a `close_class` invocation; this adapter does not bypass that boundary. Those contracts must preserve D13/D16/D17–20/D27 authority and keep TPF-20 notes private until authorized publication.
 
 The inherited Delivery 1–6 acceptance gates remain open: adopted numerical configuration, live provider and independent reviewer qualification, and the validated source-correction chapter/guide/plan/remap bundle. The 44-scenario qualification ledger remains NOT_QUALIFIED. Fixtures and local database results do not replace those gates.
 
 Delivery 8 requires accepted Deliveries 1–7, coordinated migrations, compatible frontend/backend cutover, production observation and tested rollback. No shared Supabase or production migration, production activation, prompt retirement or deployment is performed by this change. Rollback must preserve admitted work and history/reconciliation readers.
+
+## Recent-history classroom view
+
+The classroom now exposes a read-only Recent Class records panel using owned history routes. It distinguishes first Class, short history and unavailable records; shows confirmed rendering separately from understanding, pending evaluation and unresolved/carry-forward questions; and links the original closure and latest reconciled record. Exact released conversations load in bounded pages in a separate feed with original source references, without navigating those old sources into the current Chapter. No historical read emits rendering receipts or changes progress, tasks or deadlines. Protected takeover, replacement sessions and view closure discard stale replies and clear the panel. Older records remain accessible through the course Past Classes view. Formal summaries and notes publication state remain separate unfinished UI work.

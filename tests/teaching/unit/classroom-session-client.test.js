@@ -40,3 +40,25 @@ test('an in-flight pre-claim snapshot cannot revoke the newly committed presenta
  const c=await client(t,async(path)=>{if(path.endsWith('session')){reads++;if(reads===2)return old;return reads>2?snap({delivery_version:2,control_epoch:1,permitted_actions:['pause','takeover']}):snap();}resolvePost();return {leaseToken:'new-owned',controlEpoch:1,deliveryVersion:2};});
  const inFlight=c.refresh(),claim=c.lease();await posted;await new Promise(resolve=>setImmediate(resolve));resolveOld(snap());await Promise.all([inFlight,claim]);assert.equal(c.hasLease,true);assert.equal(c.snapshot.control_epoch,1);assert.equal(c.snapshot.delivery_version,2);
 });
+
+test('recent historical records and pages stay read-only and outside the live conversation store',async t=>{
+ let last,requests=[];
+ const c=await client(t,async(path,options)=>{requests.push({path,options});if(path.endsWith('session'))return snap();if(path.endsWith('history'))return {schema_version:'classroom-history.v1',state:'FEWER_THAN_THREE',records:[{session_id:'older'}]};return {session_id:'older',semantics:'RELEASED_PUBLIC_RECORDS_ONLY',events:[{sequence:1,text:'Earlier teacher'}],cursor:1,has_more:false};},data=>last=data);
+ assert.equal((await c.recentHistory()).records.length,1);assert.equal((await c.historicalConversation('older')).events.length,1);
+ assert.deepEqual(last.events,[]);assert.equal(c.snapshot.cursor,0);assert.ok(requests.every(r=>!r.options?.method));
+ await assert.rejects(()=>c.historicalConversation('older',-1),/PAGE_INVALID/);
+});
+test('late historical responses are discarded after protected takeover and further reads are blocked',async t=>{
+ let current=snap(),resolveHistory;
+ const c=await client(t,async path=>path.endsWith('session')?current:new Promise(resolve=>{resolveHistory=resolve;}));
+ const pending=c.recentHistory();current=snap({delivery_version:2,chapter_ref:null});await c.refresh();
+ resolveHistory({schema_version:'classroom-history.v1',records:[]});await assert.rejects(()=>pending,/HISTORY_RESTRICTED/);
+ await assert.rejects(()=>c.recentHistory(),/HISTORY_RESTRICTED/);
+});
+test('malformed historical pages cannot loop or cross the requested session',async t=>{
+ let page={session_id:'older',semantics:'RELEASED_PUBLIC_RECORDS_ONLY',events:[],cursor:0,has_more:true};
+ const c=await client(t,async path=>path.endsWith('session')?snap():page);
+ await assert.rejects(()=>c.historicalConversation('older'),/SCHEMA_INCOMPATIBLE/);
+ page={...page,session_id:'other',cursor:1};await assert.rejects(()=>c.historicalConversation('older'),/SCHEMA_INCOMPATIBLE/);
+ c.close();await assert.rejects(()=>c.recentHistory(),/HISTORY_RESTRICTED/);
+});

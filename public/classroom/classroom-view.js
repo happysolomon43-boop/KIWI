@@ -1,4 +1,5 @@
 import {createTaskComposer} from './task-composer.js';
+import {createHistoryView} from './history-view.js';
 import {
   createComposerShell,
   createNotebookCapture,
@@ -117,6 +118,16 @@ export function mountClassroomView({
     receiptFlight = false,
     seen = new Map(),
     boardSeen = new Set();
+  const historyView = createHistoryView({client:()=>store, signal:viewAbort.signal});
+  const historyButton = action('Recent Class records', () => {
+    if (historyView.root.hidden) { historyButton.setAttribute('aria-expanded', 'true'); historyView.show(); }
+    else { historyView.clear(); historyButton.setAttribute('aria-expanded', 'false'); }
+  });
+  historyButton.setAttribute('aria-expanded', 'false');
+  historyButton.setAttribute('aria-controls', 'cr-recent-history');
+  historyView.root.id = 'cr-recent-history';
+  header.append(historyButton);
+  root.append(historyView.root);
   const mobile = matchMedia("(max-width: 760px)"),
     ui = {
       view: "conversation",
@@ -475,6 +486,8 @@ export function mountClassroomView({
   document.addEventListener("visibilitychange", visible);
   function thisProtected() {
     version++;
+    historyView.clear();
+    historyButton.setAttribute('aria-expanded', 'false');
     releaseVisuals?.(feed);
     feed.replaceChildren();
     chapter.replaceChildren();
@@ -488,6 +501,8 @@ export function mountClassroomView({
     if (!s) return;
     if (renderedSession !== s.session_id) {
       if (renderedSession) {
+        historyView.clear();
+        historyButton.setAttribute('aria-expanded', 'false');
         releaseVisuals?.(feed);
         feed.replaceChildren();
         seen.clear();

@@ -8,7 +8,7 @@
   "productionQualified": false,
   "migration": "20261010192519_classroom_closure_continuity.sql",
   "localEvidence": {
-    "unitTestsPassed": 1729,
+    "unitTestsPassed": 1732,
     "embeddedPostgresMigrationsApplied": 43,
     "closureDatabaseTestsPassed": 4,
     "closureDatabaseTestsSkipped": 0,
@@ -18,7 +18,7 @@
   "remainingDelivery7": [
     "Before-end close_class and authorized Presenter closing workflow, including an adopted capability binding",
     "Consume reviewed planning proposals in the existing D16/D17 owner workflows",
-    "Complete history availability, summaries and publication-state UI",
+    "Source-linked summaries, older-summary conflict handling and notes publication-state UI",
     "Cross-Class owner workflow and connected browser acceptance"
   ],
   "inheritedAcceptanceBlockers": [
@@ -36,5 +36,10 @@
     "homework_design_generate",
     "homework_to_next_lesson_synthesis",
     "rolling_planning_horizon"
+  ],
+  "implementedHistoryUI": [
+    "Recent Class availability and latest reconciled closure facts",
+    "Separate paginated released historical conversation with original source references",
+    "Protected takeover, replacement-session and view-close stale-response rejection"
   ]
 }
