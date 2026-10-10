@@ -102,4 +102,4 @@ test('D16 atomic reviewed source check rejects stale, foreign and untaught class
  await assert.rejects(()=>h.withTransaction(tx=>assertClassroomSourceUsing(tx,{...spec,sourceLineage:{...spec.sourceLineage,classroomRecordRef:'classroom-record:stale@'+record.content_hash}})),{code:'TEACHING_D16_CLASSROOM_SOURCE_STALE'});
  await assert.rejects(()=>h.withTransaction(tx=>assertClassroomSourceUsing(tx,{...spec,learningUnitIds:['not-taught']})),{code:'TEACHING_D16_CLASSROOM_SCOPE_NOT_CONFIRMED'});
  assert.equal((await h.withTransaction(tx=>assertClassroomSourceUsing(tx,{...spec}))).contentHash,record.content_hash);
-},{learningUnit:true}));
+},{learningUnit:true,policy:taskPolicy()}));
