@@ -79,9 +79,47 @@ function reviewedContinuationLinks({receipt,history}={}) {
  });
 }
 
-function createDelivery7Intelligence({orchestrator,d11Repository,continuityRepository,requirementsReader,reviewer=null,chapterReader=null}={}) {
+
+function validateReviewedOwnerHandoff({proposal,approval,record,workload}={}) {
+ const mode=proposal?.mode,expected=mode==='homework_design_generate'?'D16':mode==='guide_assessment'?'D17':null;
+ if(!expected)throw failure('CLASSROOM_PLANNING_OWNER_MODE_INVALID',422);
+ if(!approval?.approved||!approval.independent||approval.owner!==expected||!approval.ownerRef||
+   !approval.reviewRef||approval.inputHash!==proposal.binding?.inputHash||
+   approval.outputHash!==hash(proposal.output)||approval.recordHash!==proposal.binding?.recordHash||
+   !proposal.receipt?.independent||!proposal.receipt?.accepted)
+  throw failure('CLASSROOM_PLANNING_DOMAIN_OWNER_APPROVAL_REQUIRED',409);
+ if(!record?.record_id||record.content_hash!==proposal.binding.recordHash)
+  throw failure('CLASSROOM_PLANNING_OWNER_RECORD_STALE',409);
+ if(mode==='homework_design_generate') {
+  const h=proposal.output?.artifacts?.homework_proposal;
+  if(!h||typeof h.assign!=='boolean')throw failure('CLASSROOM_HOMEWORK_PROPOSAL_INVALID',422);
+  if(!h.assign){if(approval.decision!=='NO_HOMEWORK'||approval.spec)throw failure('CLASSROOM_HOMEWORK_OWNER_DECISION_CONFLICT',409);return {owner:'D16',noHomework:true};}
+  const spec=approval.spec;
+  if(approval.decision!=='CREATE_APPROVED_ASSIGNMENT'||!workload?.validated||!workload.ownerRef||
+    approval.workloadOwnerRef!==workload.ownerRef||
+    !spec||!Array.isArray(spec.learningUnitIds)||!spec.learningUnitIds.length||
+    !spec.sourceLineage||spec.sourceLineage.classroomRecordRef!==`classroom-record:${record.record_id}@${record.content_hash}`||
+    !spec.sourceLineage.classClosureRef||!spec.dueAt||!spec.deadlineType)
+   throw failure('CLASSROOM_HOMEWORK_OWNER_SPEC_REQUIRED',409);
+  // A reviewed Class task cannot silently penalize missed/excused work or
+  // convert unsupported exposure into an official competence claim.
+  const actuallyCovered=new Set(record.record?.confirmed_taught_learning_unit_refs||[]);
+  if(spec.learningUnitIds.some(id=>!actuallyCovered.has(id))||spec.graded===true||spec.assistanceMode==='FORMAL_ASSESSMENT')
+   throw failure('CLASSROOM_HOMEWORK_UNSUPPORTED_SCOPE_OR_AUTHORITY',409);
+  return {owner:'D16',noHomework:false,spec};
+ }
+ if(approval.decision!=='PREPARE_ELIGIBLE_BLUEPRINT'||typeof approval.assessmentId!=='string'||
+    !approval.assessmentId||!approval.input?.blueprint||!approval.input?.measurementRequirements||
+    approval.input.lane&&approval.input.lane!=='ELIGIBLE_CANDIDATE')
+  throw failure('CLASSROOM_ASSESSMENT_OWNER_BLUEPRINT_REQUIRED',409);
+ // Existing D17 ownership/eligibility/package validation must still execute.
+ return {owner:'D17',assessmentId:approval.assessmentId,input:approval.input};
+}
+
+function createDelivery7Intelligence({orchestrator,d11Repository,continuityRepository,requirementsReader,reviewer=null,chapterReader=null,downstreamOwners=null,ownerApprovalReader=null}={}) {
  if(typeof orchestrator?.execute!=='function'||!d11Repository||!continuityRepository||typeof requirementsReader!=='function')throw new TypeError('Delivery 7 requires existing orchestration, owned records and adopted requirements');
  const reviewedContinuity=new WeakMap();
+ const reviewedPlanning=new WeakMap();
  async function inputs(args){
   const context=await d11Repository.getClassContext(args.studentId,args.classId);
   if(!context)throw failure('CLASSROOM_SESSION_NOT_FOUND',404);
@@ -108,7 +146,8 @@ function createDelivery7Intelligence({orchestrator,d11Repository,continuityRepos
   const current=delivery7Request(await inputs(args));
   if(current.planningBinding.inputHash!==request.planningBinding.inputHash)throw failure('CLASSROOM_PLANNING_RESULT_STALE',409);
   const proposal={proposed:true,committed:false,mode:args.mode,output,receipt,binding:request.planningBinding,assignmentCreated:false,followUpScheduled:false,officialOutcome:false};
-  if(args.mode==='prepare_continuity')reviewedContinuity.set(proposal,{studentId:args.studentId,classId:args.classId,requestKey:args.operationKey});
+  if(args.mode==='prepare_continuity')reviewedContinuity.set(proposal,{studentId:args.studentId,classId:args.classId,requestKey:args.operationKey,inputHash:request.planningBinding.inputHash,selection:structuredClone(receipt.approvedQuestionRefs||[])});
+  if(['homework_design_generate','guide_assessment'].includes(args.mode))reviewedPlanning.set(proposal,{studentId:args.studentId,classId:args.classId,requestKey:args.operationKey,inputHash:request.planningBinding.inputHash,outputHash:hash(output)});
   return proposal;
  }
  // Trusted internal workflow: the independent owner selects exact unresolved
@@ -119,9 +158,9 @@ function createDelivery7Intelligence({orchestrator,d11Repository,continuityRepos
   if(!bound||bound.studentId!==studentId||bound.classId!==classId||proposal.mode!=='prepare_continuity')
    throw failure('CLASSROOM_CONTINUITY_REVIEWED_PROPOSAL_REQUIRED',409);
   const current=delivery7Request(await inputs({studentId,classId,mode:'prepare_continuity',operationKey:bound.requestKey}));
-  if(current.planningBinding.inputHash!==proposal.binding.inputHash)
+  if(current.planningBinding.inputHash!==bound.inputHash||proposal.binding.inputHash!==bound.inputHash)
    throw failure('CLASSROOM_CONTINUITY_REVIEW_STALE',409);
-  const links=reviewedContinuationLinks({receipt:proposal.receipt,history:await continuityRepository.history(studentId,classId)});
+  const links=reviewedContinuationLinks({receipt:{...proposal.receipt,approvedQuestionRefs:bound.selection},history:await continuityRepository.history(studentId,classId)});
   const accepted=[];
   for(const link of links){
    const operationKey='reviewed-continuity:'+hash({inputHash:proposal.binding.inputHash,link});
@@ -130,6 +169,41 @@ function createDelivery7Intelligence({orchestrator,d11Repository,continuityRepos
   }
   return {accepted:true,links:accepted,scheduled:false,questionsResolved:false,academicEvidenceCommitted:false};
  }
- return Object.freeze({propose,linkReviewedContinuity});
+ // Explicit D16/D17 owner acceptance follows independent planning review.
+ // No owner callback, unadopted workload, stale record or missing D17 Blueprint
+ // can be replaced with a Teacher/model promise or an invented deadline.
+ async function consumeReviewedPlanning({studentId,classId,proposal}={}){
+  const pinned=proposal&&reviewedPlanning.get(proposal);
+  if(!pinned||pinned.studentId!==studentId||pinned.classId!==classId)
+   throw failure('CLASSROOM_PLANNING_REVIEWED_PROPOSAL_REQUIRED',409);
+  if(typeof ownerApprovalReader!=='function')return {held:true,reason:'CLASSROOM_PLANNING_DOMAIN_OWNER_UNAVAILABLE',committed:false};
+  const fresh=await inputs({studentId,classId,mode:proposal.mode,operationKey:pinned.requestKey});
+  const current=delivery7Request(fresh);
+  if(current.planningBinding.inputHash!==pinned.inputHash||hash(proposal.output)!==pinned.outputHash)
+   throw failure('CLASSROOM_PLANNING_OWNER_RESULT_STALE',409);
+  const approval=await ownerApprovalReader({studentId,classId,mode:proposal.mode,inputHash:pinned.inputHash,
+   outputHash:pinned.outputHash,recordHash:fresh.record?.content_hash,reviewReceipt:proposal.receipt,
+   output:proposal.output});
+  const reviewed=validateReviewedOwnerHandoff({proposal,approval,record:fresh.record,workload:fresh.requirements.workload});
+  if(reviewed.noHomework)return {accepted:true,committed:false,owner:'D16',assignmentCreated:false,
+   decision:'NO_HOMEWORK',reviewRef:approval.reviewRef};
+  if(reviewed.owner==='D16'){
+   if(typeof downstreamOwners?.d16?.createFromTrustedSpec!=='function')
+    return {held:true,reason:'CLASSROOM_D16_OWNER_ROUTE_UNAVAILABLE',committed:false};
+   const committed=await downstreamOwners.d16.createFromTrustedSpec({studentId,classId,spec:reviewed.spec,
+    idempotencyKey:'classroom-d16:'+hash({reviewRef:approval.reviewRef,recordHash:fresh.record.content_hash})});
+   return {accepted:true,committed:true,owner:'D16',assignmentCreated:true,assignmentId:committed.assignmentId,
+    reviewRef:approval.reviewRef};
+  }
+  if(typeof downstreamOwners?.d17?.prepareBlueprint!=='function')
+   return {held:true,reason:'CLASSROOM_D17_OWNER_ROUTE_UNAVAILABLE',committed:false};
+  const prepared=await downstreamOwners.d17.prepareBlueprint({id:studentId},reviewed.assessmentId,
+   {...reviewed.input,lane:'ELIGIBLE_CANDIDATE',idempotencyKey:'classroom-d17:'+hash({reviewRef:approval.reviewRef,recordHash:fresh.record.content_hash}),
+    provenanceRefs:[...new Set([...(reviewed.input.provenanceRefs||[]),`classroom-record:${fresh.record.record_id}@${fresh.record.content_hash}`])]});
+  return {accepted:true,committed:true,owner:'D17',assessmentId:reviewed.assessmentId,
+   blueprintId:prepared?.blueprint?.assessment_blueprint_id||null,reviewRef:approval.reviewRef,
+   packageLocked:false,graded:false};
+ }
+ return Object.freeze({propose,linkReviewedContinuity,consumeReviewedPlanning});
 }
-module.exports={MODES,delivery7Request,reviewedContinuationLinks,createDelivery7Intelligence};
+module.exports={MODES,delivery7Request,reviewedContinuationLinks,validateReviewedOwnerHandoff,createDelivery7Intelligence};
