@@ -25,6 +25,8 @@ function createClassroomPresentationIntelligence({orchestrator,repository,d11Rep
    schemaValidator:schema.validate,domainValidator:schema.validate,provenanceValidator:schema.validate,
    provisionalResultSink:async validated=>repository.acceptSequence({studentId:args.studentId,classId:args.classId,operationKey:args.operationKey,output:validated.output,directive:args.directive,expected:args.expected,types:args.types,assets:args.assets}),
   };
+  const pin=args.expected.authority.runtimeVersions?.promptBindings?.find(p=>p.artifact_kind==='opening');
+  if(!pin||pin.prompt_sha256!==request.candidatePromptBinding.promptSha256||pin.schema_version!==schema.version)throw failure('CLASSROOM_GENERATION_PROMPT_PIN_CONFLICT',503);
   const result=await orchestrator.execute(request);
   if(result.replay){const recovered=await repository.loadSequence(args.studentId,args.classId,args.operationKey,args.expected);if(recovered)return recovered;throw failure('CLASSROOM_GENERATION_OUTCOME_UNKNOWN',503);}
   if(!result.accepted||!result.validatedResult?.output)throw failure('CLASSROOM_PRESENTER_OUTPUT_REJECTED',503);
