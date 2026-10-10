@@ -237,7 +237,22 @@
       "number": 10,
       "sourceRequirement": "10. **Wrong answer:** item validity checked first; local slip versus conceptual hypothesis distinguished; correct components preserved; strategy change is proportionate.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "supportOnly": true,
+          "sourceCommit": "d6df7144cf98493c035e40752ee7861fe75ba2be",
+          "description": "Canonical partial/ambiguous/alternative/slip/hypothesis and protected-item evidence fixtures; no live judgment qualification",
+          "files": [
+            "tests/teaching/unit/classroom-tasks.test.js",
+            "tests/teaching/integration/classroom-tasks.test.js",
+            "tests/teaching/browser/classroom-tasks-connected.js"
+          ],
+          "nativeRun": 38077592652,
+          "browserRun": 38077592761,
+          "liveProvider": false,
+          "deployment": false
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
       "testedVersions": null
@@ -246,7 +261,22 @@
       "number": 11,
       "sourceRequirement": "11. **Assisted answer:** released hint/solution exposure limits independence; fresh verification is legitimate variation; reduced later help does not restore old evidence.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "supportOnly": true,
+          "sourceCommit": "d6df7144cf98493c035e40752ee7861fe75ba2be",
+          "description": "Native task help with fixed ceiling, free acceptance and prepared/released/accessible exposure",
+          "files": [
+            "tests/teaching/unit/classroom-tasks.test.js",
+            "tests/teaching/integration/classroom-tasks.test.js",
+            "tests/teaching/browser/classroom-tasks-connected.js"
+          ],
+          "nativeRun": 38077592652,
+          "browserRun": 38077592761,
+          "liveProvider": false,
+          "deployment": false
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
       "testedVersions": null
@@ -255,7 +285,22 @@
       "number": 12,
       "sourceRequirement": "12. **Chapter copyability:** accessible worked solution cannot be treated as clean independent verification.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "supportOnly": true,
+          "sourceCommit": "d6df7144cf98493c035e40752ee7861fe75ba2be",
+          "description": "Conservative chapter-copyability evidence projection; no independent/mastery claim",
+          "files": [
+            "tests/teaching/unit/classroom-tasks.test.js",
+            "tests/teaching/integration/classroom-tasks.test.js",
+            "tests/teaching/browser/classroom-tasks-connected.js"
+          ],
+          "nativeRun": 38077592652,
+          "browserRun": 38077592761,
+          "liveProvider": false,
+          "deployment": false
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
       "testedVersions": null
@@ -273,7 +318,33 @@
       "number": 14,
       "sourceRequirement": "14. **More time:** authorized extension persists once and respects end time; typing does not invent a new deadline.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "supportOnly": true,
+          "sourceCommit": "8c83cdf1f5370038e0ae1e91c29f0d8331d1d174",
+          "description": "Same-window adopted extension replay and Class-end cap; UI/real-provider behavior unqualified",
+          "files": [
+            "tests/teaching/unit/classroom-tasks.test.js",
+            "tests/teaching/integration/classroom-tasks.test.js"
+          ],
+          "nativeRun": 38062867983,
+          "nativeJob": 114244507173
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "d6df7144cf98493c035e40752ee7861fe75ba2be",
+          "description": "Bounded same-window extension with durable replay and server deadline",
+          "files": [
+            "tests/teaching/unit/classroom-tasks.test.js",
+            "tests/teaching/integration/classroom-tasks.test.js",
+            "tests/teaching/browser/classroom-tasks-connected.js"
+          ],
+          "nativeRun": 38077592652,
+          "browserRun": 38077592761,
+          "liveProvider": false,
+          "deployment": false
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
       "testedVersions": null
@@ -282,7 +353,33 @@
       "number": 15,
       "sourceRequirement": "15. **No response:** records no response, no invented failure/emotion; Class closure/task disposition remains coherent.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "supportOnly": true,
+          "sourceCommit": "8c83cdf1f5370038e0ae1e91c29f0d8331d1d174",
+          "description": "Native expiry records EXPIRED_NO_RESPONSE without incorrect evaluation; closure/UI qualification remains held",
+          "files": [
+            "tests/teaching/unit/classroom-tasks.test.js",
+            "tests/teaching/integration/classroom-tasks.test.js"
+          ],
+          "nativeRun": 38062867983,
+          "nativeJob": 114244507173
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "d6df7144cf98493c035e40752ee7861fe75ba2be",
+          "description": "Expired-no-response outcome without incorrect evaluation",
+          "files": [
+            "tests/teaching/unit/classroom-tasks.test.js",
+            "tests/teaching/integration/classroom-tasks.test.js",
+            "tests/teaching/browser/classroom-tasks-connected.js"
+          ],
+          "nativeRun": 38077592652,
+          "browserRun": 38077592761,
+          "liveProvider": false,
+          "deployment": false
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
       "testedVersions": null
@@ -291,7 +388,22 @@
       "number": 16,
       "sourceRequirement": "16. **Open window clarification:** related permitted help preserves task/window and records assistance; unrelated instruction remains held.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "supportOnly": true,
+          "sourceCommit": "d6df7144cf98493c035e40752ee7861fe75ba2be",
+          "description": "Native and browser task support keeps the original response deadline",
+          "files": [
+            "tests/teaching/unit/classroom-tasks.test.js",
+            "tests/teaching/integration/classroom-tasks.test.js",
+            "tests/teaching/browser/classroom-tasks-connected.js"
+          ],
+          "nativeRun": 38077592652,
+          "browserRun": 38077592761,
+          "liveProvider": false,
+          "deployment": false
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
       "testedVersions": null
@@ -369,7 +481,22 @@
       "number": 18,
       "sourceRequirement": "18. **Reload during timed task:** original deadline remains, drafts are separate, quota unchanged.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "supportOnly": true,
+          "sourceCommit": "d6df7144cf98493c035e40752ee7861fe75ba2be",
+          "description": "Connected reload preserves task deadline, draft and exact uncertain-request identity",
+          "files": [
+            "tests/teaching/unit/classroom-tasks.test.js",
+            "tests/teaching/integration/classroom-tasks.test.js",
+            "tests/teaching/browser/classroom-tasks-connected.js"
+          ],
+          "nativeRun": 38077592652,
+          "browserRun": 38077592761,
+          "liveProvider": false,
+          "deployment": false
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
       "testedVersions": null
@@ -722,6 +849,20 @@
           "actions": "Persist report and owner-decision hold on upcoming release",
           "expectedPersistedOutcome": "Question/concern remains durable without tutoring-route bypass",
           "forbiddenEffectsAndLimits": "Correction publication/version invalidation/evidence recheck await Delivery 6; scenario not qualified"
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "d6df7144cf98493c035e40752ee7861fe75ba2be",
+          "description": "Native explicit corrections, original/Board successor provenance, source conflict hold and evidence-owner handoff",
+          "files": [
+            "tests/teaching/unit/classroom-tasks.test.js",
+            "tests/teaching/integration/classroom-tasks.test.js",
+            "tests/teaching/browser/classroom-tasks-connected.js"
+          ],
+          "nativeRun": 38077592652,
+          "browserRun": 38077592761,
+          "liveProvider": false,
+          "deployment": false
         }
       ],
       "liveProviderEvidence": [],
@@ -750,6 +891,20 @@
             "tests/teaching/unit/classroom-remodel-runtime.test.js",
             "tests/teaching/integration/classroom-remodel-academic.test.js"
           ]
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "d6df7144cf98493c035e40752ee7861fe75ba2be",
+          "description": "Native complete TPF-05/D11 atomic replan preserves completed work and open response deadline",
+          "files": [
+            "tests/teaching/unit/classroom-tasks.test.js",
+            "tests/teaching/integration/classroom-tasks.test.js",
+            "tests/teaching/browser/classroom-tasks-connected.js"
+          ],
+          "nativeRun": 38077592652,
+          "browserRun": 38077592761,
+          "liveProvider": false,
+          "deployment": false
         }
       ],
       "liveProviderEvidence": [],
@@ -833,6 +988,31 @@
           "expectedPersistedOutcome": "Exact owner-bound response persists; deadline and attempt identity unchanged; one owner remains authoritative; linked and personal Notebook rows persist; focus restores",
           "forbiddenOutcome": "Arbitrary owner selection, private criteria in browser, instruction exposed during protected interruption, changed owner version accepted, active attempt abandoned to instruction",
           "description": "Connected Work and Assessment response shells, private-safe package, durable responses, original reload deadline, interruption privacy, immediate Notebook linked reference, mobile personal note and keyboard focus passed. Human screen-reader/software-keyboard, full deployed Course shell/authentication, providers, production and post-assessment academic continuation remain unqualified."
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "8c83cdf1f5370038e0ae1e91c29f0d8331d1d174",
+          "description": "Native protected takeover hides accepted task and conversation, rejects fresh response admission and preserves immutable accepted work",
+          "files": [
+            "tests/teaching/unit/classroom-tasks.test.js",
+            "tests/teaching/integration/classroom-tasks.test.js"
+          ],
+          "nativeRun": 38062867983,
+          "nativeJob": 114244507173
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "d6df7144cf98493c035e40752ee7861fe75ba2be",
+          "description": "Native protected takeover suppresses task data and rejects new work while retaining admissions",
+          "files": [
+            "tests/teaching/unit/classroom-tasks.test.js",
+            "tests/teaching/integration/classroom-tasks.test.js",
+            "tests/teaching/browser/classroom-tasks-connected.js"
+          ],
+          "nativeRun": 38077592652,
+          "browserRun": 38077592761,
+          "liveProvider": false,
+          "deployment": false
         }
       ],
       "liveProviderEvidence": [],
@@ -847,7 +1027,33 @@
       "number": 30,
       "sourceRequirement": "30. **Closure race:** server-accepted response persists; expired/late submission policy explicit; post-closure evaluation never reopens Class.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "supportOnly": true,
+          "sourceCommit": "8c83cdf1f5370038e0ae1e91c29f0d8331d1d174",
+          "description": "Native post-closure admission-bound evaluation does not reopen Class or publish live feedback; concurrency/rollback/lease recovery retain admitted identity",
+          "files": [
+            "tests/teaching/unit/classroom-tasks.test.js",
+            "tests/teaching/integration/classroom-tasks.test.js"
+          ],
+          "nativeRun": 38062867983,
+          "nativeJob": 114244507173
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "d6df7144cf98493c035e40752ee7861fe75ba2be",
+          "description": "Native immutable accepted-work evaluation after closure and concurrency/rollback/fencing checks",
+          "files": [
+            "tests/teaching/unit/classroom-tasks.test.js",
+            "tests/teaching/integration/classroom-tasks.test.js",
+            "tests/teaching/browser/classroom-tasks-connected.js"
+          ],
+          "nativeRun": 38077592652,
+          "browserRun": 38077592761,
+          "liveProvider": false,
+          "deployment": false
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
       "testedVersions": null

@@ -1,3 +1,4 @@
+import {createTaskComposer} from './task-composer.js';
 import {
   createComposerShell,
   createNotebookCapture,
@@ -87,7 +88,8 @@ export function mountClassroomView({
   skip.href = "#cr-conversation";
   header.prepend(skip);
   const composer = createComposerShell(reviewOnly,{send:input=>store.message(input),context:()=>{const s=store?.snapshot;return s?.chapter_ref&&s.position.resume_anchor?{...s.chapter_ref,kind:currentChapter?.units.some(u=>u.anchor===s.position.resume_anchor)?"chapter_unit":"source_element",anchor:s.position.resume_anchor}:null;}});
-  conversation.append(feed, composer);
+  const taskComposer=createTaskComposer({reviewOnly,send:(path,input,options)=>store.taskMutation(path,input,options)});
+  conversation.append(feed, taskComposer, composer);
   main.append(conversation, chapter);
   root.append(header, main);
   host.replaceChildren(root);
@@ -497,6 +499,7 @@ export function mountClassroomView({
       }
       renderedSession = s.session_id;
     }
+    taskComposer.update(s);
     if (!s.chapter_ref) {
       thisProtected();
       return;
@@ -658,6 +661,7 @@ export function mountClassroomView({
       version++;
       boardDialogs.close();
       composer.close();
+      taskComposer.close();
       viewAbort.abort();
       clearInterval(clockTimer);
       store.close();

@@ -816,6 +816,7 @@ function createTeachingRouter({
     }
   });
 
+  require('./teaching/classroom-remodel/task-routes').mountClassroomTaskRoutes(router,{service:foundation.classroomPresentation?.tasks?.service});
   require('./teaching/classroom-remodel/message-routes').mountClassroomMessageRoutes(router,{service:foundation.classroomPresentation?.messages?.service});
   require('./teaching/classroom-remodel/presentation-routes').mountClassroomPresentationRoutes(router,{service:classroomPresentationService||foundation.classroomPresentation?.service,reauthenticate:async req=>{if(env.KIWI_CLASSROOM_TEST_INSTANCE==='true')return !!req.user?.classroomTest;return new Promise((resolve,reject)=>{const response={status(){return this;},json(){resolve(false);},send(){resolve(false);}};try{Promise.resolve(authenticate(req,response,()=>resolve(true))).catch(reject);}catch(error){reject(error);}});}});
   mountClassroomChapterRoute(router,{service:classroomPreparationService||foundation.classroomPreparation?.service,sendError});

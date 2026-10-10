@@ -4,7 +4,7 @@ const {object,string,list,bool,exact,enumeration,fail,claim}=c;
 const AUTHOR_BLOCKS={
  pre_class_lesson_blueprint:['chapter','unit_map','teaching_plan','learning_trajectory','homework_proposal','preparation_update','controller_blueprint'],
  core_optional_selection:['teaching_plan','unit_map'],adaptive_reserve_allocation:['teaching_plan'],purposeful_retrieval_selection:['teaching_plan','learning_trajectory'],
- live_lesson_replan:['teaching_plan','closure_or_replan','learning_trajectory','unit_map'],lateness_replan:['teaching_plan','closure_or_replan','learning_trajectory','unit_map'],
+ live_lesson_replan:['teaching_plan','closure_or_replan','learning_trajectory','unit_map','controller_blueprint'],lateness_replan:['teaching_plan','closure_or_replan','learning_trajectory','unit_map','controller_blueprint'],
  lesson_closure_analysis:['closure_or_replan','homework_proposal'],rolling_planning_horizon:['teaching_plan','preparation_update'],homework_design_generate:['homework_proposal'],homework_to_next_lesson_synthesis:['closure_or_replan'],
 };
 const REQUIRED_AUTHOR={pre_class_lesson_blueprint:['chapter','unit_map','teaching_plan'],core_optional_selection:['teaching_plan','unit_map'],adaptive_reserve_allocation:['teaching_plan'],purposeful_retrieval_selection:['teaching_plan','learning_trajectory'],live_lesson_replan:['teaching_plan','closure_or_replan'],lateness_replan:['teaching_plan','closure_or_replan'],lesson_closure_analysis:['closure_or_replan','homework_proposal'],rolling_planning_horizon:['teaching_plan'],homework_design_generate:['homework_proposal'],homework_to_next_lesson_synthesis:['closure_or_replan']};

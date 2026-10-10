@@ -1,0 +1,169 @@
+{
+  "version": "classroom-delivery-6-checkpoint.v1",
+  "delivery": 6,
+  "status": "INACTIVE_IMPLEMENTED_CANDIDATE_LIVE_ACCEPTANCE_BLOCKED",
+  "branch": "feat/classroom-remodel-delivery-6",
+  "baseCommit": "9e4b8e11d3b591cf24ae623541ce4df38664c772",
+  "implementationSourceCommit": "d6df7144cf98493c035e40752ee7861fe75ba2be",
+  "checkpointCommit": "Resolve the commit containing this checkpoint; final publication checks are attached to PR #334",
+  "pr": "https://github.com/happysolomon43-boop/KIWI/pull/334",
+  "ci": {
+    "observedSourceCommit": "d6df7144cf98493c035e40752ee7861fe75ba2be",
+    "nativeRun": 38077592652,
+    "nativeJob": 114287707169,
+    "nativeTestsPassed": 143,
+    "nativeSkipped": 0,
+    "connectedBrowserRun": 38077592761,
+    "connectedBrowserJob": 114287707532,
+    "connectedBrowser": "PASS all four connected scripts including task loop, reviewed variation, Board readiness, reload, acknowledgement loss, protected owners, two-tab fencing and WCAG Axe",
+    "sourceMetadataCorrection": "Foundation CI found generated inventory drift after added unit coverage. Inventory regenerated and foundation verifier passes locally; final checkpoint publication must pass CI.",
+    "finalPublicationChecks": "Inspect PR #334 current-head checks; no claim of source-metadata CI pass before it runs."
+  },
+  "implemented": [
+    "Owned public/private task contracts and validated canonical design_check",
+    "Complete accessible render-gated absolute response windows and multipart readiness",
+    "Atomic free response/support/extension acceptance with durable identities and retry receipts",
+    "Canonical interpret_response through central qualification invocation plus conservative D12 compatibility",
+    "Leased immutable-context evaluation, bounded retries and post-closure completion without live continuation",
+    "One bounded accepted action and independent public selection before Presenter generation",
+    "Prepared/released/accessible assistance ledger with unchanged task deadlines and fixed ceiling",
+    "Persistent accessible task composer, drafts and exact uncertain-request recovery",
+    "Durable confirmed-feedback adjustment with reviewed construct-preserving fresh check and cosmetic variation refusal",
+    "Explicit original/successor correction, Board lineage and D12 evidence-owner handoff",
+    "Unresolved/source-revision holds and system cancellation of invalid active tasks",
+    "Complete TPF-05 remainder/lateness replan through D11 with core continuity and atomic audited plan binding",
+    "Compatible nested and flat task routes; original owner APIs and non-classroom bindings retained"
+  ],
+  "changedFiles": [
+    ".github/workflows/classroom-connected-browser.yml",
+    ".github/workflows/classroom-remodel-foundation.yml",
+    "docs/teaching/classroom-remodel/delivery-6-checkpoint.v1.json",
+    "docs/teaching/classroom-remodel/migration-inventory.v1.json",
+    "docs/teaching/classroom-remodel/qualification-ledger.v1.json",
+    "migrations/20261010145451_classroom_response_windows.sql",
+    "migrations/20261010153217_classroom_task_handling.sql",
+    "migrations/20261010154053_classroom_revision_handling.sql",
+    "public/classroom/classroom-view.js",
+    "public/classroom/session-client.js",
+    "public/classroom/task-composer.js",
+    "scripts/setup-teaching-integration-db.js",
+    "teaching-backend.js",
+    "teaching/classroom-remodel/mode-schemas.js",
+    "teaching/classroom-remodel/presentation-runtime.js",
+    "teaching/classroom-remodel/state-policy.js",
+    "teaching/classroom-remodel/task-actions.js",
+    "teaching/classroom-remodel/task-contracts.js",
+    "teaching/classroom-remodel/task-evaluation-adapter.js",
+    "teaching/classroom-remodel/task-intelligence.js",
+    "teaching/classroom-remodel/task-routes.js",
+    "teaching/classroom-remodel/task-service.js",
+    "teaching/events/names.js",
+    "teaching/index.js",
+    "teaching/repositories/classroom-presentation.js",
+    "teaching/repositories/classroom-revisions.js",
+    "teaching/repositories/classroom-tasks.js",
+    "teaching/repositories/d11-lesson-controller.js",
+    "teaching/repositories/d12-response-pedagogy.js",
+    "tests/teaching/browser/classroom-connected.js",
+    "tests/teaching/browser/classroom-tasks-connected.js",
+    "tests/teaching/fixtures/classroom-presentation-database.js",
+    "tests/teaching/fixtures/classroom-task-policy.js",
+    "tests/teaching/fixtures/classroom-tasks.js",
+    "tests/teaching/integration/classroom-tasks.test.js",
+    "tests/teaching/unit/classroom-tasks.test.js",
+    "docs/teaching/classroom-remodel/delivery-6-tasks.md"
+  ],
+  "migrations": [
+    {
+      "file": "migrations/20261010145451_classroom_response_windows.sql",
+      "generatedWith": "Supabase CLI",
+      "isolatedNativeVerified": true,
+      "productionApplied": false,
+      "sharedIntegrationApplied": false
+    },
+    {
+      "file": "migrations/20261010153217_classroom_task_handling.sql",
+      "generatedWith": "Supabase CLI",
+      "isolatedNativeVerified": true,
+      "productionApplied": false,
+      "sharedIntegrationApplied": false
+    },
+    {
+      "file": "migrations/20261010154053_classroom_revision_handling.sql",
+      "generatedWith": "Supabase CLI",
+      "isolatedNativeVerified": true,
+      "productionApplied": false,
+      "sharedIntegrationApplied": false
+    }
+  ],
+  "infrastructureInspection": {
+    "checkedDate": "2026-10-10",
+    "KiwiProject": "nqdwifqskxkblgdgeutn",
+    "sharedIntegrationProject": "kmymmwujhotqxtoamyur",
+    "bothHealthy": true,
+    "remodelingMigrationsPresent": false,
+    "productionMutationPerformed": false
+  },
+  "validation": {
+    "localUnitTests": {
+      "passed": 1715,
+      "failed": 0,
+      "skipped": 0
+    },
+    "taskUnitTests": 19,
+    "nativeTaskRevisionTests": 17,
+    "nativeAllTeaching": {
+      "passed": 143,
+      "failed": 0,
+      "skipped": 0
+    },
+    "nativeSecurity": {
+      "tablesWithoutRLS": 0,
+      "browserAuthoritativeDML": 0
+    },
+    "webBuild": "PASS",
+    "foundationVerifierAfterInventoryRegeneration": "PASS",
+    "connectedBrowser": "PASS",
+    "evidenceKind": "SYNTHETIC_NATIVE_CONNECTED_BROWSER",
+    "liveProviderEvidence": false,
+    "deploymentEvidence": false,
+    "all44BlueprintScenarios": "NOT_QUALIFIED"
+  },
+  "effectiveVersions": {
+    "candidateTasks": "classroom-tasks.v1",
+    "domain": "classroom-domain.v1",
+    "presentationWire": "classroom-presentation-wire.v1",
+    "contracts": "classroom-contracts.v1",
+    "statePolicy": "classroom-state-policy.v1",
+    "activeRegistry": "1.3",
+    "activePromptManifest": "1.4",
+    "candidatePromptsRuntimeEffective": false,
+    "canonicalCoordinatorCandidate": "TPF-21 / TPF-5/8"
+  },
+  "explicitResolutions": [
+    "D11 live replans use a narrow audited plan-binding exception; arbitrary chapter/policy/session pin changes remain rejected.",
+    "Only complete accepted TPF-05 controller_blueprint/plan/replan artifacts can advance a remodeled live binding.",
+    "Public feedback requires independent public selection before Presenter input and separate turn acceptance.",
+    "Generated next-task acceptance rejected for stale authority cannot be recorded as an applied adjustment.",
+    "Academic source revision requires a validated compatible author bundle; affected teaching remains held and no unvalidated source replacement is published.",
+    "Two-tab browser verification waits for an actual lease receipt; visibility alone is not evidence of takeover."
+  ],
+  "externalAcceptanceBlockers": [
+    "Owner-adopted versioned classroom/task/support timing, allowance, retry, budget and retention policy is not installed for production. Fixture values are not adoption.",
+    "Canonical candidate prompts and live providers/reviewers remain unqualified through existing C4 governance.",
+    "Academic source-error recovery requires the academic owner to produce and validate a compatible chapter/guide/plan/remap bundle; this candidate records the hold, not completion of that revision.",
+    "Delivery 8 full 44-scenario qualification, coordinated migrations, rollout and rollback evidence remain outstanding."
+  ],
+  "compatibility": {
+    "defaultTaskRouteActive": false,
+    "defaultStudentTaskControlsActive": false,
+    "oldBindingsRetired": 0,
+    "mappedCapabilitiesRetained": 22,
+    "legacySessionsPreserved": true,
+    "historicalReadersRetained": true,
+    "productionChanged": false
+  },
+  "rollback": "No deployed candidate data/bindings changed. Inactive additive candidate can be withdrawn. Any future rollback must preserve admissions, outcome history and post-closure reconciliation; schema deletion is not a qualified rollback.",
+  "handoffToDelivery7": "Immutable admissions, evaluation versions, confirmed coverage, corrections/evidence-recheck handoffs and unresolved queue/task work are available to candidate reconciliation. No late evaluation is labeled delivered-in-class feedback.",
+  "nextUnfinishedAction": "Verify final checkpoint CI, then obtain authoritative policy adoption and C4 provider/reviewer acceptance and exercise live qualification. Keep academic-source revision held until the compatible author bundle and coordinated source recovery are accepted."
+}

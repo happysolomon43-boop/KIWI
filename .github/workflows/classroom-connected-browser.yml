@@ -47,6 +47,7 @@ jobs:
       - run: npm install --no-save --package-lock=false playwright@1.62.1 @axe-core/playwright@4.10.2
       - run: npx playwright install --with-deps chromium
       - run: node scripts/setup-teaching-integration-db.js
+      - run: node tests/teaching/browser/classroom-tasks-connected.js
       - run: node tests/teaching/browser/classroom-connected.js
       - run: node tests/teaching/browser/classroom-protected-connected.js
       - run: node tests/teaching/browser/classroom-messages-connected.js

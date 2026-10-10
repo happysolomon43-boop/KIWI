@@ -939,6 +939,7 @@ function createD11LessonControllerRepository({
     generationProvenance = {},
     preparationRef = null,
     expectedControllerVersion = null,
+    classroomBindingWriter = null,
   } = {}) {
     const current = await assertContextCurrentUsing(tx, { ...expected, studentId, classId });
     const session = await getSession(studentId, classId, tx, true);
@@ -996,12 +997,15 @@ function createD11LessonControllerRepository({
     }
     let nextSession = session;
     if (session) {
+      const liveBinding=classroomBindingWriter?await classroomBindingWriter(tx,{blueprint:inserted.rows[0],session,current,previous}):null;
+      if(session.classroom_engine==='CLASSROOM_V1'&&!liveBinding)throw Object.assign(new Error('Remodeled replan requires an atomic accepted preparation binding.'),{code:'CLASSROOM_REPLAN_BINDING_REQUIRED',status:409});
       const updated = await tx.query(
         "update public.teaching_class_sessions set lesson_blueprint_id=$3," +
         " resume_instructional_substate=case when lesson_blueprint_id is null and instructional_substate='INTERRUPTED' then 'OPENING' else resume_instructional_substate end," +
+        " classroom_binding_version=coalesce($4,classroom_binding_version),classroom_chapter_artifact_id=coalesce($5,classroom_chapter_artifact_id)," +
         " state_version=state_version+1,event_cursor=event_cursor+1,updated_at=now()" +
         " where class_session_id=$1 and student_id=$2 returning *",
-        [session.class_session_id,studentId,blueprintId]
+        [session.class_session_id,studentId,blueprintId,liveBinding?.bindingVersion||null,liveBinding?.chapterArtifactId||null]
       );
       nextSession = updated.rows[0];
       await appendHistoryUsing(tx, {
