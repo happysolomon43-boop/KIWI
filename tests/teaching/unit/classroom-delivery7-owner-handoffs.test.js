@@ -5,7 +5,7 @@ const {hash}=require('../../../teaching/classroom-remodel/academic-artifacts');
 const record={record_id:'r1',content_hash:'v1',record:{confirmed_taught_learning_unit_refs:['u1']}};
 const base={mode:'homework_design_generate',binding:{inputHash:'i1',recordHash:'v1'},output:{artifacts:{homework_proposal:{assign:true}}},receipt:{accepted:true,independent:true}};
 const approval={approved:true,independent:true,owner:'D16',ownerRef:'owner-d16',reviewRef:'review-d16',inputHash:'i1',outputHash:hash(base.output),recordHash:'v1',workloadOwnerRef:'workload-owner',decision:'CREATE_APPROVED_ASSIGNMENT'};
-const spec={learningUnitIds:['u1'],sourceLineage:{classroomRecordRef:'classroom-record:r1@v1',classClosureRef:'class-closure:c1'},dueAt:'2026-11-02T08:00:00.000Z',deadlineType:'HARD',assistanceMode:'GUIDED',graded:false};
+const spec={learningUnitIds:['u1'],sourceLineage:{classroomRecordRef:'classroom-record:r1@v1',classClosureRef:'class-closure:c1',reviewedProposalHash:hash(base.output)},dueAt:'2026-11-02T08:00:00.000Z',deadlineType:'HARD',assistanceMode:'GUIDED',graded:false};
 test('D16 handoff requires owner-supplied scope, workload and authoritative deadline',()=>{
  assert.equal(validateReviewedOwnerHandoff({proposal:base,approval:{...approval,spec},record,workload:{validated:true,ownerRef:'workload-owner'}}).owner,'D16');
  for(const wrong of [{...spec,learningUnitIds:['not-taught']},{...spec,dueAt:null},{...spec,graded:true},{...spec,sourceLineage:{...spec.sourceLineage,classroomRecordRef:'stale'}}])

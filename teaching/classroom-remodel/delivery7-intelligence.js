@@ -99,7 +99,8 @@ function validateReviewedOwnerHandoff({proposal,approval,record,workload}={}) {
     approval.workloadOwnerRef!==workload.ownerRef||
     !spec||!Array.isArray(spec.learningUnitIds)||!spec.learningUnitIds.length||
     !spec.sourceLineage||spec.sourceLineage.classroomRecordRef!==`classroom-record:${record.record_id}@${record.content_hash}`||
-    !spec.sourceLineage.classClosureRef||!spec.dueAt||!spec.deadlineType)
+    !spec.sourceLineage.classClosureRef||spec.sourceLineage.reviewedProposalHash!==hash(proposal.output)||
+    !spec.dueAt||!spec.deadlineType)
    throw failure('CLASSROOM_HOMEWORK_OWNER_SPEC_REQUIRED',409);
   // A reviewed Class task cannot silently penalize missed/excused work or
   // convert unsupported exposure into an official competence claim.
@@ -146,8 +147,8 @@ function createDelivery7Intelligence({orchestrator,d11Repository,continuityRepos
   const current=delivery7Request(await inputs(args));
   if(current.planningBinding.inputHash!==request.planningBinding.inputHash)throw failure('CLASSROOM_PLANNING_RESULT_STALE',409);
   const proposal={proposed:true,committed:false,mode:args.mode,output,receipt,binding:request.planningBinding,assignmentCreated:false,followUpScheduled:false,officialOutcome:false};
-  if(args.mode==='prepare_continuity')reviewedContinuity.set(proposal,{studentId:args.studentId,classId:args.classId,requestKey:args.operationKey,inputHash:request.planningBinding.inputHash,selection:structuredClone(receipt.approvedQuestionRefs||[])});
-  if(['homework_design_generate','guide_assessment'].includes(args.mode))reviewedPlanning.set(proposal,{studentId:args.studentId,classId:args.classId,requestKey:args.operationKey,inputHash:request.planningBinding.inputHash,outputHash:hash(output)});
+  if(args.mode==='prepare_continuity')reviewedContinuity.set(proposal,{studentId:args.studentId,classId:args.classId,requestKey:args.operationKey,inputHash:request.planningBinding.inputHash,selection:structuredClone(receipt.approvedQuestionRefs||[]),receiptHash:hash(receipt)});
+  if(['homework_design_generate','guide_assessment'].includes(args.mode))reviewedPlanning.set(proposal,{studentId:args.studentId,classId:args.classId,requestKey:args.operationKey,inputHash:request.planningBinding.inputHash,outputHash:hash(output),receiptHash:hash(receipt)});
   return proposal;
  }
  // Trusted internal workflow: the independent owner selects exact unresolved
@@ -157,6 +158,7 @@ function createDelivery7Intelligence({orchestrator,d11Repository,continuityRepos
   const bound=proposal&&reviewedContinuity.get(proposal);
   if(!bound||bound.studentId!==studentId||bound.classId!==classId||proposal.mode!=='prepare_continuity')
    throw failure('CLASSROOM_CONTINUITY_REVIEWED_PROPOSAL_REQUIRED',409);
+  if(hash(proposal.receipt)!==bound.receiptHash)throw failure('CLASSROOM_CONTINUITY_REVIEW_CHANGED',409);
   const current=delivery7Request(await inputs({studentId,classId,mode:'prepare_continuity',operationKey:bound.requestKey}));
   if(current.planningBinding.inputHash!==bound.inputHash||proposal.binding.inputHash!==bound.inputHash)
    throw failure('CLASSROOM_CONTINUITY_REVIEW_STALE',409);
@@ -179,7 +181,8 @@ function createDelivery7Intelligence({orchestrator,d11Repository,continuityRepos
   if(typeof ownerApprovalReader!=='function')return {held:true,reason:'CLASSROOM_PLANNING_DOMAIN_OWNER_UNAVAILABLE',committed:false};
   const fresh=await inputs({studentId,classId,mode:proposal.mode,operationKey:pinned.requestKey});
   const current=delivery7Request(fresh);
-  if(current.planningBinding.inputHash!==pinned.inputHash||hash(proposal.output)!==pinned.outputHash)
+  if(current.planningBinding.inputHash!==pinned.inputHash||hash(proposal.output)!==pinned.outputHash||
+    hash(proposal.receipt)!==pinned.receiptHash)
    throw failure('CLASSROOM_PLANNING_OWNER_RESULT_STALE',409);
   const approval=await ownerApprovalReader({studentId,classId,mode:proposal.mode,inputHash:pinned.inputHash,
    outputHash:pinned.outputHash,recordHash:fresh.record?.content_hash,reviewReceipt:proposal.receipt,
@@ -199,7 +202,7 @@ function createDelivery7Intelligence({orchestrator,d11Repository,continuityRepos
    return {held:true,reason:'CLASSROOM_D17_OWNER_ROUTE_UNAVAILABLE',committed:false};
   const prepared=await downstreamOwners.d17.prepareBlueprint({id:studentId},reviewed.assessmentId,
    {...reviewed.input,lane:'ELIGIBLE_CANDIDATE',idempotencyKey:'classroom-d17:'+hash({reviewRef:approval.reviewRef,recordHash:fresh.record.content_hash}),
-    provenanceRefs:[...new Set([...(reviewed.input.provenanceRefs||[]),`classroom-record:${fresh.record.record_id}@${fresh.record.content_hash}`])]});
+    provenanceRefs:[...new Set([...(reviewed.input.provenanceRefs||[]),`classroom-record:${fresh.record.record_id}@${fresh.record.content_hash}`,`classroom-planning-review:${approval.reviewRef}`])]});
   return {accepted:true,committed:true,owner:'D17',assessmentId:reviewed.assessmentId,
    blueprintId:prepared?.blueprint?.assessment_blueprint_id||null,reviewRef:approval.reviewRef,
    packageLocked:false,graded:false};
