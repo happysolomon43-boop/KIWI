@@ -224,7 +224,10 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
     return d12Service.captureResponse(user,classId,input);
   }
   async function runStudyStage({studentId,classId,stage}){
+    if(!['PRE_CLASS','POST_CLASS'].includes(stage))fail('TEACHING_D14_NOTE_STAGE_INVALID',422);
     const ctx=await context(studentId,classId);
+    if(stage==='PRE_CLASS'&&ctx.session?.lifecycle_state==='CLOSED')return {state:'ROUTE_HELD',reason:'PRE_CLASS_NOTE_AFTER_CLOSURE_FORBIDDEN',published:false};
+    if(stage==='POST_CLASS'&&ctx.session?.lifecycle_state!=='CLOSED')return {state:'RECONCILIATION_HELD',reason:'AUTHORITATIVE_CLOSED_CLASS_REQUIRED',published:false};
     if(!ctx.blueprint||ctx.blueprint.blueprint_state!=='VALIDATED')return {state:'ROUTE_HELD',reason:'APPROVED_LESSON_PLAN_REQUIRED'};
     const previous=await repository.latestNote(studentId,classId,stage==='POST_CLASS'?'PRE_CLASS':null);
     async function closureForNote(){
