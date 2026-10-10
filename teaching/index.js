@@ -74,6 +74,9 @@ function createTeachingFoundation({
   d14HelpIntelligence = null,
   d14LessonIntelligence = null,
   d14VisualAI = null,
+  d14StudyIntelligence = null,
+  d14CardSetReader = null,
+  d14SourceReader = null,
   d13PublishedEventRegistry = null,
   d16Intelligence = null,
   d17Intelligence = null,
@@ -350,6 +353,9 @@ function createTeachingFoundation({
         helpIntelligence:d14HelpIntelligence,
         lessonIntelligence:d14LessonIntelligence,
         visualService:d14VisualService,
+        studyIntelligence:d14StudyIntelligence,
+        cardSetReader:d14CardSetReader,
+        sourceReader:d14SourceReader,
         randomUUID,
       })
     : null;
