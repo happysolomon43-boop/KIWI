@@ -1258,7 +1258,14 @@
         },
         {
           "file": "teaching/repositories/d12-response-pedagogy.js",
-          "line": 110,
+          "line": 119,
+          "identities": [
+            "teaching.lesson.response_correctness_quality_evaluation"
+          ]
+        },
+        {
+          "file": "teaching/repositories/d12-response-pedagogy.js",
+          "line": 153,
           "identities": [
             "teaching.lesson.response_correctness_quality_evaluation"
           ]
@@ -1295,7 +1302,14 @@
         },
         {
           "file": "teaching/repositories/d12-response-pedagogy.js",
-          "line": 110,
+          "line": 119,
+          "identities": [
+            "teaching.lesson.response_correctness_quality_evaluation"
+          ]
+        },
+        {
+          "file": "teaching/repositories/d12-response-pedagogy.js",
+          "line": 153,
           "identities": [
             "teaching.lesson.response_correctness_quality_evaluation"
           ]
@@ -3738,7 +3752,7 @@
         },
         {
           "file": "teaching/repositories/d12-response-pedagogy.js",
-          "line": 163,
+          "line": 191,
           "identities": [
             "teaching.pedagogy.pedagogical_profile_classification"
           ]
@@ -3761,7 +3775,7 @@
         },
         {
           "file": "teaching/repositories/d12-response-pedagogy.js",
-          "line": 163,
+          "line": 191,
           "identities": [
             "teaching.pedagogy.pedagogical_profile_classification"
           ]
@@ -7205,5 +7219,5 @@
     }
   ],
   "searchMethod": "Tracked UTF-8 source exact canonical and legacy alias references; compiled registry decoded through its verified reader. Absence of literal references is not proof of no dynamic/external caller.",
-  "searchFilesSha256": "7d975061c6fe9b82575e1dfffc981cc54a74270303323543fe1fdcd52a4d1f4d"
+  "searchFilesSha256": "bc19fbf7823f9b067eebdab3d80413e8ce33d8557683eb793ce079a7e6abd213"
 }

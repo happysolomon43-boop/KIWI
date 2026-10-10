@@ -19,6 +19,8 @@ const TEACHING_EVENTS = Object.freeze({
   ASSESSMENT_EXPIRY_DUE: 'teaching.assessment.expiry_due',
   ASSESSMENT_STARTED: 'teaching.assessment.started',
   ASSESSMENT_SUBMITTED: 'teaching.assessment.submitted',
+  CLASSROOM_TASK_EVALUATION_DUE: 'teaching.classroom.task_evaluation_due',
+  CLASSROOM_TASK_WINDOW_EXPIRY_DUE: 'teaching.classroom.task_window_expiry_due',
   CLASSROOM_MESSAGE_ROUTING_DUE: 'teaching.classroom.message_routing_due',
   CLASSROOM_MESSAGE_ACCEPTED: 'teaching.classroom.message_accepted',
   CLASSROOM_MESSAGE_DISPOSITION_COMMITTED: 'teaching.classroom.message_disposition_committed',

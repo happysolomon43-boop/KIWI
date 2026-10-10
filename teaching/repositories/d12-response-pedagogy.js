@@ -87,6 +87,15 @@ function createD12ResponsePedagogyRepository({query,withTransaction,randomUUID,d
     });
   }
 
+  // Only the shared D11-authority transaction calls this owned task path.
+  // It emits no legacy response event: immutable-context evaluation has its
+  // own durable job, so closure cannot strand accepted work on a live guard.
+  async function captureClassroomTaskUsing(tx,{studentId,classId,task,authority,text,operationKey,exposure}){
+    const unit=await getLearningUnit(studentId,task.target_ref.id,tx);
+    if(!unit||unit.course_plan_id!==authority.course_plan_id||task.session_id!==authority.class_session_id)throw Object.assign(new Error('Task target or session changed.'),{code:'CLASSROOM_TASK_TARGET_NOT_OWNED',status:409});
+    const id=randomUUID();const row=(await tx.query("insert into public.teaching_student_responses(response_id,student_id,class_session_id,response_kind,response_payload,submitted_at,assistance_context,provenance,learning_unit_id,controller_version,idempotency_key) values($1,$2,$3,'text',$4::jsonb,$5,$6::jsonb,$7::jsonb,$8,$9,$10) returning *",[id,studentId,task.session_id,JSON.stringify({text}),authority.now,JSON.stringify(exposure),JSON.stringify({task_id:task.id,task_version:task.version,criterion_ref:task.private.criterion_ref,source_refs:task.source_refs,window_id:task.window.id,window_version:task.window.version}),unit.learning_unit_id,Number(authority.state_version),'classroom-task:'+task.session_id+':'+operationKey])).rows[0];return row;
+  }
+
   async function getResponse(studentId,responseId,runner=null){
     const {rows}=await q(runner,"select * from public.teaching_student_responses where student_id=$1 and response_id=$2 limit 1",[studentId,responseId]);
     return rows?.[0]||null;
@@ -125,6 +134,25 @@ function createD12ResponsePedagogyRepository({query,withTransaction,randomUUID,d
       );
       return inserted.rows[0];
     });
+  }
+
+  // A separate admission-bound path; the live saveEvaluation guards above stay intact.
+  async function saveClassroomTaskEvaluationUsing(tx,{admissionId,payload,evidenceBounds,executionId,acceptanceReceipt}={}){
+    const row=(await tx.query("select a.*,t.student_id,t.class_id,t.task_version,r.class_session_id,r.learning_unit_id,r.controller_version from public.teaching_classroom_task_admissions a join public.teaching_classroom_tasks t using(task_id,session_id) join public.teaching_student_responses r using(response_id) where admission_id=$1 for update of r",[admissionId])).rows[0];
+    const snapshot=row?.context_snapshot,task=snapshot?.task;
+    const fail=()=>{throw Object.assign(new Error('Immutable task evaluation context mismatch.'),{code:'CLASSROOM_TASK_EVALUATION_CONTEXT_MISMATCH',status:409});};
+    if(!row||task?.id!==row.task_id||task?.version!==row.task_version||task?.session_id!==row.session_id||row.class_session_id!==row.session_id||task?.target_ref?.id!==row.learning_unit_id||snapshot.response?.response_id!==row.response_id||Number(snapshot.response.controller_version)!==Number(row.controller_version))fail();
+    const {hash}=require('../classroom-remodel/academic-artifacts');
+    if(!acceptanceReceipt?.accepted||!acceptanceReceipt.ownerRef||acceptanceReceipt.admissionId!==admissionId||acceptanceReceipt.contextHash!==hash(snapshot)||acceptanceReceipt.outputHash!==hash(payload)||!executionId)fail();
+    const evaluation=require('../d12/contracts').validateResponseEvaluation(payload);
+    if(evaluation.task_ref!=='task:'+task.id+'@'+task.version||!evaluation.target_competence_refs.includes(task.target_ref.id))fail();
+    const key='classroom-admission:'+admissionId;
+    const prior=(await tx.query('select * from public.teaching_response_evaluations where student_id=$1 and idempotency_key=$2',[row.student_id,key])).rows[0];
+    if(prior){if(hash(prior.evaluation_payload)!==hash(payload))fail();return prior;}
+    const version=Number((await tx.query('select coalesce(max(evaluation_version),0)+1 next_version from public.teaching_response_evaluations where student_id=$1 and response_id=$2',[row.student_id,row.response_id])).rows[0].next_version);
+    const result=await tx.query("insert into public.teaching_response_evaluations(evaluation_id,student_id,response_id,class_id,class_session_id,learning_unit_id,controller_version,evaluation_version,evaluation_state,capability_id,prompt_family_id,prompt_family_version,contract_version,evaluation_payload,evaluator_confidence,evidence_strength,assistance_state,exposure_state,provenance_refs,idempotency_key,execution_id) values($1,$2,$3,$4,$5,$6,$7,$8,'VALIDATED','teaching.lesson.response_correctness_quality_evaluation','TPF-21','1.0','d12.response-evaluation.v1',$9::jsonb,$10,'UNKNOWN',$11::jsonb,$12::jsonb,$13::jsonb,$14,$15) returning *",[randomUUID(),row.student_id,row.response_id,row.class_id,row.session_id,row.learning_unit_id,row.controller_version,version,JSON.stringify(payload),evaluation.response_assessment?.evaluator_confidence||null,JSON.stringify({snapshot:row.exposure_snapshot,bounds:evidenceBounds,officialOutcome:false}),JSON.stringify(row.exposure_snapshot),JSON.stringify(['admission:'+admissionId,'task:'+task.id+'@'+task.version,'context:'+hash(snapshot),'acceptance:'+hash(acceptanceReceipt)]),key,executionId]);
+    // No Class reopening, current Controller transition, live publication, or official learning outcome.
+    return result.rows[0];
   }
 
   async function saveRouteHeldEvaluation({studentId,classId,response,learningUnit,context,idempotencyKey,reason='UNQUALIFIED_UNTIL_D30'}={}){
@@ -216,8 +244,8 @@ function createD12ResponsePedagogyRepository({query,withTransaction,randomUUID,d
   }
 
   return Object.freeze({
-    assertReady,getClassContext,getLearningUnit,getSubject,createResponse,getResponse,listEvaluationsForResponse,latestEvaluation,
-    recentLearningUnitEvaluations,saveEvaluation,saveRouteHeldEvaluation,savePedagogyDecision,latestPedagogyDecision,latestPedagogyProfile,
+    assertReady,getClassContext,getLearningUnit,getSubject,createResponse,captureClassroomTaskUsing,getResponse,listEvaluationsForResponse,latestEvaluation,
+    recentLearningUnitEvaluations,saveEvaluation,saveClassroomTaskEvaluationUsing,saveRouteHeldEvaluation,savePedagogyDecision,latestPedagogyDecision,latestPedagogyProfile,
     savePedagogyProfile,saveTeacherCorrection,createEvidenceRecheckHandoff,getEvaluation,getTeacherCorrection,getCourseSourceItems,recentPedagogyDecisions,
   });
 }

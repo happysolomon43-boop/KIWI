@@ -1,0 +1,34 @@
+{
+  "version": "classroom-delivery-6-checkpoint.v1",
+  "delivery": 6,
+  "status": "IN_PROGRESS_INACTIVE_FOUNDATION",
+  "branch": "feat/classroom-remodel-delivery-6",
+  "baseCommit": "9e4b8e11d3b591cf24ae623541ce4df38664c772",
+  "commit": "Locate the commit containing this checkpoint; implementation is not complete",
+  "pr": null,
+  "ci": "PENDING_NATIVE_DATABASE_EXECUTION",
+  "implemented": [
+    "Owner-validated text task contracts with private criteria and explicit evidence intent",
+    "Pending render-gated absolute windows, fair-time cancellation and bounded same-window extensions",
+    "Atomic D12 response admission, immutable snapshots, idempotent receipts and visible student response",
+    "Evaluation leases, recovery events and bounded retry persistence",
+    "Separate immutable-admission D12 evaluation path without relaxing existing live guards",
+    "Lossless canonical interpretation retained alongside conservative D12 compatibility projection"
+  ],
+  "migration": {"file": "migrations/20261010145451_classroom_response_windows.sql", "generatedWith": "Supabase CLI", "productionApplied": false, "nativeVerified": false},
+  "validation": {"localUnitTests": {"passed": 1706, "failed": 0, "skipped": 0}, "newTaskUnitTests": 10, "webBuild": "PASS", "foundationVerifier": "PASS", "nativeTaskTests": "WRITTEN_NOT_YET_EXECUTED", "connectedTaskBrowser": "NOT_IMPLEMENTED", "liveProviderEvidence": false},
+  "effectiveVersions": {"candidateTaskSchema": "classroom-tasks.v1", "activeRegistry": "1.3", "activePromptManifest": "1.4", "candidatePromptsRuntimeEffective": false},
+  "remaining": [
+    "Native migration, admission/window/concurrency and post-closure evaluation checks",
+    "Bounded accepted single-action selection and private-safe feedback publication",
+    "Task-related assistance and clarification with released/accessibly rendered exposure accounting",
+    "Explicit teacher corrections, Board successor links, stale-output invalidation and evidence-owner handoff",
+    "TPF-05 remaining-work replan and atomic D11 application preserving completed work",
+    "Runtime worker/API connection and persistent accessible task composer/drafts",
+    "Connected browser, accessibility, failure-recovery and qualification evidence",
+    "Owner policy adoption, provider/reviewer qualification and production rollout remain external gates"
+  ],
+  "compatibility": {"defaultTaskRouteActive": false, "studentTaskControlsActive": false, "oldBindingsRetired": 0, "productionChanged": false},
+  "rollback": "Inactive additive candidate; no deployed data or active bindings changed",
+  "nextAction": "Run native PostgreSQL CI for this commit and resolve migration or task-window failures before connecting student controls"
+}
