@@ -103,3 +103,15 @@ test('D16 atomic reviewed source check rejects stale, foreign and untaught class
  await assert.rejects(()=>h.withTransaction(tx=>assertClassroomSourceUsing(tx,{...spec,learningUnitIds:['not-taught']})),{code:'TEACHING_D16_CLASSROOM_SCOPE_NOT_CONFIRMED'});
  assert.equal((await h.withTransaction(tx=>assertClassroomSourceUsing(tx,{...spec}))).contentHash,record.content_hash);
 },{learningUnit:true,policy:taskPolicy()}));
+
+test('adopted positive closing lead creates one durable pre-end due event before the original hard end',{skip},()=>harness(async h=>{
+ const due=(await h.query("select event_type,due_at from teaching_runtime.due_events where payload->>'session_id'=$1 and event_type in ($2,$3) order by due_at",[h.sessionId,'teaching.classroom.pre_closure_due','teaching.classroom.delivery_end_due'])).rows;
+ assert.equal(due.length,2);
+ assert.equal(due[0].event_type,'teaching.classroom.pre_closure_due');
+ assert.equal(due[1].event_type,'teaching.classroom.delivery_end_due');
+ assert.equal(new Date(due[1].due_at)-new Date(due[0].due_at),300000);
+ const prior=await h.d11Repository.commitClosure({studentId:h.ids.studentId,classId:h.ids.classId,expectedVersion:1});
+ assert.equal(prior.session.lifecycle_state,'CLOSED');
+ const replay=await h.d11Repository.commitClosure({studentId:h.ids.studentId,classId:h.ids.classId,expectedVersion:1});
+ assert.equal(replay.idempotent,true);
+},{policy:(()=>{const p=require('../fixtures/classroom-presentation-policy').fixturePolicy();p.fields.closureLeadMs={...p.fields.closureLeadMs,value:300000};return p;})()}));
