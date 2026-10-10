@@ -223,3 +223,5 @@
 @media(prefers-reduced-motion:reduce){.cr-shell *{scroll-behavior:auto!important}}
 
 .cr-expanded-board{max-width:min(92vw,72rem);max-height:90dvh;overflow:auto;background:#f6f7f3;color:#152d23;border:1px solid #8ca496;padding:1.5rem;overscroll-behavior:contain}.cr-expanded-board::backdrop{background:rgb(5 25 15 / .65)}.cr-chapter nav{display:flex;flex-direction:column;gap:.5rem}.cr-chapter a{color:#145b37;text-underline-offset:.2em}.cr-source small{display:block}.cr-source.is-current{background:#e7f2e9}
+
+.cr-shell .tc-board-item,.cr-expanded-board .tc-board-item{background:#122a1d;color:#eff9f1;margin:1rem 0;min-width:0}.cr-shell .tc-board-item[data-type=equation],.cr-expanded-board .tc-board-item[data-type=equation]{background:#122a1d}.cr-shell .tc-board-item button{color:#152d23}.cr-shell .tc-visual,.cr-expanded-board .tc-visual{height:auto;max-width:100%;object-fit:contain}

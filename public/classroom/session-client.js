@@ -37,6 +37,8 @@ export function createSessionClient({
       throw Error("CLASSROOM_CLIENT_SCHEMA_INCOMPATIBLE");
     if (snapshot && next.session_id !== snapshot.session_id) {
       events.clear();
+      snapshot = null;
+      cursor = 0;
       leaseToken = null;
       pending = null;
     }
@@ -242,6 +244,8 @@ export function createSessionClient({
       clearTimeout(renewTimer);
       clearTimeout(reconnectTimer);
       events.clear();
+      snapshot = null;
+      cursor = 0;
       leaseToken = null;
       pending = null;
     },

@@ -40,10 +40,10 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
       restricted?[]:repository.board(user.id,source.session?.class_session_id),
       restricted?[]:repository.notebook(user.id,classId),
       repository.latestNote(user.id,classId),
-      repository.latestTeacherMessage(user.id,classId),
+      restricted?null:repository.latestTeacherMessage(user.id,classId),
       repository.firstEntry(user.id,classId),
       restricted?[]:typeof repository.conversation==='function'?repository.conversation(user.id,classId):[],
-      typeof repository.helpRequests==='function'?repository.helpRequests(user.id,classId):[],
+      restricted?[]:typeof repository.helpRequests==='function'?repository.helpRequests(user.id,classId):[],
     ]);
     const closed=source.session?.lifecycle_state==='CLOSED';
     let summary=null,closureFacts=null;
@@ -66,11 +66,11 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
       resumeState:source.session.resume_instructional_substate||'INSTRUCTION',canResume:Boolean(source.session.resume_instructional_substate),
     }:null;
     return Object.freeze({classroomEngine:source.session?.classroom_engine||'LEGACY',class:d11.class,controller:d11.controller,time:d11.time,serverNow:serverNow.toISOString(),identity:identity||{course_title:'Course',teacher_name:'KIWI Teacher'},
-      mode:MODES[mode]||(mode==='UNSTARTED_PAST'?'Class did not start':mode==='START_DELAYED'?'Start pending':'Before Class'),modeKey:mode,focus:true,objective,teacherMessage:teacherMessage?.message||null,entry,interruption,hasEntered:Boolean(firstEntry),
+      mode:MODES[mode]||(mode==='UNSTARTED_PAST'?'Class did not start':mode==='START_DELAYED'?'Start pending':'Before Class'),modeKey:mode,focus:true,objective:restricted?null:objective,teacherMessage:teacherMessage?.message||null,entry,interruption,hasEntered:Boolean(firstEntry),
       canStartClass:!source.session&&currentTime>=starts&&currentTime<ends&&source.classRow.lifecycle_state!=='CANCELLED'&&source.classRow.course_lifecycle_state==='ACTIVE'
         &&source.classRow.source_timetable_state!=='SUPERSEDED',
-      requiredMaterials:Array.isArray(source.blueprint?.blueprint_payload?.required_materials)?source.blueprint.blueprint_payload.required_materials.map(String).slice(0,12):[],
-      learningUnitId:currentLu&&planned.includes(currentLu)?currentLu:(planned[0]||null),
+      requiredMaterials:!restricted&&Array.isArray(source.blueprint?.blueprint_payload?.required_materials)?source.blueprint.blueprint_payload.required_materials.map(String).slice(0,12):[],
+      learningUnitId:restricted?null:currentLu&&planned.includes(currentLu)?currentLu:(planned[0]||null),
       board:scenes.map((s)=>({...s,items:s.items.map((item)=>validateBlock({type:item.type,content:item.content})&&item)})),
       boardHistoryAllowed:!restricted,notebook:notes,notebookAllowed:!restricted,summary,closureFacts,
       teacherConversation:conversation,helpRequests,teacherMessagingAllowed:source.session?.classroom_engine!=='CLASSROOM_V1'&&HELP_INSTRUCTIONAL_MODES.has(mode)&&!closed&&source.session?.lifecycle_state==='ACTIVE'

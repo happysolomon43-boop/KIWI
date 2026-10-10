@@ -1,3 +1,8 @@
+import {
+  createComposerShell,
+  createNotebookCapture,
+  createBoardDialogs,
+} from "./reading-tools.js";
 import { createSessionClient } from "./session-client.js";
 import { node, action, renderChapter, renderEvent } from "./renderers.js";
 // The shell keeps one mounted view; stream updates append rather than replacing
@@ -13,6 +18,7 @@ export function mountClassroomView({
   openNotebook,
   onClose,
   onProtected,
+  releaseVisuals,
   onTechnical,
   onLeave,
 }) {
@@ -80,34 +86,26 @@ export function mountClassroomView({
   const skip = node("a", "Skip to conversation", "cr-skip");
   skip.href = "#cr-conversation";
   header.prepend(skip);
-  const composer = node("form", null, "cr-composer"),
-    label = node("label", "Message your teacher"),
-    draft = node("textarea");
-  draft.name = "classroom-message";
-  draft.id = "cr-message";
-  draft.autocomplete = "off";
-  draft.placeholder = "Ask about the current passage…";
-  draft.rows = 2;
-  label.htmlFor = draft.id;
-  draft.disabled = true;
-  const availability = node(
-    "p",
-    reviewOnly
-      ? "Past class: read-only review."
-      : "Messages become available after message admission is enabled for this session.",
-    "cr-muted",
-  );
-  availability.id = "cr-message-availability";
-  draft.setAttribute("aria-describedby", availability.id);
-  composer.append(label, draft, availability);
-  composer.addEventListener("submit", (e) => e.preventDefault());
+  const composer = createComposerShell(reviewOnly);
   conversation.append(feed, composer);
   main.append(conversation, chapter);
   root.append(header, main);
   host.replaceChildren(root);
-  let expandedBoard = null;
+  const notebookCapture = createNotebookCapture({
+    api,
+    classId,
+    status: noteStatus,
+    signal: viewAbort.signal,
+  });
+  const note = (ref, text) => notebookCapture.save(ref, text);
+  const boardDialogs = createBoardDialogs({
+    host,
+    renderBoard: renderOwnedBoard,
+    releaseVisuals,
+  });
   let closed = false,
     store = null,
+    renderedSession = null,
     chapterId = null,
     currentChapter = null,
     loadingChapter = null,
@@ -116,8 +114,7 @@ export function mountClassroomView({
     atCurrent = true,
     receiptFlight = false,
     seen = new Map(),
-    boardSeen = new Set(),
-    noteOperations = new Map();
+    boardSeen = new Set();
   const mobile = matchMedia("(max-width: 760px)"),
     ui = {
       view: "conversation",
@@ -145,6 +142,7 @@ export function mountClassroomView({
     );
   }
   preferences();
+  root.style.setProperty("--tc-reading-scale", String(ui.scale));
   atCurrent = !(ui.conversationScroll > 0);
   let restoreReading = true;
   function savePreferences() {
@@ -199,6 +197,7 @@ export function mountClassroomView({
   size.addEventListener("input", () => {
     ui.scale = Number(size.value) / 100;
     root.style.setProperty("--cr-reading-scale", String(ui.scale));
+    root.style.setProperty("--tc-reading-scale", String(ui.scale));
     savePreferences();
   });
   sizeLabel.append(size);
@@ -237,6 +236,10 @@ export function mountClassroomView({
   }
   const notebook = action("Notebook", openNotebook);
   controls.append(notebook);
+  const boardHistory = action("Board history", () =>
+    boardDialogs.history(legacy.board || [], boardHistory),
+  );
+  controls.append(boardHistory);
   feed.addEventListener("scroll", () => {
     atCurrent = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 2;
     ui.conversationScroll = feed.scrollTop;
@@ -289,27 +292,29 @@ export function mountClassroomView({
       confirmReady();
     }
   }
-  async function note(ref, text) {
-    const key = JSON.stringify(ref);
-    let operation = noteOperations.get(key);
-    if (!operation) {
-      operation = {
-        content: text,
-        idempotencyKey: crypto.randomUUID(),
-        sourceRef: ref,
-      };
-      noteOperations.set(key, operation);
-    }
-    try {
-      await api(
-        "/teaching/classes/" + encodeURIComponent(classId) + "/notebook",
-        { method: "POST", body: operation, signal: viewAbort.signal },
-      );
-      noteStatus.textContent = "Saved to Notebook.";
-    } catch (e) {
-      noteStatus.textContent =
-        "Notebook save not confirmed. Retry the same passage to check safely.";
-    }
+  function renderOwnedBoard(item) {
+    return renderBoard(item, {
+      onSave:
+        !reviewOnly && legacy.notebookAllowed
+          ? (_item, text) => {
+              const portion = store?.snapshot.released_portions.find((p) =>
+                p.content.board_refs.some((r) => r.id === item.boardItemId),
+              );
+              return notebookCapture.save(
+                portion
+                  ? {
+                      kind: "portion",
+                      id: portion.id,
+                      version: "1",
+                      anchor: null,
+                    }
+                  : null,
+                text,
+                item.boardItemId,
+              );
+            }
+          : null,
+    });
   }
   function source(ref) {
     if (
@@ -358,6 +363,7 @@ export function mountClassroomView({
     }
     pace.value = s.pace;
     notebook.disabled = legacy.notebookAllowed !== true;
+    boardHistory.disabled = legacy.boardHistoryAllowed !== true;
   }
   async function loadChapter(s) {
     const key = s.chapter_ref && s.chapter_ref.id + "@" + s.chapter_ref.version;
@@ -396,31 +402,9 @@ export function mountClassroomView({
         error(e);
       }
     } finally {
-      if (loadingChapter === key) loadingChapter = null;
+      if (requestVersion === version && loadingChapter === key)
+        loadingChapter = null;
     }
-  }
-  function expandBoard(board, opener) {
-    expandedBoard?.close();
-    const dialog = node("dialog", null, "cr-expanded-board");
-    dialog.setAttribute("aria-label", "Expanded Board reference");
-    const copy = board.cloneNode(true);
-    for (const control of copy.querySelectorAll("button")) control.remove();
-    dialog.append(
-      action("Close Board reference", () => dialog.close()),
-      copy,
-    );
-    host.append(dialog);
-    expandedBoard = dialog;
-    dialog.addEventListener(
-      "close",
-      () => {
-        dialog.remove();
-        if (expandedBoard === dialog) expandedBoard = null;
-        if (opener.isConnected) opener.focus({ preventScroll: true });
-      },
-      { once: true },
-    );
-    dialog.showModal();
   }
   function highlight(s) {
     const presented = new Set(
@@ -487,6 +471,7 @@ export function mountClassroomView({
   document.addEventListener("visibilitychange", visible);
   function thisProtected() {
     version++;
+    releaseVisuals?.(feed);
     feed.replaceChildren();
     chapter.replaceChildren();
     currentChapter = null;
@@ -497,6 +482,19 @@ export function mountClassroomView({
     if (closed) return;
     const s = data.snapshot;
     if (!s) return;
+    if (renderedSession !== s.session_id) {
+      if (renderedSession) {
+        releaseVisuals?.(feed);
+        feed.replaceChildren();
+        seen.clear();
+        boardSeen.clear();
+        chapterId = null;
+        currentChapter = null;
+        loadingChapter = null;
+        version++;
+      }
+      renderedSession = s.session_id;
+    }
     if (!s.chapter_ref) {
       thisProtected();
       return;
@@ -538,11 +536,13 @@ export function mountClassroomView({
           (i) => i.boardItemId === ref.id || i.board_item_id === ref.id,
         );
         if (!item) continue;
-        const board = renderBoard(item);
+        const board = renderOwnedBoard(item);
         board.dataset.boardId = ref.id;
         if (item.content?.assetId)
           for (const img of board.querySelectorAll("img")) {
             img.dataset.assetId = item.content.assetId;
+            if (p.required_asset_ids.includes(item.content.assetId))
+              img.loading = "eager";
             img.addEventListener("load", confirmReady, { once: true });
           }
         const target = [...seen.values()].find(
@@ -552,7 +552,7 @@ export function mountClassroomView({
         target.dataset.portionId = p.id;
         (target || feed).append(board);
         const expand = action("Expand Board reference", () =>
-          expandBoard(board, expand),
+          boardDialogs.expand(board, expand),
         );
         board.append(expand);
         boardSeen.add(ref.id);
@@ -602,6 +602,26 @@ export function mountClassroomView({
         : null;
     },
     navigateReference(ref, loaded = false) {
+      if (ref.kind === "board") {
+        const item = (legacy.board || [])
+          .flatMap((s) => s.items || [])
+          .find((i) => i.boardItemId === ref.id);
+        if (item) boardDialogs.item(item, document.activeElement);
+        else status.textContent = "This Board reference is unavailable.";
+        return;
+      }
+      if (ref.kind === "portion") {
+        const target = [...seen.values()].find(
+          (n) => n.dataset.portionId === ref.id,
+        );
+        if (target) {
+          selectView("conversation");
+          target.scrollIntoView({ block: "center" });
+        } else
+          status.textContent =
+            "Open Board history to review this earlier representation.";
+        return;
+      }
       if (ref.kind === "chapter") source(ref);
       else if (ref.kind === "message") {
         const element = [...seen.values()].find(
@@ -633,17 +653,18 @@ export function mountClassroomView({
       if (closed) return;
       closed = true;
       version++;
-      expandedBoard?.close();
+      boardDialogs.close();
       viewAbort.abort();
       clearInterval(clockTimer);
       store.close();
       mobile.removeEventListener("change", syncViews);
       document.removeEventListener("visibilitychange", visible);
+      releaseVisuals?.(root);
       root.remove();
       seen.clear();
       boardSeen.clear();
       currentChapter = null;
-      noteOperations.clear();
+      notebookCapture.close();
     },
   };
 }
