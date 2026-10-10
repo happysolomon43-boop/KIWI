@@ -34,3 +34,9 @@ test('clean stream EOF reconciles and reconnects from the committed cursor witho
  assert.deepEqual(starts,[0,1]);assert.equal(c.snapshot.clocks.class_end_at,deadline);assert.ok(requests.every(r=>!r.options?.method));
  c.close();assert.equal(c.snapshot,null);
 });
+
+test('an in-flight pre-claim snapshot cannot revoke the newly committed presentation lease',async t=>{
+ let reads=0,resolveOld,resolvePost;const old=new Promise(resolve=>{resolveOld=resolve;}),posted=new Promise(resolve=>{resolvePost=resolve;});
+ const c=await client(t,async(path)=>{if(path.endsWith('session')){reads++;if(reads===2)return old;return reads>2?snap({delivery_version:2,control_epoch:1,permitted_actions:['pause','takeover']}):snap();}resolvePost();return {leaseToken:'new-owned',controlEpoch:1,deliveryVersion:2};});
+ const inFlight=c.refresh(),claim=c.lease();await posted;await new Promise(resolve=>setImmediate(resolve));resolveOld(snap());await Promise.all([inFlight,claim]);assert.equal(c.hasLease,true);assert.equal(c.snapshot.control_epoch,1);assert.equal(c.snapshot.delivery_version,2);
+});

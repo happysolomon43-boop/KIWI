@@ -204,7 +204,8 @@
       "legacyFamilyId": "TPF-07",
       "modes": [
         "prepare_guidance",
-        "coordinate_lesson"
+        "coordinate_lesson",
+        "handle_message"
       ],
       "authorityCeiling": "T2",
       "owner": "Pedagogy Engine",

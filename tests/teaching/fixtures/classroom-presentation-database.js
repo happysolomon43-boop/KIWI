@@ -3,7 +3,7 @@ const {randomUUID}=require('node:crypto');
 const {integrationConfig,assertNonProductionDatabase}=require('../integration/test-db');
 const {fixture}=require('./classroom-database');const f=require('./classroom-remodel-academic');const {fixturePolicy}=require('./classroom-presentation-policy');
 const {connectionString,projectRef}=integrationConfig('Classroom durable presentation');
-async function harness(run,{concurrent=false}={}){assertNonProductionDatabase({connectionString,projectRef});const local=['localhost','127.0.0.1','::1'].includes(new URL(connectionString).hostname);const pool=new (require('pg').Pool)({connectionString,ssl:local?false:{rejectUnauthorized:false},max:concurrent?4:1}),client=await pool.connect();await client.query('BEGIN');let seq=0,committed=false;
+async function harness(run,{concurrent=false,policy=fixturePolicy()}={}){assertNonProductionDatabase({connectionString,projectRef});const local=['localhost','127.0.0.1','::1'].includes(new URL(connectionString).hostname);const pool=new (require('pg').Pool)({connectionString,ssl:local?false:{rejectUnauthorized:false},max:concurrent?4:1}),client=await pool.connect();await client.query('BEGIN');let seq=0,committed=false;
  const withTransaction=async fn=>{if(committed){const tx=await pool.connect();try{await tx.query('BEGIN');const result=await fn(tx);await tx.query('COMMIT');return result;}catch(error){await tx.query('ROLLBACK');throw error;}finally{tx.release();}}const name='presentation_'+(++seq);await client.query('SAVEPOINT '+name);try{const result=await fn(client);await client.query('RELEASE SAVEPOINT '+name);return result;}catch(error){await client.query('ROLLBACK TO SAVEPOINT '+name);await client.query('RELEASE SAVEPOINT '+name);throw error;}};
  const query=(...args)=>committed?pool.query(...args):client.query(...args);
  try{const ids=await fixture(client);await query("update public.teaching_classes set scheduled_start_at=now()-interval '1 minute',scheduled_end_at=now()+interval '1 hour' where class_id=$1",[ids.classId]);
@@ -17,7 +17,7 @@ async function harness(run,{concurrent=false}={}){assertNonProductionDatabase({c
   const dueEventStore=require('../../../teaching/runtime/postgres-event-store').createPostgresTeachingEventStore({query,randomUUID});
   const outboxStore=require('../../../teaching/runtime/postgres-outbox-store').createPostgresTeachingOutboxStore({query,randomUUID});
   const repository=require('../../../teaching/repositories/classroom-presentation').createClassroomPresentationRepository({query,withTransaction,randomUUID,d14Repository,dueEventStore,outboxStore});
-  await repository.initialize({studentId:ids.studentId,classId:ids.classId,policy:fixturePolicy(),pace:'normal'});
+  await repository.initialize({studentId:ids.studentId,classId:ids.classId,policy,pace:'normal'});
   const read=()=>repository.read(ids.studentId,ids.classId,{snapshot:true});
   const args=(snapshot,extra)=>({schemaVersion:'classroom-domain.v1',sessionId,operationKey:randomUUID(),expectedControllerVersion:snapshot.controller_version,expectedDeliveryVersion:snapshot.delivery_version,deliveryEpoch:snapshot.delivery_epoch,controlEpoch:snapshot.control_epoch,clientId:'first',...extra});
   const accept=async output=>repository.acceptSequence({studentId:ids.studentId,classId:ids.classId,operationKey:randomUUID(),output:output||f.opening(),directive:f.directive(),expected:await repository.capture(ids.studentId,ids.classId),types:['text']});
