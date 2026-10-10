@@ -3,7 +3,7 @@ CREATE TABLE public.teaching_classroom_revisions(
  revision_id text PRIMARY KEY,session_id text NOT NULL,operation_key text NOT NULL,
  kind text NOT NULL CHECK(kind IN('correction','replan')),state text NOT NULL CHECK(state IN('HELD','UNRESOLVED','READY','CONFIRMED','APPLIED','SUPERSEDED')),
  request_hash text NOT NULL,original_portion_id text,payload jsonb NOT NULL,receipt jsonb NOT NULL,
- authority jsonb NOT NULL,delivery_epoch integer NOT NULL,sequence_id text,created_at timestamptz NOT NULL DEFAULT now(),
+ authority jsonb NOT NULL,delivery_epoch integer NOT NULL,sequence_id text,created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  UNIQUE(session_id,operation_key),FOREIGN KEY(session_id) REFERENCES public.teaching_classroom_delivery(session_id),
  FOREIGN KEY(original_portion_id,session_id) REFERENCES public.teaching_classroom_portions(portion_id,session_id),
  FOREIGN KEY(sequence_id,session_id) REFERENCES public.teaching_classroom_sequences(sequence_id,session_id)
@@ -24,7 +24,7 @@ BEGIN
     AND h.snapshot->'live_replan'->>'previous_blueprint_id'=OLD.lesson_blueprint_id
     AND (h.snapshot->'live_replan'->>'controller_version')::bigint=OLD.state_version
     AND h.snapshot->'live_replan'->>'execution_id'=b.generation_provenance->>'executionId'
-    AND b.generation_provenance->>'familyId'='TPF-05' AND b.generation_provenance->>'mode'='live_lesson_replan'
+    AND b.generation_provenance->>'familyId'='TPF-05' AND b.generation_provenance->>'mode' IN ('live_lesson_replan','lateness_replan')
     AND b.validation_metadata->>'accepted'='true' AND b.validation_metadata->>'independent'='true'
     AND b.validation_metadata->>'reservePolicyAdoptionRef' IS NOT NULL
   ) THEN RAISE EXCEPTION 'CLASSROOM_SESSION_PIN_IMMUTABLE'; END IF;
