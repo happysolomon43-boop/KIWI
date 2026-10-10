@@ -24,7 +24,7 @@ async function main(){await harness(async h=>{
  const classId=${JSON.stringify(h.ids.classId)};
  const transport=async(id,{after,signal,onEvent})=>{const r=await fetch('/api/teaching/classes/'+id+'/classroom/stream?after='+after,{headers:{Authorization:'Bearer fixture-browser-owner'},signal});const reader=r.body.getReader();const decoder=new TextDecoder();let buffer='';try{while(!signal.aborted){const {value,done}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});let split;while((split=buffer.indexOf(String.fromCharCode(10,10)))>=0){const frame=buffer.slice(0,split);buffer=buffer.slice(split+2);const lines=frame.split(String.fromCharCode(10));const type=lines.find(l=>l.startsWith('event: '))?.slice(7);const data=lines.find(l=>l.startsWith('data: '))?.slice(6);if(type&&data)onEvent(type,JSON.parse(data));}}}finally{await reader.cancel().catch(()=>{});}};
  const legacy={identity:{course_title:'Fixture physics',teacher_name:'KIWI Teacher'},modeKey:'INSTRUCTION',notebookAllowed:true,boardHistoryAllowed:true,controlsEnabled:false,board:[]};
- window.KIWI_API_CLIENT={kiwiApiRequest:api,classroomTransport:transport,kiwiApiBlobRequest:async(path,opts={})=>{const r=await fetch('/api'+path,{headers:{Authorization:'Bearer fixture-browser-owner'},signal:opts.signal});if(!r.ok)throw Error('ASSET_NOT_READY');return r.blob();}};
+ window.KIWI_API_CLIENT={kiwiApiRequest:api,classroomTransport:transport,kiwiApiBlobRequest:async(path,opts={})=>{if(window.fixtureHoldAsset){window.fixtureAssetSignal=opts.signal;await new Promise((resolve,reject)=>opts.signal.addEventListener('abort',()=>reject(new DOMException('Aborted','AbortError')),{once:true}));}const r=await fetch('/api'+path,{headers:{Authorization:'Bearer fixture-browser-owner'},signal:opts.signal});if(!r.ok)throw Error('ASSET_NOT_READY');return r.blob();}};
  window.KIWITeachingCourses={registerSection:section=>{window.classroomSection=section;}};await import('/public/teaching-classroom.js');const renderBoard=window.classroomSection.renderBoardItem;legacy.board=await api('/teaching/classes/'+classId+'/classroom/board');
  window.view=mountClassroomView({host:document.querySelector('#host'),classId,legacy,reviewOnly:new URLSearchParams(location.search).has('review'),api,transport,renderBoard,releaseVisuals:window.classroomSection.releaseBoardVisuals,openNotebook:()=>{},onClose:()=>window.view.close(),onProtected:()=>{window.view?.close();document.querySelector('#host').textContent='Protected owner shell requested';}});
  window.refreshBoard=async()=>{legacy.board=await api('/teaching/classes/'+classId+'/classroom/board');window.view.update(legacy);};
@@ -40,6 +40,20 @@ async function main(){await harness(async h=>{
   // Wait for a committed application-render receipt, not just rendered DOM.
   await page.waitForFunction(async classId=>{const r=await fetch('/api/teaching/classes/'+classId+'/classroom/session',{headers:{Authorization:'Bearer fixture-browser-owner'}});return (await r.json()).position.last_render_confirmed===1;},h.ids.classId);
   assert.equal((await h.read()).position.last_render_confirmed,1);assert.equal(await page.evaluate(()=>window.injected),undefined);await page.getByRole('button',{name:'Expand Board reference'}).first().click();await page.getByRole('dialog',{name:'Expanded Board reference'}).waitFor();await page.getByRole('button',{name:'Close Board reference'}).click();assert.equal(await page.getByRole('button',{name:'Expand Board reference'}).first().evaluate(n=>n===document.activeElement),true);await page.getByRole('button',{name:'Board history',exact:true}).click();await page.getByRole('dialog',{name:'Board history',exact:true}).waitFor();assert.equal(await page.getByRole('dialog',{name:'Board history',exact:true}).locator('.tc-board-item').count(),5);await page.getByRole('button',{name:'Close Board reference',exact:true}).click();
+  // Exercise the registered renderer's pending-request and loaded-blob cleanup.
+  // Use actual authenticated asset loading; delay only this additional request.
+  const cleanup=await page.evaluate(async ({assetId,classId})=>{
+   const section=window.classroomSection;
+   let revoked=[];const revoke=URL.revokeObjectURL.bind(URL);
+   try{
+    window.fixtureHoldAsset=true;
+    const item={type:'image',content:{src:'/api/teaching/classes/'+classId+'/classroom/assets/'+assetId,alt:'Pending fixture visual'}};
+    const pending=section.renderBoardItem(item);document.body.append(pending);section.releaseBoardVisuals(pending);pending.remove();const cancelled=window.fixtureAssetSignal.aborted;
+    window.fixtureHoldAsset=false;URL.revokeObjectURL=url=>{revoked.push(url);revoke(url);};
+    const loaded=section.renderBoardItem(item);document.body.append(loaded);const img=loaded.querySelector('img');await new Promise((resolve,reject)=>{img.addEventListener('load',resolve,{once:true});img.addEventListener('error',()=>reject(Error('Fixture visual failed')), {once:true});});
+    const objectUrl=img.src;section.releaseBoardVisuals(loaded);loaded.remove();return {cancelled,objectUrl,revoked};
+   }finally{window.fixtureHoldAsset=false;URL.revokeObjectURL=revoke;}
+  },{assetId:visualJob.asset_id,classId:h.ids.classId});assert.equal(cleanup.cancelled,true);assert.match(cleanup.objectUrl,/^blob:/);assert.ok(cleanup.revoked.includes(cleanup.objectUrl));
   await page.getByRole('button',{name:'Pause',exact:true}).click();await page.getByRole('button',{name:'Resume',exact:true}).waitFor();assert.equal((await h.read()).delivery_state,'PAUSED');
   await page.getByRole('button',{name:'Read linked passage',exact:true}).click();await page.waitForFunction(()=>document.querySelector('[data-anchor="U01.E01"]')===document.activeElement);
   // Lose the acknowledgement after the actual owner commits the save. The

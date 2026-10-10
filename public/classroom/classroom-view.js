@@ -347,6 +347,8 @@ export function mountClassroomView({
       reviewOnly || store.hasLease || !s.permitted_actions.includes("claim");
     takeover.hidden =
       reviewOnly || store.hasLease || !s.permitted_actions.includes("takeover");
+    claim.disabled = claim.hidden;
+    takeover.disabled = takeover.hidden;
     pace.disabled =
       reviewOnly || !store.hasLease || !s.permitted_actions.includes("pace");
     if (
