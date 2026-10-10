@@ -58,7 +58,8 @@ async function prepareBeforeEnd({studentId,classId,event,repository,service,d11R
  const fresh=await service.snapshot({id:studentId},classId);
  const freshContext=await d11Repository.getClassContext(studentId,classId);
  const freshWindow=beforeEnd(fresh,freshContext,expected.policy);
- if(!freshWindow.eligible||hash(closingSource(fresh,freshWindow))!==inputHash)
+ const identity=source=>{const {remainingMs,...persisted}=source;return persisted;};
+ if(!freshWindow.eligible||hash(identity(closingSource(fresh,freshWindow)))!==hash(identity(source)))
   return held('CLASSROOM_CLOSE_CLASS_SOURCE_CHANGED');
  const directive=await closing.directiveReader({studentId,classId,source,output,review,policy:expected.policy});
  validateDirective(directive);
