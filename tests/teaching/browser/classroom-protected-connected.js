@@ -1,0 +1,33 @@
+'use strict';
+// Native PostgreSQL + real Work response editor; synthetic identity and academic fixture.
+const assert=require('node:assert/strict'),path=require('node:path'),fs=require('node:fs');
+const {randomUUID}=require('node:crypto');const {chromium}=require('playwright');const {harness}=require('../fixtures/classroom-presentation-database');
+async function main(){await harness(async h=>{
+ const d11=require('../../../teaching/repositories/d11-lesson-controller').createD11LessonControllerRepository({...h,randomUUID});
+ const repository=require('../../../teaching/repositories/d16-assignments').createD16AssignmentRepository({...h,randomUUID});
+ const service=require('../../../teaching/d16/service').createD16Service({repository,randomUUID});const user={id:h.ids.studentId};
+ await h.query(`update public.teaching_class_sessions set source_course_state_version=(select state_version from public.teaching_courses where course_id=$2),source_class_schedule_version=1,source_timetable_version_id=$3,source_course_plan_version=1 where class_session_id=$1`,[h.sessionId,h.ids.course,h.ids.timetable]);
+ const created=await service.createFromTrustedSpec({studentId:user.id,classId:h.ids.classId,idempotencyKey:randomUUID(),spec:{courseId:h.ids.course,title:'Active classroom reasoning',instructions:'Explain why the method works.',purpose:'PRACTICE',workStake:'PREPARATION',lifecycleState:'OPEN',assistanceMode:'OPEN_LEARNING_ASSISTANCE',deadlineType:'SOFT',dueAt:new Date(Date.now()+3600000).toISOString(),estimatedEffortMinMinutes:1,estimatedEffortMaxMinutes:5}});
+ await h.withTransaction(tx=>d11.transitionUsing(tx,{studentId:user.id,classId:h.ids.classId,expectedVersion:1,toState:'CLASSWORK',protectedActivity:{owner:'D16',id:created.assignmentId,version:1}}));
+ const express=require('express'),app=express();app.use(express.json());app.use('/public',express.static(path.resolve(__dirname,'../../../public')));
+ const route=(handler)=>async(req,res)=>{try{if(req.headers.authorization!=='Bearer fixture-work-owner')return res.sendStatus(401);res.json(await handler(req));}catch(e){res.status(e.status||500).json({error:e.message,code:e.code});}};
+ app.get('/teaching/classes/:id/classroom/protected-activity',route(req=>d11.protectedActivity(user.id,req.params.id)));
+ app.get('/teaching/courses/:id/work',route(req=>service.listWork(user,{courseId:req.params.id})));
+ app.get('/teaching/assignments/:id',route(req=>service.getAssignment(user,req.params.id)));
+ app.post('/teaching/assignments/:id/draft',route(req=>service.saveDraft(user,req.params.id,req.body)));
+ app.get('/',(req,res)=>res.type('html').send(`<!doctype html><html lang="en"><head><title>Connected Work owner fixture</title></head><body><main id="work"></main><script>
+ window.KIWI_API_CLIENT={kiwiApiRequest:async(path,options={})=>{const r=await fetch(path,{method:options.method||'GET',headers:{Authorization:'Bearer fixture-work-owner','Content-Type':'application/json'},body:options.body?JSON.stringify(options.body):undefined});const data=await r.json();if(!r.ok)throw Error(data.error||data.code);return data;}};
+ window.KIWITeachingNavigation={register:()=>{}};window.KIWITeachingCourses={registerSection:section=>window.workSection=section};
+ </script><script type="module" src="/public/teaching-d16.js"></script></body></html>`));
+ const server=await new Promise(resolve=>{const server=app.listen(0,'127.0.0.1',()=>resolve(server));});const browser=await chromium.launch({headless:true,args:['--no-sandbox']});
+ try{const page=await browser.newPage();await page.goto(`http://127.0.0.1:${server.address().port}/`);await page.waitForFunction(()=>Boolean(window.workSection));
+ await page.evaluate(async({classId,courseId})=>{const target=await window.KIWI_API_CLIENT.kiwiApiRequest('/teaching/classes/'+classId+'/classroom/protected-activity');await window.workSection.render({course:{course_id:courseId},container:document.getElementById('work'),protectedActivity:target});},{classId:h.ids.classId,courseId:h.ids.course});
+ await page.getByRole('heading',{name:'Active classroom reasoning',exact:true}).waitFor();const response=page.locator('.tw-editor textarea');await response.fill('I can explain the invariant.');await page.getByRole('button',{name:'Save draft',exact:true}).click();await page.getByText(/Draft saved/).waitFor();
+ assert.equal((await service.getAssignment(user,created.assignmentId)).submission.response.text,'I can explain the invariant.');
+ await h.query('update public.teaching_assignments set state_version=state_version+1 where assignment_id=$1',[created.assignmentId]);
+ const held=await page.evaluate(async classId=>{try{await window.KIWI_API_CLIENT.kiwiApiRequest('/teaching/classes/'+classId+'/classroom/protected-activity');return false;}catch{return true;}},h.ids.classId);assert.equal(held,true);
+ fs.mkdirSync('artifacts/classroom-browser',{recursive:true});fs.writeFileSync('artifacts/classroom-browser/protected-work-owner.json',JSON.stringify({evidenceKind:'SYNTHETIC_NATIVE_CONNECTED_BROWSER',workEditor:true,exactD11Binding:true,durableOwnerDraft:true,staleBindingHeld:true,liveProvider:false,deployment:false},null,2));
+ console.log('Connected exact Work owner editor, durable draft and stale-binding recovery passed.');
+ }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}
+ },{concurrent:true});}
+main().catch(e=>{console.error(e);process.exitCode=1;});

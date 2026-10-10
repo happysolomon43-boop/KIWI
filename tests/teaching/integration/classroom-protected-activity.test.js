@@ -12,7 +12,7 @@ test('D11 atomically pins exact D16 work; owner drafts survive retry and stale b
  const created=await service.createFromTrustedSpec({studentId:ids.studentId,classId:ids.classId,idempotencyKey:randomUUID(),spec:{courseId:ids.course,title:'Exact active Classwork',instructions:'Explain your reasoning.',purpose:'PRACTICE',workStake:'PREPARATION',lifecycleState:'OPEN',assistanceMode:'OPEN_LEARNING_ASSISTANCE',deadlineType:'SOFT',dueAt:new Date(Date.now()+3600000).toISOString(),estimatedEffortMinMinutes:1,estimatedEffortMaxMinutes:5}});
  const transition=reference=>h.withTransaction(tx=>d11.transitionUsing(tx,{studentId:ids.studentId,classId:ids.classId,expectedVersion:1,toState:'CLASSWORK',protectedActivity:reference}));
  await assert.rejects(transition(null),{code:'CLASSROOM_PROTECTED_ACTIVITY_REQUIRED'});
- assert.equal((await d11.getSession(ids.studentId,ids.classId)).state_version,1);
+ assert.equal(Number((await d11.getSession(ids.studentId,ids.classId)).state_version),1);
  const ref={owner:'D16',id:created.assignmentId,version:1};await transition(ref);
  const binding=await d11.protectedActivity(ids.studentId,ids.classId);assert.equal(binding.id,created.assignmentId);
  const draftKey=randomUUID();await service.saveDraft(user,binding.id,{response:{text:'My durable reasoning'},idempotencyKey:draftKey});await service.saveDraft(user,binding.id,{response:{text:'My durable reasoning'},idempotencyKey:draftKey});
