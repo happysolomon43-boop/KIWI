@@ -15,10 +15,8 @@ async function assertClassroomSourceUsing(tx,{studentId,classId,courseId,sourceL
   [studentId,classId])).rows[0];
  if(!delivery||delivery.lifecycle_state!=='CLOSED'||delivery.course_id!==courseId)
   throw fail('TEACHING_D16_CLASSROOM_SOURCE_NOT_OWNED_OR_CLOSED');
- const [latest,fact]=await Promise.all([
-  tx.query('select record_id,content_hash,record from public.teaching_classroom_reconciliation_versions where student_id=$1 and session_id=$2 order by version_no desc limit 1',[studentId,delivery.session_id]),
-  tx.query('select closure_fact_id from public.teaching_class_closure_facts where student_id=$1 and class_session_id=$2',[studentId,delivery.session_id])
- ]);
+ const latest=await tx.query('select record_id,content_hash,record from public.teaching_classroom_reconciliation_versions where student_id=$1 and session_id=$2 order by version_no desc limit 1',[studentId,delivery.session_id]);
+ const fact=await tx.query('select closure_fact_id from public.teaching_class_closure_facts where student_id=$1 and class_session_id=$2',[studentId,delivery.session_id]);
  const record=latest.rows[0],closure=fact.rows[0];
  if(!record||!closure||ref!=='classroom-record:'+record.record_id+'@'+record.content_hash||
   sourceLineage.classClosureRef!=='class-closure:'+closure.closure_fact_id)

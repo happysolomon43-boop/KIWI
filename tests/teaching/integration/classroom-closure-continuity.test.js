@@ -91,7 +91,7 @@ test('prior history exposes versioned summary and note publication metadata, nev
 
 test('D16 atomic reviewed source check rejects stale, foreign and untaught classroom assignments',{skip},()=>harness(async h=>{
  const {assertClassroomSourceUsing}=require('../../../teaching/d16/classroom-source');
- await h.accept();
+ await open(h);
  const closed=await h.d11Repository.commitClosure({studentId:h.ids.studentId,classId:h.ids.classId,expectedVersion:1});
  const record=await h.continuity.latestRecord(h.ids.studentId,h.ids.classId);
  const spec={studentId:h.ids.studentId,classId:h.ids.classId,courseId:h.ids.course,
