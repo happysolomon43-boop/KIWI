@@ -74,6 +74,9 @@ export function createSessionClient({
     }
   }
   function delta(data) {
+    // An in-flight frame may arrive after the authoritative protected snapshot.
+    // It must never restore instructional content or mutate a closed client.
+    if (closed || !snapshot?.chapter_ref) return;
     if (!snapshot || data.session_id !== snapshot.session_id)
       throw Error("CLASSROOM_SESSION_CHANGED");
     if (data.from_cursor > cursor) throw Error("CLASSROOM_DELTA_GAP");
@@ -144,10 +147,13 @@ export function createSessionClient({
   }
   async function runStream() {
     if (closed) return;
+    clearTimeout(reconnectTimer);
     streamAbort?.abort();
     streamAbort = new AbortController();
     const signal = streamAbort.signal;
-    abort.signal.addEventListener("abort", () => streamAbort?.abort(), {
+    const controller = streamAbort;
+    const cancel = () => controller.abort();
+    abort.signal.addEventListener("abort", cancel, {
       once: true,
     });
     try {
@@ -179,13 +185,17 @@ export function createSessionClient({
     } catch (e) {
       if (!closed && !signal.aborted) {
         onError?.(e);
-        await refresh().catch(onError);
-        if (!closed) {
-          reconnectTimer = setTimeout(
-            runStream,
-            snapshot.transport.reconnectBackoffMs,
-          );
-        }
+      }
+    } finally {
+      abort.signal.removeEventListener("abort", cancel);
+      // Proxies can end a healthy stream without throwing. Reconcile from the
+      // owner before reconnecting, with the same committed cursor and clocks.
+      if (!closed && !signal.aborted) {
+        if (!closed && snapshot)
+          reconnectTimer = setTimeout(async () => {
+            await refresh().catch(onError);
+            if (!closed) runStream();
+          }, snapshot.transport.reconnectBackoffMs);
       }
     }
   }

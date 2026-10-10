@@ -12,3 +12,25 @@ test('a committed takeover clears the old tab credential and exposes the real ta
 test('closing clears the academic cache and prevents later refresh or control requests',async t=>{let requests=0;const c=await client(t,async()=>{requests++;return snap();});c.close();assert.equal(c.snapshot,null);await c.refresh();await assert.rejects(()=>c.control('pause'),/READ_ONLY/);assert.equal(requests,1);});
 
 test('a new authoritative session replaces the old event cache even when its version starts lower',async t=>{let current=snap({delivery_version:5}),last;const c=await client(t,async()=>current,v=>last=v);c.delta({session_id:'session',from_cursor:0,to_cursor:1,events:[{sequence:1,text:'Old teaching'}]});current=snap({session_id:'replacement',delivery_version:1});await c.refresh();assert.equal(c.snapshot.session_id,'replacement');assert.equal(last.events.length,0);});
+
+test('late transport frames cannot restore content after protected clearing or client closure',async t=>{
+ let current=snap(),last;const c=await client(t,async()=>current,v=>last=v);
+ current=snap({delivery_version:2,chapter_ref:null});await c.refresh();
+ c.delta({session_id:'session',from_cursor:0,to_cursor:1,events:[{sequence:1,text:'Delayed instruction'}]});
+ assert.deepEqual(last.events,[]);c.close();
+ assert.doesNotThrow(()=>c.delta({session_id:'session',from_cursor:0,to_cursor:1,events:[{sequence:1,text:'Closed'}]}));
+ assert.equal(c.snapshot,null);
+});
+
+test('clean stream EOF reconciles and reconnects from the committed cursor without commands or changed deadlines',async t=>{
+ const {createSessionClient}=await import('../../../public/classroom/session-client.js');global.document={visibilityState:'visible'};
+ const deadline='2026-10-10T12:00:00Z',event={id:'e1',sequence:1,text:'Committed'},requests=[],starts=[];
+ let resolveReconnect;const reconnected=new Promise(resolve=>{resolveReconnect=resolve;});
+ const c=createSessionClient({classId:'class',api:async(path,options)=>{requests.push({path,options});return snap({cursor:starts.length?1:0,conversation:starts.length?[event]:[],clocks:{class_end_at:deadline}});},transport:async(id,{after,signal,onEvent})=>{
+  starts.push(after);if(starts.length===1){onEvent('classroom_delta',{session_id:'session',from_cursor:0,to_cursor:1,events:[event]});return;}
+  resolveReconnect();await new Promise(resolve=>signal.addEventListener('abort',resolve,{once:true}));
+ }});t.after(()=>c.close());await c.start();
+ await Promise.race([reconnected,new Promise((_,reject)=>{const timer=setTimeout(()=>reject(Error('Reconnect not observed')),1000);timer.unref();})]);
+ assert.deepEqual(starts,[0,1]);assert.equal(c.snapshot.clocks.class_end_at,deadline);assert.ok(requests.every(r=>!r.options?.method));
+ c.close();assert.equal(c.snapshot,null);
+});
