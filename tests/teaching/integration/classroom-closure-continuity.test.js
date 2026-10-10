@@ -56,6 +56,11 @@ test('accepted work survives closure and late evaluation creates a new immutable
   assert.deepEqual(latest.record.pending_evaluations,[]);
   assert.equal(latest.record.evaluations[0].completed_after_closure,true);
   assert.equal(latest.record.evaluations[0].feedback_delivered_in_class,false);
+  const nextClass=h.ids.classId+'-next';
+  await h.query("insert into public.teaching_classes(class_id,student_id,course_id,scheduled_start_at,scheduled_end_at,timezone,source_timetable_version_id) values($1,$2,$3,clock_timestamp()+interval '1 day',clock_timestamp()+interval '1 day 1 hour','UTC',$4)",[nextClass,h.ids.studentId,h.ids.course,h.ids.timetable]);
+  const history=await h.continuity.history(h.ids.studentId,nextClass);
+  assert.equal(history.records[0].record_ref,`classroom-record:${latest.record_id}@${latest.content_hash}`);
+  assert.deepEqual(history.records[0].classroom.pending_evaluations,[]);
   assert.equal((await h.d11Repository.getClosureFact(h.ids.studentId,h.ids.classId)).closure_fact_id,closed.closureFact.closure_fact_id);
   await assert.rejects(()=>h.d11Repository.persistSummary({studentId:h.ids.studentId,classId:h.ids.classId,classSessionId:h.sessionId,closureFactId:closed.closureFact.closure_fact_id,state:'ROUTE_HELD',provenance:{classroom_record_hash:first.content_hash}}),{code:'CLASSROOM_CLOSURE_RESULT_STALE'});
 },{policy:taskPolicy(),learningUnit:true}));

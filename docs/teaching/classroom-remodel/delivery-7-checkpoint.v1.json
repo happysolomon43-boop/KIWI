@@ -8,7 +8,7 @@
   "productionQualified": false,
   "migration": "20261010192519_classroom_closure_continuity.sql",
   "localEvidence": {
-    "unitTestsPassed": 1719,
+    "unitTestsPassed": 1729,
     "embeddedPostgresMigrationsApplied": 43,
     "closureDatabaseTestsPassed": 4,
     "closureDatabaseTestsSkipped": 0,
@@ -16,8 +16,8 @@
     "liveProviderQualified": false
   },
   "remainingDelivery7": [
-    "Reviewed coordinator continuity/closure mode workflow",
-    "Homework and formal assessment guidance adapters",
+    "Before-end close_class and authorized Presenter closing workflow, including an adopted capability binding",
+    "Consume reviewed planning proposals in the existing D16/D17 owner workflows",
     "Complete history availability, summaries and publication-state UI",
     "Cross-Class owner workflow and connected browser acceptance"
   ],
@@ -28,5 +28,13 @@
     "44-scenario qualification ledger remains NOT_QUALIFIED"
   ],
   "delivery8": "BLOCKED_BY_DELIVERIES_1_TO_7_ACCEPTANCE",
-  "sharedOrProductionMigrationsApplied": false
+  "sharedOrProductionMigrationsApplied": false,
+  "implementedPlanningModes": [
+    "prepare_continuity",
+    "guide_assessment",
+    "lesson_closure_analysis",
+    "homework_design_generate",
+    "homework_to_next_lesson_synthesis",
+    "rolling_planning_horizon"
+  ]
 }

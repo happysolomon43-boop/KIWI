@@ -32,3 +32,11 @@ test('actual taught scope requires confirmed rendering against the pinned chapte
   assert.deepEqual(record({chapter,portions:[portion('PUBLISHED','2'),portion('CONFIRMED','1')]}).confirmed_taught_learning_unit_refs,[]);
   assert.deepEqual(record({chapter,portions:[portion('CONFIRMED','2')]}).confirmed_taught_learning_unit_refs,['unit']);
 });
+test('actual explanation and exposure stages survive reconciliation without private criteria',()=>{
+ const result=record({portions:[{portion_id:'p',server_sequence:1,status:'CONFIRMED',public_payload:{teacher_message:'Explain the relationship',source_refs:[],answer_key:'PRIVATE'},board_item_ids:[]}],exposures:[{exposure_id:'e',task_id:'task',exposure_payload:{stage:'prepared',assistance_level:'worked_example',answer_or_method_exposed:false,expected_solution:'PRIVATE'}}],admissions:[{admission_id:'a',exposure_snapshot:{released_assistance_level:'conceptual',answer_or_method_exposed:true,uncertain_exposure:true,private:'PRIVATE'}}]});
+ assert.equal(result.published[0].teacher_message,'Explain the relationship');
+ assert.equal(result.exposure_and_assistance.events[0].stage,'prepared');
+ assert.equal(result.exposure_and_assistance.events[0].answer_or_method_exposed,false);
+ assert.equal(result.exposure_and_assistance.accepted_response_context[0].uncertain_exposure,true);
+ assert.equal(JSON.stringify(result).includes('PRIVATE'),false);
+});
