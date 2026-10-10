@@ -24,7 +24,7 @@ async function harness(run,{concurrent=false,policy=fixturePolicy(),learningUnit
   const args=(snapshot,extra)=>({schemaVersion:'classroom-domain.v1',sessionId,operationKey:randomUUID(),expectedControllerVersion:snapshot.controller_version,expectedDeliveryVersion:snapshot.delivery_version,deliveryEpoch:snapshot.delivery_epoch,controlEpoch:snapshot.control_epoch,clientId:'first',...extra});
   const accept=async output=>repository.acceptSequence({studentId:ids.studentId,classId:ids.classId,operationKey:randomUUID(),output:output||f.opening(),directive:f.directive(),expected:await repository.capture(ids.studentId,ids.classId),types:['text']});
   if(concurrent){await client.query('COMMIT');committed=true;}
-  await run({ids,sessionId,query,withTransaction,repository,read,args,accept,d14Repository,dueEventStore});
+  await run({ids,sessionId,query,withTransaction,repository,read,args,accept,d14Repository,dueEventStore,d11Repository,academic,artifacts});
  }finally{if(!committed)await client.query('ROLLBACK');client.release();await pool.end();}}
 
 module.exports={harness};

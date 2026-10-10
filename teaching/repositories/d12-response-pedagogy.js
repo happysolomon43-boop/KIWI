@@ -215,6 +215,15 @@ function createD12ResponsePedagogyRepository({query,withTransaction,randomUUID,d
     });
   }
 
+  async function recordClassroomCorrectionUsing(tx,{authority,operationKey,payload,receipt,originalPortionId,state}){
+    if(!['TEACHER_ERROR_CONFIRMED','UNRESOLVED'].includes(state))throw new TypeError('Explicit correction disposition required');
+    const key='classroom-correction:'+authority.class_session_id+':'+operationKey;
+    const prior=(await tx.query('select * from public.teaching_teacher_corrections where student_id=$1 and idempotency_key=$2',[authority.student_id,key])).rows[0];if(prior)return prior;
+    const id=randomUUID(),refs=['portion:'+originalPortionId,'class-session:'+authority.class_session_id+'@'+authority.state_version];
+    const row=(await tx.query("insert into public.teaching_teacher_corrections(teacher_correction_id,student_id,class_id,class_session_id,controller_version,correction_state,correction_payload,evidence_recheck_required,provenance_refs,idempotency_key,execution_id) values($1,$2,$3,$4,$5,$6,$7::jsonb,true,$8::jsonb,$9,$10) returning *",[id,authority.student_id,authority.class_id,authority.class_session_id,authority.state_version,state,JSON.stringify(payload),JSON.stringify(refs),key,receipt.executionId])).rows[0];
+    await tx.query("insert into public.teaching_evidence_recheck_handoffs(evidence_recheck_handoff_id,student_id,teacher_correction_id,class_id,class_session_id,target_owner,handoff_state,handoff_payload,provenance_refs,idempotency_key) values($1,$2,$3,$4,$5,'SKM/Evidence','PENDING_OWNER',$6::jsonb,$7::jsonb,$8)",[randomUUID(),authority.student_id,id,authority.class_id,authority.class_session_id,JSON.stringify({original_portion_id:originalPortionId,correction_state:state,officialOutcomeChanged:false}),JSON.stringify(refs),key]);return row;
+  }
+
   async function createEvidenceRecheckHandoff({studentId,classId,context,teacherCorrection,sourceEvaluation=null,targetOwner='SKM/Evidence',payload={},provenanceRefs=[],idempotencyKey}={}){
     return withTransaction(async(tx)=>{
       if(idempotencyKey){const prior=await tx.query("select * from public.teaching_evidence_recheck_handoffs where student_id=$1 and idempotency_key=$2 limit 1",[studentId,idempotencyKey]);if(prior.rows?.[0]) return prior.rows[0];}
@@ -246,7 +255,7 @@ function createD12ResponsePedagogyRepository({query,withTransaction,randomUUID,d
   return Object.freeze({
     assertReady,getClassContext,getLearningUnit,getSubject,createResponse,captureClassroomTaskUsing,getResponse,listEvaluationsForResponse,latestEvaluation,
     recentLearningUnitEvaluations,saveEvaluation,saveClassroomTaskEvaluationUsing,saveRouteHeldEvaluation,savePedagogyDecision,latestPedagogyDecision,latestPedagogyProfile,
-    savePedagogyProfile,saveTeacherCorrection,createEvidenceRecheckHandoff,getEvaluation,getTeacherCorrection,getCourseSourceItems,recentPedagogyDecisions,
+    savePedagogyProfile,saveTeacherCorrection,recordClassroomCorrectionUsing,createEvidenceRecheckHandoff,getEvaluation,getTeacherCorrection,getCourseSourceItems,recentPedagogyDecisions,
   });
 }
 

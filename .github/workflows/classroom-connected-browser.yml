@@ -50,6 +50,7 @@ jobs:
       - run: node tests/teaching/browser/classroom-connected.js
       - run: node tests/teaching/browser/classroom-protected-connected.js
       - run: node tests/teaching/browser/classroom-messages-connected.js
+      - run: node tests/teaching/browser/classroom-tasks-connected.js
       - uses: actions/upload-artifact@v4
         if: always()
         with:

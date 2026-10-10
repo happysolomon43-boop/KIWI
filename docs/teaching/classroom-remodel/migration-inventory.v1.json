@@ -399,7 +399,7 @@
         },
         {
           "file": "teaching/repositories/d11-lesson-controller.js",
-          "line": 1557,
+          "line": 1561,
           "identities": [
             "teaching.lesson.pre_class_lesson_planning"
           ]
@@ -478,7 +478,7 @@
         },
         {
           "file": "teaching/repositories/d11-lesson-controller.js",
-          "line": 1557,
+          "line": 1561,
           "identities": [
             "teaching.lesson.pre_class_lesson_planning"
           ]
@@ -7219,5 +7219,5 @@
     }
   ],
   "searchMethod": "Tracked UTF-8 source exact canonical and legacy alias references; compiled registry decoded through its verified reader. Absence of literal references is not proof of no dynamic/external caller.",
-  "searchFilesSha256": "a06ea2b91127c322802491ad49126aa5d85968393c907f91541862b75faf1f81"
+  "searchFilesSha256": "d321aa9b6f12f6a48267597c1a6ecbf7e3177417fdccdbb00cff737cf7d5731d"
 }

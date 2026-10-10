@@ -37,6 +37,11 @@ function extension(input){
  for(const key of ['sessionId','operationKey','taskId','windowId'])if(typeof input[key]!=='string'||!input[key].trim())throw failure('CLASSROOM_TASK_EXTENSION_INVALID',422);
  return input;
 }
+function support(input){
+ const allowed=['schemaVersion','sessionId','operationKey','taskId','taskVersion','windowId','windowVersion','text','kind'];
+ if(!input||Array.isArray(input)||Object.keys(input).some(k=>!allowed.includes(k))||!['help','clarification'].includes(input.kind))throw failure('CLASSROOM_TASK_SUPPORT_INVALID',422);
+ const {kind,...body}=input;submission(body);return input;
+}
 function openWindow(task,{now,receiptId,classEnd}){
  if(task.window.state!=='PENDING_DELIVERY')throw failure('CLASSROOM_TASK_WINDOW_NOT_PENDING');
  const opened=Date.parse(now),end=Math.min(Date.parse(classEnd),Date.parse(task.window.class_end_at));
@@ -57,4 +62,4 @@ function interpretation(output,{task,exposure,responseId,demand,stateReference}=
  const accepted=require('./task-evaluation-adapter').adapt(output.artifacts.response_interpretation,{task,exposure,responseId,demand,stateReference});
  return {...accepted,nextAction:output.next_action,taskRef:{kind:'task',id:task.id,version:task.version,anchor:null},officialOutcome:false};
 }
-module.exports={VERSION,policy,check,submission,extension,openWindow,extendWindow,interpretation};
+module.exports={VERSION,policy,check,submission,extension,support,openWindow,extendWindow,interpretation};

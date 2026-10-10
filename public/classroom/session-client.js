@@ -251,6 +251,13 @@ export function createSessionClient({
       await refresh().catch(error=>onError?.(error));
       return result;
     },
+    async taskMutation(path,input){
+      if(reviewOnly||closed||!snapshot?.capabilities?.tasks)throw Error("CLASSROOM_TASK_ROUTE_HELD");
+      if(!["task-responses","task-extensions","task-support"].includes(path))throw Error("CLASSROOM_TASK_COMMAND_INVALID");
+      const result=await api(base+path,{method:"POST",body:input,signal:abort.signal});
+      if(!result.accepted)throw Error("CLASSROOM_TASK_ACCEPTANCE_NOT_CONFIRMED");
+      await refresh().catch(error=>onError?.(error));return result;
+    },
     lease: () => mutate("client-lease", "claim"),
     takeover: () => mutate("client-lease", "takeover"),
     control: (intent, extra) => mutate("presentation-controls", intent, extra),
