@@ -46,7 +46,7 @@
     "Read-only Class Summary version/status/source link with stale reconciliation hold",
     "Private or held Study Notes status without exposing TPF-20 payload or asserting D27 publication"
   ],
-  "headAtCheckpoint": "401b7d6abcae52febd427eb548035e0498c41f22",
+  "headAtCheckpoint": "daf79cc2b82da4da4902b0dfd5eeb65cb914eed8",
   "implementationProgress": {
     "closureAndReconciliation": "IMPLEMENTED_PREVIOUSLY",
     "historyAndReadOnlyConversation": "IMPLEMENTED_PREVIOUSLY",
@@ -62,8 +62,8 @@
   "implementationEvidence": {
     "baselineGreenCommit": "757cadcfc4c5f1771a0b424d7f0cb7a3e32af713",
     "baselineGreenGithubWorkflows": 32,
-    "currentHeadAtDocumentAuthoring": "401b7d6abcae52febd427eb548035e0498c41f22",
-    "currentHeadCI": "PENDING_CURRENT_HEAD_CI",
+    "currentHeadAtDocumentAuthoring": "daf79cc2b82da4da4902b0dfd5eeb65cb914eed8",
+    "currentHeadCI": "32_WORKFLOWS_QUEUED_AND_RUNNING_BEFORE_SOURCE_INVENTORY_REGEN",
     "unqualifiedFixturesAreNotProviderEvidence": true,
     "newUnitFiles": [
       "tests/teaching/unit/classroom-history-artifacts.test.js",
@@ -72,6 +72,9 @@
       "tests/teaching/unit/classroom-pre-closure.test.js"
     ],
     "newNativeTest": "tests/teaching/integration/classroom-closure-continuity.test.js",
-    "D16Guard": "teaching/d16/classroom-source.js"
+    "D16Guard": "teaching/d16/classroom-source.js",
+    "latestNativePostgreSqlEvidence": "b397151e88119037625cb75627c750a817fea1d8: native integration successful; foundation fingerprint failed until refreshed",
+    "inventoryVerificationSourceCommit": "daf79cc2b82da4da4902b0dfd5eeb65cb914eed8",
+    "inventorySearchFilesSha256": "eeb281d9b2453ec98c2f642849aac386ec2d08b2285d86acffad31309f37337a"
   }
 }
