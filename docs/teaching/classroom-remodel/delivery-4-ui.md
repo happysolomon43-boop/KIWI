@@ -4,7 +4,7 @@ Delivery 3 checkpoint: `delivery-3-checkpoint.v1.json`. Delivery 4 draft: https:
 
 ## Implemented surface and ownership
 
-The existing Course/Class/history entry shell stays registered in `public/teaching-classroom.js`. Its authenticated D14 snapshot supplies `classroomEngine`; only a server-pinned `CLASSROOM_V1` session loads the remodeled modules. Legacy sessions retain their surface. Classwork/Assessment transitions clear the remodeled reading surface and re-enter the existing D16/D18 authorized work shell. There is no new browser feature flag or academic authority.
+The existing Course/Class/history entry shell stays registered in `public/teaching-classroom.js`. Its authenticated D14 snapshot supplies `classroomEngine`; only a server-pinned `CLASSROOM_V1` session loads the remodeled modules. Legacy sessions retain their surface. Classwork/Assessment transitions clear the remodeled reading surface and offer the existing Course Work/Assessments entry. Exact active-activity launch is not yet qualified. There is no new browser feature flag or academic authority.
 
 `public/classroom/session-client.js` is the sole session store. It consumes versioned public snapshots/deltas, deduplicates committed events, retains an uncertain command's exact identity, uses shared authenticated transport, and fences a credential after takeover or expiry. Lease, pause/resume, pace and receipt commands reach the actual Delivery 3 APIs. The backend continues to own release, D11 timing, permissions, durable work and recovery. A display-only clock does not release content.
 
