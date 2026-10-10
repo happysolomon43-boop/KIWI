@@ -36,3 +36,10 @@ test('unselected cards, empty D27 selection, version drift and foreign context n
 test('duplicate same-Subject card references are rejected before note generation',async()=>{
  await assert.rejects(setup([base,{...base,referenceId:'ref-2'}]).read(owner),{code:'TEACHING_D27_CLASS_CARD_SET_DUPLICATE'});
 });
+
+test('one D27-approved card may link multiple actual learning units without collision',async()=>{
+ const r2={...base,referenceId:'ref-second-unit',learningUnitId:'unit-2'};
+ const set=await setup([base,r2]).read(owner);
+ assert.equal(set.cards.length,2);
+ assert.deepEqual(set.cards.map(x=>x.learningUnitId),['unit-1','unit-2']);
+});
