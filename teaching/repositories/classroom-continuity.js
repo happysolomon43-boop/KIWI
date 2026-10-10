@@ -1,4 +1,5 @@
 'use strict';
+const {TEACHING_EVENTS}=require('../events/names');
 const {hash}=require('../classroom-remodel/academic-artifacts');
 const {failure}=require('../classroom-remodel/presentation-policy');
 const {protectedMode}=require('../classroom-remodel/protected-activity');
@@ -32,6 +33,7 @@ function createClassroomContinuityRepository({query,withTransaction,randomUUID,p
   // Reconcile in the D11 closure transaction, before its CLASS_ENDED outbox.
   // Accepted responses and evaluation jobs are preserved for immutable-context work.
   await presentationRepository.closeUsing(tx,a,d);
+  await presentationRepository.emitUsing(tx,a,d,TEACHING_EVENTS.CLASSROOM_CLOSURE_RECONCILIATION_DUE,{}, {dueAt:new Date(endedAt).toISOString(),key:'classroom-closure-reconcile:'+d.session_id});
   return captureUsing(tx,a,d,progress);
  }
  async function history(studentId,classId,{limit=3}={}) {
