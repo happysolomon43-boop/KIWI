@@ -50,6 +50,22 @@ export function createHistoryView({client, signal}) {
         } else article.append(node('p', 'An exact academic closure record is unavailable.'));
         if (record.closure_ref) article.append(node('small', 'Original closure: ' + record.closure_ref));
         if (record.record_ref) article.append(node('p', 'Latest reconciled record: ' + record.record_ref));
+        const artifacts = record.artifacts;
+        if (artifacts) {
+          const summary = artifacts.summary;
+          const summaryText = summary?.available
+            ? 'Class Summary translation available, version ' + summary.version + '. Linked to this recorded Class; it does not prove understanding.'
+            : summary?.state === 'STALE_RECONCILIATION'
+              ? 'Class Summary is awaiting reconciliation with the latest evidence. Earlier claims are not silently reused.'
+              : 'Class Summary: ' + (summary?.state === 'NOT_AVAILABLE' ? 'not yet available' : 'held for review or translation') + '.';
+          article.append(node('p', summaryText));
+          const study = artifacts.study_notes;
+          const noteText = study?.state === 'PRIVATE_AWAITING_D27'
+            ? 'Class-grounded Study Notes: privately validated, awaiting authorized Study Pack publication.'
+            : 'Class-grounded Study Notes: ' + (study?.state === 'NOT_AVAILABLE' ? 'not yet available' : 'held or not publishable') + '.';
+          article.append(node('p', noteText));
+          if (summary?.source_refs?.length) article.append(node('small', 'Summary sources: ' + summary.source_refs.join('; ')));
+        }
         const feed = node('div');
         feed.setAttribute('aria-label', 'Earlier released conversation');
         let cursor = 0, busy = false;

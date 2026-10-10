@@ -64,3 +64,31 @@ test('accepted work survives closure and late evaluation creates a new immutable
   assert.equal((await h.d11Repository.getClosureFact(h.ids.studentId,h.ids.classId)).closure_fact_id,closed.closureFact.closure_fact_id);
   await assert.rejects(()=>h.d11Repository.persistSummary({studentId:h.ids.studentId,classId:h.ids.classId,classSessionId:h.sessionId,closureFactId:closed.closureFact.closure_fact_id,state:'ROUTE_HELD',provenance:{classroom_record_hash:first.content_hash}}),{code:'CLASSROOM_CLOSURE_RESULT_STALE'});
 },{policy:taskPolicy(),learningUnit:true}));
+
+test('prior history exposes versioned summary and note publication metadata, never their private payloads',{skip},()=>harness(async h=>{
+  await h.accept();
+  const closed=await h.d11Repository.commitClosure({studentId:h.ids.studentId,classId:h.ids.classId,expectedVersion:1});
+  const latest=await h.continuity.latestRecord(h.ids.studentId,h.ids.classId);
+  const nextClass=h.ids.classId+'-artifact-history';
+  await h.query("insert into public.teaching_classes(class_id,student_id,course_id,scheduled_start_at,scheduled_end_at,timezone,source_timetable_version_id) values($1,$2,$3,clock_timestamp()+interval '1 day',clock_timestamp()+interval '1 day 1 hour','UTC',$4)",[nextClass,h.ids.studentId,h.ids.course,h.ids.timetable]);
+  const pending=await h.continuity.history(h.ids.studentId,nextClass);
+  assert.equal(pending.records[0].artifacts.summary.state,'NOT_AVAILABLE');
+  assert.equal(pending.records[0].artifacts.study_notes.published,false);
+  await h.d11Repository.persistSummary({studentId:h.ids.studentId,classId:h.ids.classId,classSessionId:h.sessionId,closureFactId:closed.closureFact.closure_fact_id,state:'TRANSLATED',payload:{private_translation_context:'DO_NOT_LEAK'},provenance:{classroom_record_hash:latest.content_hash,translation_only:true},idempotencyKey:'history-summary-accepted'});
+  const good=await h.continuity.history(h.ids.studentId,nextClass);
+  assert.equal(good.records[0].artifacts.summary.state,'TRANSLATED');
+  assert.equal(good.records[0].artifacts.summary.available,true);
+  assert.match(good.records[0].artifacts.summary.source_refs.join(','),/classroom-record:/);
+  assert.equal(JSON.stringify(good).includes('DO_NOT_LEAK'),false);
+  await h.query("insert into public.teaching_class_study_note_versions(note_version_id,student_id,class_id,version_no,state,stage,binding,note_payload,validation,closure_fact_id,idempotency_key) values($1,$2,$3,1,'VALIDATED_PRIVATE','POST_CLASS','{}'::jsonb,$4::jsonb,'{}'::jsonb,$5,$6)",[h.ids.classId+'-note',h.ids.studentId,h.ids.classId,JSON.stringify({private_note:'DO_NOT_LEAK_NOTES'}),closed.closureFact.closure_fact_id,'history-study-private']);
+  const withNotes=await h.continuity.history(h.ids.studentId,nextClass);
+  assert.equal(withNotes.records[0].artifacts.study_notes.state,'PRIVATE_AWAITING_D27');
+  assert.equal(withNotes.records[0].artifacts.study_notes.published,false);
+  assert.equal(JSON.stringify(withNotes).includes('DO_NOT_LEAK_NOTES'),false);
+  const second=await h.continuity.latestRecord(h.ids.studentId,h.ids.classId);
+  await h.query("update public.teaching_class_summaries set translation_provenance=jsonb_set(translation_provenance,'{classroom_record_hash}','\"older\"'::jsonb) where class_session_id=$1",[h.sessionId]);
+  const stale=await h.continuity.history(h.ids.studentId,nextClass);
+  assert.equal(stale.records[0].artifacts.summary.state,'STALE_RECONCILIATION');
+  assert.equal(stale.records[0].artifacts.summary.available,false);
+  assert.equal(second.content_hash,latest.content_hash);
+}));

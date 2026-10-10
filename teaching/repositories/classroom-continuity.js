@@ -4,6 +4,7 @@ const {hash}=require('../classroom-remodel/academic-artifacts');
 const {failure}=require('../classroom-remodel/presentation-policy');
 const {protectedMode}=require('../classroom-remodel/protected-activity');
 const {closureRecord}=require('../classroom-remodel/closure-record');
+const {projectHistoryArtifacts}=require('../classroom-remodel/history-artifacts');
 
 function createClassroomContinuityRepository({query,withTransaction,randomUUID,presentationRepository}={}) {
  for(const fn of [query,withTransaction,randomUUID])if(typeof fn!=='function')throw new TypeError('Continuity requires durable database dependencies');
@@ -43,12 +44,16 @@ function createClassroomContinuityRepository({query,withTransaction,randomUUID,p
    const current=await owner(tx,studentId,classId);
    const earlier=(await tx.query('select count(*)::int n from public.teaching_classes where student_id=$1 and course_id=$2 and class_id<>$3 and scheduled_start_at<(select scheduled_start_at from public.teaching_classes where class_id=$3 and student_id=$1)',[studentId,current.course_id,classId])).rows[0].n;
    const rows=(await tx.query(`select s.class_session_id,s.class_id,s.started_at,s.ended_at,s.classroom_engine,f.closure_fact_id,f.controller_version,f.fact_pack,rr.record_id,rr.content_hash,rr.record,rr.created_at record_created_at,
+    sm.summary_state,sm.version_no summary_version,sm.translation_provenance summary_provenance,
+    sn.state note_state,sn.version_no note_version,
     (select count(*)::int from public.teaching_classroom_conversation c where c.session_id=s.class_session_id) conversation_count
     from public.teaching_class_sessions s left join public.teaching_class_closure_facts f on f.class_session_id=s.class_session_id and f.student_id=s.student_id
     left join lateral(select record_id,content_hash,record,created_at from public.teaching_classroom_reconciliation_versions where session_id=s.class_session_id and student_id=s.student_id order by version_no desc limit 1) rr on true
+    left join lateral(select summary_state,version_no,translation_provenance from public.teaching_class_summaries where class_session_id=s.class_session_id and student_id=s.student_id order by version_no desc limit 1) sm on true
+    left join lateral(select state,version_no from public.teaching_class_study_note_versions where class_id=s.class_id and student_id=s.student_id and stage='POST_CLASS' order by version_no desc limit 1) sn on true
     where s.student_id=$1 and s.course_id=$2 and s.class_id<>$3 and s.lifecycle_state='CLOSED' and s.ended_at is not null and s.ended_at<=coalesce($4::timestamptz,clock_timestamp())
     order by s.ended_at desc,s.class_session_id desc limit $5`,[studentId,current.course_id,classId,current.started_at,limit+1])).rows;
-   const records=rows.slice(0,limit).map(r=>({session_id:r.class_session_id,class_id:r.class_id,ended_at:r.ended_at,closure_ref:r.closure_fact_id?`class-closure:${r.closure_fact_id}@${r.controller_version}`:null,state:!r.closure_fact_id?'RECORDS_UNAVAILABLE':r.classroom_engine==='CLASSROOM_V1'?'EXACT_RECORDS_AVAILABLE':'LEGACY_RECORDS_AVAILABLE',record_ref:r.record_id?`classroom-record:${r.record_id}@${r.content_hash}`:null,record_created_at:r.record_created_at||null,classroom:r.record||r.fact_pack?.classroom||null,conversation_count:r.conversation_count}));
+   const records=rows.slice(0,limit).map(r=>({session_id:r.class_session_id,class_id:r.class_id,ended_at:r.ended_at,closure_ref:r.closure_fact_id?`class-closure:${r.closure_fact_id}@${r.controller_version}`:null,state:!r.closure_fact_id?'RECORDS_UNAVAILABLE':r.classroom_engine==='CLASSROOM_V1'?'EXACT_RECORDS_AVAILABLE':'LEGACY_RECORDS_AVAILABLE',record_ref:r.record_id?`classroom-record:${r.record_id}@${r.content_hash}`:null,record_created_at:r.record_created_at||null,classroom:r.record||r.fact_pack?.classroom||null,artifacts:projectHistoryArtifacts(r),conversation_count:r.conversation_count}));
    return {schema_version:'classroom-history.v1',state:!rows.length?(earlier===0?'CONFIRMED_FIRST_CLASS':'RECORDS_UNAVAILABLE'):records.some(r=>r.state==='RECORDS_UNAVAILABLE')?'RECORDS_UNAVAILABLE':rows.length<3?'FEWER_THAN_THREE':'RECORDS_AVAILABLE',records,has_older:rows.length>limit,horizon_is_retention_policy:false};
   });
  }
