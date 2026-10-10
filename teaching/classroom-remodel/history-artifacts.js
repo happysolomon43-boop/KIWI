@@ -17,7 +17,7 @@ function projectHistoryArtifacts(row){
   state:summaryState,
   version:summaryState==='TRANSLATED'&&Number.isSafeInteger(Number(row.summary_version))?Number(row.summary_version):null,
   source_refs:sourceRefs,
-  available:summaryState==='TRANSLATED',
+  available:summaryState==='TRANSLATED'&&row.summary_provenance?.translation_only===true,
  };
  const noteState=!row.note_state?'NOT_AVAILABLE':
    row.note_state==='VALIDATED_PRIVATE'?'PRIVATE_AWAITING_D27':
