@@ -205,6 +205,29 @@
             "tests/teaching/integration/classroom-presentation.test.js"
           ],
           "scope": "Native persistence/release/receipt/lease/epoch/rollback and connected fixture HTTP transport. Provider stall is a controlled fixture. Browser/screen-reader, actual-account, deployed proxy and live-provider qualification remain pending."
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "56005f36189f675571e6c8b1f298066fbb4b99bf",
+          "evidenceKind": "OBSERVED_NATIVE_POSTGRES_AND_CHROMIUM_SYNTHETIC_FIXTURES",
+          "description": "Browser reload restores committed presentation/paused state and immutable deadline; long live-provider history still unqualified",
+          "files": [
+            "tests/teaching/browser/classroom-connected.js",
+            "tests/teaching/integration/classroom-presentation.test.js",
+            "tests/teaching/unit/classroom-session-client.test.js"
+          ]
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "736e8fac1aaee4525e56c231f800b2654a201bb9",
+          "evidenceKind": "OBSERVED_CHROMIUM_CONNECTED_API_NATIVE_POSTGRES_SYNTHETIC_FIXTURES",
+          "description": "Recovery checks: lost acknowledgement after actual Notebook commit retries identical body with one row; offline tab takeover retains deadline and render position; pending owned-asset cancellation and loaded blob revocation; delayed protected/closed delta rejection and clean stream EOF cursor recovery (unit). Exact owner-shell handoff, manual accessibility, provider and deployment evidence remain unqualified.",
+          "files": [
+            "tests/teaching/browser/classroom-connected.js",
+            "tests/teaching/unit/classroom-session-client.test.js"
+          ],
+          "browserRun": 38042927078,
+          "browserJob": 114186613563
         }
       ],
       "liveProviderEvidence": [],
@@ -237,6 +260,18 @@
             "tests/teaching/integration/classroom-presentation.test.js"
           ],
           "scope": "Native persistence/release/receipt/lease/epoch/rollback and connected fixture HTTP transport. Provider stall is a controlled fixture. Browser/screen-reader, actual-account, deployed proxy and live-provider qualification remain pending."
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "736e8fac1aaee4525e56c231f800b2654a201bb9",
+          "evidenceKind": "OBSERVED_CHROMIUM_CONNECTED_API_NATIVE_POSTGRES_SYNTHETIC_FIXTURES",
+          "description": "Recovery checks: lost acknowledgement after actual Notebook commit retries identical body with one row; offline tab takeover retains deadline and render position; pending owned-asset cancellation and loaded blob revocation; delayed protected/closed delta rejection and clean stream EOF cursor recovery (unit). Exact owner-shell handoff, manual accessibility, provider and deployment evidence remain unqualified.",
+          "files": [
+            "tests/teaching/browser/classroom-connected.js",
+            "tests/teaching/unit/classroom-session-client.test.js"
+          ],
+          "browserRun": 38042927078,
+          "browserJob": 114186613563
         }
       ],
       "liveProviderEvidence": [],
@@ -260,6 +295,29 @@
             "tests/teaching/integration/classroom-presentation.test.js"
           ],
           "scope": "Native persistence/release/receipt/lease/epoch/rollback and connected fixture HTTP transport. Provider stall is a controlled fixture. Browser/screen-reader, actual-account, deployed proxy and live-provider qualification remain pending."
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "56005f36189f675571e6c8b1f298066fbb4b99bf",
+          "evidenceKind": "OBSERVED_NATIVE_POSTGRES_AND_CHROMIUM_SYNTHETIC_FIXTURES",
+          "description": "Real two-tab takeover fences the old active-client credential; shared deadline and confirmed position preserved",
+          "files": [
+            "tests/teaching/browser/classroom-connected.js",
+            "tests/teaching/integration/classroom-presentation.test.js",
+            "tests/teaching/unit/classroom-session-client.test.js"
+          ]
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "736e8fac1aaee4525e56c231f800b2654a201bb9",
+          "evidenceKind": "OBSERVED_CHROMIUM_CONNECTED_API_NATIVE_POSTGRES_SYNTHETIC_FIXTURES",
+          "description": "Recovery checks: lost acknowledgement after actual Notebook commit retries identical body with one row; offline tab takeover retains deadline and render position; pending owned-asset cancellation and loaded blob revocation; delayed protected/closed delta rejection and clean stream EOF cursor recovery (unit). Exact owner-shell handoff, manual accessibility, provider and deployment evidence remain unqualified.",
+          "files": [
+            "tests/teaching/browser/classroom-connected.js",
+            "tests/teaching/unit/classroom-session-client.test.js"
+          ],
+          "browserRun": 38042927078,
+          "browserJob": 114186613563
         }
       ],
       "liveProviderEvidence": [],
@@ -283,6 +341,18 @@
             "tests/teaching/integration/classroom-presentation.test.js"
           ],
           "scope": "Native persistence/release/receipt/lease/epoch/rollback and connected fixture HTTP transport. Provider stall is a controlled fixture. Browser/screen-reader, actual-account, deployed proxy and live-provider qualification remain pending."
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "736e8fac1aaee4525e56c231f800b2654a201bb9",
+          "evidenceKind": "OBSERVED_CHROMIUM_CONNECTED_API_NATIVE_POSTGRES_SYNTHETIC_FIXTURES",
+          "description": "Recovery checks: lost acknowledgement after actual Notebook commit retries identical body with one row; offline tab takeover retains deadline and render position; pending owned-asset cancellation and loaded blob revocation; delayed protected/closed delta rejection and clean stream EOF cursor recovery (unit). Exact owner-shell handoff, manual accessibility, provider and deployment evidence remain unqualified.",
+          "files": [
+            "tests/teaching/browser/classroom-connected.js",
+            "tests/teaching/unit/classroom-session-client.test.js"
+          ],
+          "browserRun": 38042927078,
+          "browserJob": 114186613563
         }
       ],
       "liveProviderEvidence": [],
@@ -365,6 +435,29 @@
             "tests/teaching/integration/classroom-presentation.test.js"
           ],
           "scope": "Native persistence/release/receipt/lease/epoch/rollback and connected fixture HTTP transport. Provider stall is a controlled fixture. Browser/screen-reader, actual-account, deployed proxy and live-provider qualification remain pending."
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "56005f36189f675571e6c8b1f298066fbb4b99bf",
+          "evidenceKind": "OBSERVED_NATIVE_POSTGRES_AND_CHROMIUM_SYNTHETIC_FIXTURES",
+          "description": "Owned current illustrative asset replaces Presenter claim; required authenticated image decode precedes application receipt; complete failure matrix remains unqualified",
+          "files": [
+            "tests/teaching/browser/classroom-connected.js",
+            "tests/teaching/integration/classroom-presentation.test.js",
+            "tests/teaching/unit/classroom-session-client.test.js"
+          ]
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "736e8fac1aaee4525e56c231f800b2654a201bb9",
+          "evidenceKind": "OBSERVED_CHROMIUM_CONNECTED_API_NATIVE_POSTGRES_SYNTHETIC_FIXTURES",
+          "description": "Recovery checks: lost acknowledgement after actual Notebook commit retries identical body with one row; offline tab takeover retains deadline and render position; pending owned-asset cancellation and loaded blob revocation; delayed protected/closed delta rejection and clean stream EOF cursor recovery (unit). Exact owner-shell handoff, manual accessibility, provider and deployment evidence remain unqualified.",
+          "files": [
+            "tests/teaching/browser/classroom-connected.js",
+            "tests/teaching/unit/classroom-session-client.test.js"
+          ],
+          "browserRun": 38042927078,
+          "browserJob": 114186613563
         }
       ],
       "liveProviderEvidence": [],
@@ -458,6 +551,46 @@
             "tests/teaching/unit/classroom-remodel-runtime.test.js",
             "tests/teaching/integration/classroom-remodel-academic.test.js"
           ]
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "56005f36189f675571e6c8b1f298066fbb4b99bf",
+          "evidenceKind": "OBSERVED_NATIVE_POSTGRES_AND_CHROMIUM_SYNTHETIC_FIXTURES",
+          "description": "Backend protected projection and browser clearing tested; existing Work/Assessments entry added, exact active-activity response handoff remains unqualified",
+          "files": [
+            "tests/teaching/browser/classroom-connected.js",
+            "tests/teaching/integration/classroom-presentation.test.js",
+            "tests/teaching/unit/classroom-session-client.test.js"
+          ]
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "736e8fac1aaee4525e56c231f800b2654a201bb9",
+          "evidenceKind": "OBSERVED_CHROMIUM_CONNECTED_API_NATIVE_POSTGRES_SYNTHETIC_FIXTURES",
+          "description": "Recovery checks: lost acknowledgement after actual Notebook commit retries identical body with one row; offline tab takeover retains deadline and render position; pending owned-asset cancellation and loaded blob revocation; delayed protected/closed delta rejection and clean stream EOF cursor recovery (unit). Exact owner-shell handoff, manual accessibility, provider and deployment evidence remain unqualified.",
+          "files": [
+            "tests/teaching/browser/classroom-connected.js",
+            "tests/teaching/unit/classroom-session-client.test.js"
+          ],
+          "browserRun": 38042927078,
+          "browserJob": 114186613563
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "8c36b45f5bd02c816dad7d2e4f268210d8325657",
+          "evidenceKind": "OBSERVED_CHROMIUM_CONNECTED_API_NATIVE_POSTGRES_SYNTHETIC_FIXTURES",
+          "browserRun": 38056374359,
+          "browserJob": 114225631955,
+          "databaseRun": 38056374560,
+          "files": [
+            "tests/teaching/browser/classroom-protected-connected.js",
+            "tests/teaching/integration/classroom-protected-activity.test.js"
+          ],
+          "given": "Synthetic student/course/Class and locked owner package; native PostgreSQL, actual Course-registered Classroom and owner UI modules; production-integrity script replaced only in fixture shell",
+          "actions": "Use actual protected launch buttons, save owner responses, reload, interrupt formal owner, then use actual linked and personal Notebook sheet in an isolated instructional fixture",
+          "expectedPersistedOutcome": "Exact owner-bound response persists; deadline and attempt identity unchanged; one owner remains authoritative; linked and personal Notebook rows persist; focus restores",
+          "forbiddenOutcome": "Arbitrary owner selection, private criteria in browser, instruction exposed during protected interruption, changed owner version accepted, active attempt abandoned to instruction",
+          "description": "Connected Work and Assessment response shells, private-safe package, durable responses, original reload deadline, interruption privacy, immediate Notebook linked reference, mobile personal note and keyboard focus passed. Human screen-reader/software-keyboard, full deployed Course shell/authentication, providers, production and post-assessment academic continuation remain unqualified."
         }
       ],
       "liveProviderEvidence": [],
@@ -544,7 +677,19 @@
       "number": 38,
       "sourceRequirement": "38. **Historical UI:** no JOIN/write/quota/timer; old records retain original provenance.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "supportOnly": true,
+          "sourceCommit": "56005f36189f675571e6c8b1f298066fbb4b99bf",
+          "evidenceKind": "OBSERVED_NATIVE_POSTGRES_AND_CHROMIUM_SYNTHETIC_FIXTURES",
+          "description": "Actual D11 closure followed by read-only historical view makes no delivery commands; legacy provenance matrix remains unqualified",
+          "files": [
+            "tests/teaching/browser/classroom-connected.js",
+            "tests/teaching/integration/classroom-presentation.test.js",
+            "tests/teaching/unit/classroom-session-client.test.js"
+          ]
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
       "testedVersions": null
@@ -614,6 +759,34 @@
             "tests/teaching/unit/classroom-remodel-runtime.test.js",
             "tests/teaching/integration/classroom-remodel-academic.test.js"
           ]
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "56005f36189f675571e6c8b1f298066fbb4b99bf",
+          "evidenceKind": "OBSERVED_NATIVE_POSTGRES_AND_CHROMIUM_SYNTHETIC_FIXTURES",
+          "description": "Private Board metadata excluded, current owned visual authority enforced, source markup inert; comprehensive multi-owner security still unqualified",
+          "files": [
+            "tests/teaching/browser/classroom-connected.js",
+            "tests/teaching/integration/classroom-presentation.test.js",
+            "tests/teaching/unit/classroom-session-client.test.js"
+          ]
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "8c36b45f5bd02c816dad7d2e4f268210d8325657",
+          "evidenceKind": "OBSERVED_CHROMIUM_CONNECTED_API_NATIVE_POSTGRES_SYNTHETIC_FIXTURES",
+          "browserRun": 38056374359,
+          "browserJob": 114225631955,
+          "databaseRun": 38056374560,
+          "files": [
+            "tests/teaching/browser/classroom-protected-connected.js",
+            "tests/teaching/integration/classroom-protected-activity.test.js"
+          ],
+          "given": "Synthetic student/course/Class and locked owner package; native PostgreSQL, actual Course-registered Classroom and owner UI modules; production-integrity script replaced only in fixture shell",
+          "actions": "Use actual protected launch buttons, save owner responses, reload, interrupt formal owner, then use actual linked and personal Notebook sheet in an isolated instructional fixture",
+          "expectedPersistedOutcome": "Exact owner-bound response persists; deadline and attempt identity unchanged; one owner remains authoritative; linked and personal Notebook rows persist; focus restores",
+          "forbiddenOutcome": "Arbitrary owner selection, private criteria in browser, instruction exposed during protected interruption, changed owner version accepted, active attempt abandoned to instruction",
+          "description": "Connected Work and Assessment response shells, private-safe package, durable responses, original reload deadline, interruption privacy, immediate Notebook linked reference, mobile personal note and keyboard focus passed. Human screen-reader/software-keyboard, full deployed Course shell/authentication, providers, production and post-assessment academic continuation remain unqualified."
         }
       ],
       "liveProviderEvidence": [],
@@ -628,7 +801,48 @@
       "number": 42,
       "sourceRequirement": "42. **Accessibility/mobile:** keyboard/screen reader/reduced motion/zoom/software keyboard/long math, stable scroll/focus and accessible timer readiness.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "supportOnly": true,
+          "sourceCommit": "56005f36189f675571e6c8b1f298066fbb4b99bf",
+          "evidenceKind": "OBSERVED_NATIVE_POSTGRES_AND_CHROMIUM_SYNTHETIC_FIXTURES",
+          "description": "Observed Chromium axe WCAG, graph alternative, mobile 390/320 reflow, text sizing and stable scroll/focus; manual screen reader and software keyboard remain unqualified",
+          "files": [
+            "tests/teaching/browser/classroom-connected.js",
+            "tests/teaching/integration/classroom-presentation.test.js",
+            "tests/teaching/unit/classroom-session-client.test.js"
+          ]
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "736e8fac1aaee4525e56c231f800b2654a201bb9",
+          "evidenceKind": "OBSERVED_CHROMIUM_CONNECTED_API_NATIVE_POSTGRES_SYNTHETIC_FIXTURES",
+          "description": "Recovery checks: lost acknowledgement after actual Notebook commit retries identical body with one row; offline tab takeover retains deadline and render position; pending owned-asset cancellation and loaded blob revocation; delayed protected/closed delta rejection and clean stream EOF cursor recovery (unit). Exact owner-shell handoff, manual accessibility, provider and deployment evidence remain unqualified.",
+          "files": [
+            "tests/teaching/browser/classroom-connected.js",
+            "tests/teaching/unit/classroom-session-client.test.js"
+          ],
+          "browserRun": 38042927078,
+          "browserJob": 114186613563
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "8c36b45f5bd02c816dad7d2e4f268210d8325657",
+          "evidenceKind": "OBSERVED_CHROMIUM_CONNECTED_API_NATIVE_POSTGRES_SYNTHETIC_FIXTURES",
+          "browserRun": 38056374359,
+          "browserJob": 114225631955,
+          "databaseRun": 38056374560,
+          "files": [
+            "tests/teaching/browser/classroom-protected-connected.js",
+            "tests/teaching/integration/classroom-protected-activity.test.js"
+          ],
+          "given": "Synthetic student/course/Class and locked owner package; native PostgreSQL, actual Course-registered Classroom and owner UI modules; production-integrity script replaced only in fixture shell",
+          "actions": "Use actual protected launch buttons, save owner responses, reload, interrupt formal owner, then use actual linked and personal Notebook sheet in an isolated instructional fixture",
+          "expectedPersistedOutcome": "Exact owner-bound response persists; deadline and attempt identity unchanged; one owner remains authoritative; linked and personal Notebook rows persist; focus restores",
+          "forbiddenOutcome": "Arbitrary owner selection, private criteria in browser, instruction exposed during protected interruption, changed owner version accepted, active attempt abandoned to instruction",
+          "description": "Connected Work and Assessment response shells, private-safe package, durable responses, original reload deadline, interruption privacy, immediate Notebook linked reference, mobile personal note and keyboard focus passed. Human screen-reader/software-keyboard, full deployed Course shell/authentication, providers, production and post-assessment academic continuation remain unqualified."
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
       "testedVersions": null
@@ -637,7 +851,20 @@
       "number": 43,
       "sourceRequirement": "43. **Deployment:** stream reconnect/poll fallback, auth refresh, worker restart, migration/grant readiness and compatible frontend/backend version.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "supportOnly": true,
+          "sourceCommit": "736e8fac1aaee4525e56c231f800b2654a201bb9",
+          "evidenceKind": "OBSERVED_CHROMIUM_CONNECTED_API_NATIVE_POSTGRES_SYNTHETIC_FIXTURES",
+          "description": "Recovery checks: lost acknowledgement after actual Notebook commit retries identical body with one row; offline tab takeover retains deadline and render position; pending owned-asset cancellation and loaded blob revocation; delayed protected/closed delta rejection and clean stream EOF cursor recovery (unit). Exact owner-shell handoff, manual accessibility, provider and deployment evidence remain unqualified.",
+          "files": [
+            "tests/teaching/browser/classroom-connected.js",
+            "tests/teaching/unit/classroom-session-client.test.js"
+          ],
+          "browserRun": 38042927078,
+          "browserJob": 114186613563
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
       "testedVersions": null

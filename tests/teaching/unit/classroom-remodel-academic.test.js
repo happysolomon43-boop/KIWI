@@ -30,6 +30,8 @@ test('chapter access is blocked on every D16/D17 protected takeover before readi
  const session={classroom_engine:'CLASSROOM_V1',instructional_substate:'ASSESSMENT'};
  const service=createClassroomPreparationService({repository:{saveCandidate(){},loadBinding:async()=>{reads++;}},d11Repository:{getClassContext:async()=>({session})},preparationRepository:{getWorkspaceSnapshot(){}},releaseGate:async()=>({delivery1GatePassed:true,routesQualified:true,evidence:'FIXTURE'})});
  for(const mode of ['ASSESSMENT','CLASSWORK']){session.instructional_substate=mode;await assert.rejects(()=>service.getPublicChapter({id:'s1'},'c1'),{code:'CLASSROOM_CHAPTER_PROTECTED_MODE',status:403});}
+ for(const mode of ['ASSESSMENT','CLASSWORK']){session.instructional_substate='INTERRUPTED';session.resume_instructional_substate=mode;await assert.rejects(()=>service.getPublicChapter({id:'s1'},'c1'),{code:'CLASSROOM_CHAPTER_PROTECTED_MODE',status:403});}
+ session.resume_instructional_substate=null;session.progress_state={active_protected_activity:{owner:'D17',mode:'ASSESSMENT'}};await assert.rejects(()=>service.getPublicChapter({id:'s1'},'c1'),{code:'CLASSROOM_CHAPTER_PROTECTED_MODE',status:403});
  assert.equal(reads,0);
 });
 test('classroom workflow preserves existing independent review requirements and canonical stage order',()=>{

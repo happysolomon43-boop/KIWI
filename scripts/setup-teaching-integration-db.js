@@ -26,6 +26,7 @@ const MIGRATIONS = Object.freeze([
   'migrations/20260929_platform_security_rls_hardening.sql',
   'migrations/20260929_teaching_d14_classroom_artifacts.sql',
   'migrations/20261008_teaching_d14_private_visual_assets.sql',
+  'migrations/20261008_teaching_d14_raised_hand_help_requests.sql',
   'migrations/20260930_teaching_d15_attendance.sql',
   'migrations/20261001_teaching_d16_homework_integrity.sql',
   'migrations/20261002_kiwi_integrity_session_guard.sql',
@@ -43,6 +44,7 @@ const MIGRATIONS = Object.freeze([
   'migrations/20261009204229_classroom_preparation_artifacts.sql',
   'migrations/20261009212755_classroom_preparation_revisions.sql',
   'migrations/20261010005010_classroom_durable_presentation.sql',
+  'migrations/20261010082135_classroom_notebook_references.sql',
 ]);
 
 function requireNonProduction({ connectionString, projectRef }) {

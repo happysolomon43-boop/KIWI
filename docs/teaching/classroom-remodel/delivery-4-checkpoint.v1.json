@@ -1,0 +1,283 @@
+{
+  "version": "classroom-remodel-delivery-checkpoint.v1",
+  "recordedAt": "2026-10-10T14:38:12+01:00",
+  "delivery": 4,
+  "branch": "feat/classroom-remodel-delivery-4",
+  "implementationCommit": "8c36b45f5bd02c816dad7d2e4f268210d8325657",
+  "testedTree": "ff85098a648b9ff3db3f716dcfe4b2b431b66b1b",
+  "pr": "https://github.com/happysolomon43-boop/KIWI/pull/332",
+  "prState": "OPEN_DRAFT",
+  "baseBranch": "feat/classroom-remodel-delivery-3",
+  "acceptance": "IMPLEMENTED_CANDIDATE_ACCEPTANCE_HELD",
+  "implemented": [
+    "Persistent conversation, desktop resizable complete chapter and independent mobile reading views",
+    "Stable committed event and source-element navigation, scroll/focus preservation and read-only history",
+    "Backend-authorized presentation controls, takeover fencing and render-readiness receipts",
+    "Actual allowlisted Board renderers, authenticated owned assets, expansion/history and public metadata projection",
+    "Idempotent owned versioned Notebook references through existing D14 persistence",
+    "Composer shell disabled until Delivery 5; task participation disabled until Delivery 6",
+    "Cleanly ended streams reconcile and reconnect using the committed cursor and existing deadlines; abort listeners are removed per stream",
+    "Delayed transport frames cannot restore instructional data after protected clearing or closure",
+    "Lease controls recover after prior claim/takeover so an authorized takeover is usable again",
+    "D11 transaction validates and pins exact same-student/course/Class D16 or D17 activity/version; stale, missing and unavailable bindings hold safely",
+    "Protected Classroom opens the exact existing Work editor or D17 formal assessment launch; legacy sessions retain existing navigation",
+    "Delayed Work reads cannot replace a detached or different owner response editor",
+    "Protected interrupted states suppress chapter/conversation/Board/Notebook even when the schema cannot store an Assessment resume substate; persisted owner binding retains privacy",
+    "Native Assessment deadline is serialized to the durable expiry-event timestamp contract",
+    "Course Notebook entry refreshes actual server snapshot before opening the existing sheet; detached or superseded refreshes cannot overwrite another view",
+    "Classwork label no longer falsely describes all D16 assigned Work as graded"
+  ],
+  "changedFiles": [
+    ".github/workflows/classroom-connected-browser.yml",
+    ".github/workflows/classroom-remodel-foundation.yml",
+    "docs/teaching/classroom-remodel/delivery-4-ui.md",
+    "docs/teaching/classroom-remodel/migration-inventory.v1.json",
+    "migrations/20261010082135_classroom_notebook_references.sql",
+    "public/classroom/classroom-view.js",
+    "public/classroom/package.json",
+    "public/classroom/reading-tools.js",
+    "public/classroom/renderers.js",
+    "public/classroom/session-client.js",
+    "public/teaching-classroom.css",
+    "public/teaching-classroom.js",
+    "scripts/setup-teaching-integration-db.js",
+    "teaching/classroom-remodel/contracts.js",
+    "teaching/d14/board.js",
+    "teaching/d14/service.js",
+    "teaching/repositories/classroom-presentation.js",
+    "teaching/repositories/d14-classroom.js",
+    "tests/teaching/browser/classroom-connected.js",
+    "tests/teaching/fixtures/classroom-presentation-database.js",
+    "tests/teaching/integration/classroom-presentation.test.js",
+    "tests/teaching/unit/classroom-presentation-transport.test.js",
+    "tests/teaching/unit/classroom-session-client.test.js",
+    "tests/teaching/unit/d14-classroom.test.js",
+    "docs/teaching/classroom-remodel/delivery-4-checkpoint.v1.json",
+    "docs/teaching/classroom-remodel/qualification-ledger.v1.json",
+    "teaching/classroom-remodel/protected-activity.js",
+    "teaching/repositories/d11-lesson-controller.js",
+    "teaching/d11/service.js",
+    "teaching-backend.js",
+    "public/teaching.js",
+    "public/teaching-d16.js",
+    "tests/teaching/unit/classroom-protected-activity.test.js",
+    "tests/teaching/integration/classroom-protected-activity.test.js",
+    "tests/teaching/browser/classroom-protected-connected.js",
+    "tests/teaching/fixtures/classroom-protected-assessment.js",
+    "teaching/classroom-remodel/preparation-service.js",
+    "teaching/repositories/d17-assessments.js",
+    "scripts/verify-teaching-d14-classroom.js",
+    "tests/teaching/unit/classroom-remodel-academic.test.js"
+  ],
+  "migrations": {
+    "authored": [
+      "migrations/20261010082135_classroom_notebook_references.sql"
+    ],
+    "sha256": "3e95a3c0d3e7aea4bbd040a6c8ba8e8d06c28cc375da7ab01f2cbb9b79a89a83",
+    "productionApplied": [],
+    "integrationProjectApplied": []
+  },
+  "effectiveVersions": {
+    "engine": "CLASSROOM_V1 inactive",
+    "contracts": "classroom-contracts.v1",
+    "domain": "classroom-domain.v1",
+    "wire": "classroom-presentation-wire.v1",
+    "boardProjection": "d14.board-public.v1",
+    "registry": "1.3 active unchanged; compiled SHA pinned per session",
+    "promptManifest": "1.4 active unchanged",
+    "candidateRegistration": "CANDIDATE_REGISTERED_NOT_FROZEN",
+    "policy": "Owner-adopted policy required; synthetic fixture policy is not production adoption",
+    "candidatePrompts": {
+      "TPF-05": "2.0 qualification_pending runtimeEffective=false",
+      "TPF-21": "1.0 canonical candidate for working alias TPF-5/8; registered not frozen; runtimeEffective=false",
+      "TPF-08": "2.0 qualification_pending runtimeEffective=false",
+      "TPF-20": "Established active authority retained; remodeled reconciliation belongs Delivery 7"
+    }
+  },
+  "validation": {
+    "localUnitAndAI": {
+      "tests": 1689,
+      "pass": 1689,
+      "fail": 0,
+      "skip": 0
+    },
+    "localWithIntegrationWithoutDatabase": {
+      "tests": 1785,
+      "pass": 1700,
+      "fail": 0,
+      "skip": 85,
+      "limit": "Database cases skipped locally; use native CI evidence separately",
+      "commit": "56005f36189f675571e6c8b1f298066fbb4b99bf"
+    },
+    "webBuild": "PASS",
+    "foundationIntegrity": "PASS",
+    "priorNativeDatabase": {
+      "commit": "1a0e54be7cb1486b6f63f2da100648c21b29f0a7",
+      "job": 114181673411,
+      "tests": 106,
+      "pass": 106,
+      "fail": 0,
+      "skip": 0,
+      "evidenceKind": "OBSERVED_NATIVE_POSTGRES_SYNTHETIC_FIXTURES"
+    },
+    "liveProvider": "NOT_OBSERVED",
+    "deployedBehavior": "NO_NEW_DEPLOYMENT",
+    "manualScreenReaderAndMobileKeyboard": "NOT_OBSERVED",
+    "databaseCI": {
+      "commit": "8c36b45f5bd02c816dad7d2e4f268210d8325657",
+      "run": 38056374560,
+      "job": 114225632775,
+      "tests": 109,
+      "pass": 109,
+      "fail": 0,
+      "skip": 0,
+      "rlsGaps": 0,
+      "browserMutationGrants": 0,
+      "evidenceKind": "OBSERVED_NATIVE_POSTGRES_SYNTHETIC_FIXTURES"
+    },
+    "priorSourceCI": {
+      "commit": "56005f36189f675571e6c8b1f298066fbb4b99bf",
+      "checks": 47,
+      "passed": 47,
+      "failed": 0
+    },
+    "currentSourceCI": {
+      "commit": "8c36b45f5bd02c816dad7d2e4f268210d8325657",
+      "workflows": 32,
+      "passed": 32,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "priorBrowser": {
+      "job": 114181857499,
+      "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/38041278918/job/114181857499",
+      "status": "PASS",
+      "evidenceKind": "OBSERVED_CHROMIUM_CONNECTED_API_NATIVE_POSTGRES_SYNTHETIC_FIXTURES",
+      "manualScreenReader": false,
+      "liveAccount": false,
+      "liveProvider": false
+    },
+    "browser": {
+      "commit": "8c36b45f5bd02c816dad7d2e4f268210d8325657",
+      "run": 38056374359,
+      "job": 114225631955,
+      "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/38056374359/job/114225631955",
+      "artifact": "https://github.com/happysolomon43-boop/KIWI/actions/runs/38056374359/artifacts/11671781934",
+      "status": "PASS",
+      "evidenceKind": "OBSERVED_CHROMIUM_CONNECTED_API_NATIVE_POSTGRES_SYNTHETIC_FIXTURES",
+      "coverageAdded": [
+        "Actual Classroom launch buttons open exact D11-bound Work editor and Assessment shell",
+        "D16 durable draft and stale owner version rejected",
+        "D17 private-safe package, durable response and reload with original deadline",
+        "Interrupted formal mode keeps instruction private; active attempt prevents instructional transition",
+        "Actual Course Notebook sheet immediately shows linked passage; mobile personal note persists and keyboard focus restores"
+      ],
+      "manualScreenReader": false,
+      "realSoftwareKeyboard": false,
+      "liveAccount": false,
+      "liveProvider": false,
+      "postAssessmentAcademicContinuation": "NOT_QUALIFIED; fixture setup follows owner submission"
+    },
+    "recoveryRevisionHistory": [
+      {
+        "commit": "e98520b6a6e28eaf69c7e364269c421b79863b0d",
+        "browserJob": 114185674646,
+        "browserStatus": "FAIL",
+        "reason": "Offline check exposed lease buttons remaining disabled after prior claim. Fixed in implementationCommit.",
+        "foundationStatus": "FAIL",
+        "foundationReason": "Generated inventory search digest not refreshed. Regenerated and locally verified in implementationCommit."
+      },
+      {
+        "commit": "6f897309ba69779be0d30257728e36bc5ae653ac",
+        "browserRun": 38055947932,
+        "browserStatus": "FAIL",
+        "reason": "Actual D17 attempt rejected native PostgreSQL Date deadline at durable ISO-only expiry-event boundary. Fixed by ISO serialization in b70f467."
+      },
+      {
+        "commit": "b70f467271a212b0e3941d96b33a1febd726bde1",
+        "browserRun": 38056217686,
+        "browserJob": 114225181842,
+        "browserStatus": "FAIL",
+        "observedBeforeFailure": [
+          "Actual D17 launch and private-safe package",
+          "Durable Assessment response",
+          "Reload preserves response and deadline",
+          "Interrupted protected Assessment hides instructional material",
+          "Active formal attempt prevents instructional transition"
+        ],
+        "reason": "Disposable CI bootstrap omitted existing 20261008_teaching_d14_raised_hand_help_requests.sql required by actual instructional D14 snapshot. Added existing migration to bootstrap in implementationCommit; no production migration performed."
+      }
+    ],
+    "recoveryVerifiedSourceCI": {
+      "commit": "427b82a277ba9ab0e42e532fc84deaa5dddc8d59",
+      "workflows": 32,
+      "passed": 32,
+      "failed": 0
+    },
+    "protectedOwnerRevision": {
+      "commit": "18083b4801afa83bae5c2db0c980671b1c88d8c4",
+      "evidenceKind": "SYNTHETIC_NATIVE_DATABASE_AND_BROWSER",
+      "database": {
+        "run": 38044418632,
+        "tests": 107,
+        "pass": 107,
+        "skip": 0,
+        "conclusion": "success"
+      },
+      "browser": {
+        "run": 38044418746,
+        "conclusion": "success",
+        "observed": [
+          "real Work editor rendered from exact D11 binding",
+          "draft persisted through D16 owner",
+          "changed owner version rejected"
+        ],
+        "limit": "Fixture Course registry; no provider, deployed account or D17 response-shell qualification"
+      },
+      "actualClassroomButtonRevision": {
+        "commit": "dd6799fbea672b1b1afed9b45462d2b3ead729fe",
+        "run": 38044627416,
+        "conclusion": "success"
+      },
+      "productionMigrationRecheck": "Production Supabase still ends at 20261008233038; no remodeling migrations applied"
+    },
+    "nativeOwnerWorkspace": {
+      "commit": "b70f467271a212b0e3941d96b33a1febd726bde1",
+      "run": 38056217699,
+      "job": 114225182230,
+      "tests": 109,
+      "pass": 109,
+      "fail": 0,
+      "skip": 0,
+      "evidenceKind": "OBSERVED_NATIVE_POSTGRES_SYNTHETIC_FIXTURES"
+    },
+    "checkpointDocumentationCI": "Fresh checkpoint commit is distinct from tested implementation; inspect branch/PR checks for its observed status."
+  },
+  "qualification": "All 44 scenarios remain NOT_QUALIFIED; supporting fixture checks do not qualify live providers or production",
+  "remaining": [
+    "Manual screen-reader and real mobile software-keyboard review; deployed-account Course entry and provider-owned visual qualification",
+    "D1/D2 actual-provider, independent reviewer and C4 human academic evidence",
+    "Owner-adopted preparation/presentation policy and deployed session/proxy qualification; post-assessment academic continuation remains owner-gated"
+  ],
+  "compatibility": {
+    "legacy": "Existing sessions and active bindings retained; additive Notebook references preserve old readers Native bootstrap now includes the already-existing D14 raised-hand table; no legacy route or binding retired.",
+    "remodeled": "Optional composition inactive by default; no production admission",
+    "rollback": "Code remains inactive and additive history retained; consequential production rollback not exercised"
+  },
+  "infrastructure": {
+    "newInfrastructure": "NONE",
+    "connectedMigrations": "NONE",
+    "deployment": "NONE",
+    "bindingRetirement": "NONE",
+    "automaticPreview": "Prior PR bot reports an automatic Vercel preview; candidate backend/session behavior there is not qualified. No production rollout performed."
+  },
+  "nextUnfinishedAction": "Obtain manual screen-reader and real mobile software-keyboard evidence and prerequisite actual-provider, independent-reviewer/C4 academic evidence; adopt owner runtime policy and qualify deployed-account/session/proxy behavior. Delivery 4 acceptance and production admission remain held. Delivery 5 composer must stay disabled until its backend gate passes.",
+  "protectedHandoffContract": {
+    "request": "D11 transition protectedActivity: {owner: D16|D17, id, version}",
+    "storage": "Existing session progress_state.active_protected_activity, committed with D11 transition/history",
+    "projectionRoute": "GET /classes/:id/classroom/protected-activity",
+    "schemaChanges": "None for this revision",
+    "contradictionResolution": "D16 has no formal CLASSWORK purpose and rejects formal-assessment assistance. D19 formal CLASSWORK stays with D17; explicit D11-bound ordinary assigned Work stays with D16. No assignment is inferred from source_class_id alone.",
+    "compatibility": "New binding requirement applies only to CLASSROOM_V1; legacy owners, old active prompt bindings, readers and histories remain."
+  }
+}

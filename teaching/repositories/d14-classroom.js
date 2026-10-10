@@ -1,4 +1,5 @@
 'use strict';
+const {protectedMode}=require('../classroom-remodel/protected-activity');
 
 function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repository,outboxStore=null,dueEventStore=null}={}) {
   if (![query,withTransaction,randomUUID].every((f)=>typeof f==='function') || !d11Repository) throw new TypeError('D14 persistence dependencies required.');
@@ -48,7 +49,7 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
     const scenes=[];for(const row of rows){let scene=scenes.at(-1);if(!scene||scene.boardSceneId!==row.board_scene_id){scene={boardSceneId:row.board_scene_id,ordinal:row.scene_ordinal,type:row.scene_type,title:row.title,items:[]};scenes.push(scene);}if(row.board_item_id)scene.items.push({boardItemId:row.board_item_id,ordinal:row.item_ordinal,type:row.block_type,content:row.content,provenanceRefs:row.provenance_refs});}
     return scenes;
   }
-  async function notebook(studentId,classId){const {rows}=await query('select notebook_item_id,board_item_id,content,source_kind,version_no,created_at,updated_at from public.teaching_student_notebook_items where student_id=$1 and class_id=$2 order by created_at,notebook_item_id',[studentId,classId]);return rows;}
+  async function notebook(studentId,classId){const {rows}=await query("select notebook_item_id,board_item_id,content,source_kind,version_no,created_at,updated_at,to_jsonb(teaching_student_notebook_items)->'source_ref' as source_ref from public.teaching_student_notebook_items where student_id=$1 and class_id=$2 order by created_at,notebook_item_id",[studentId,classId]);return rows;}
   // A bounded, student-only projection of already committed classroom communication.
   // This is not a transcript of model reasoning and cannot publish a Teacher turn.
   async function conversation(studentId,classId){
@@ -122,18 +123,7 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
     return current;
   }
   async function publishTeacherTurnUsing(tx,{studentId,classId,expectedControllerVersion,message,blocks=[],idempotencyKey,helpRequestId=null,expectedBlueprintId=null,expectedBlueprintVersion=null,expectedScheduleVersion=null,expectedCourseStateVersion=null,expectedPlanId=null,expectedPlanVersion=null}){
-    const {validateBlock}=require('../d14/board');
-    if(typeof message!=='string'||!message.trim()||message.length>5000||!Array.isArray(blocks)||blocks.length>30)throw Object.assign(new Error('Teacher turn invalid.'),{code:'TEACHING_D14_TEACHER_TURN_INVALID',status:422});
-    const safe=blocks.map(validateBlock);
-    // A Teacher message is never silently disconnected from the teaching
-    // surface. Generated images/diagrams are supplementary; the Board must
-    // still contain readable, owner-validated instructional text when no
-    // independent notation was provided by the lesson model. This also
-    // repairs normal raised-hand publication and works without visual AI.
-    if(!safe.some(block=>!['image','diagram'].includes(block.type))) {
-      if(safe.length>=30)throw Object.assign(new Error('Teacher Board block limit exceeded.'),{code:'TEACHING_D14_TEACHER_TURN_INVALID',status:422});
-      safe.unshift(validateBlock({type:'text',content:{text:message.trim()}}));
-    }
+    const safe=require('../d14/board').validateTeacherTurnBlocks(message,blocks);
     return (async(tx)=>{
       const existing=await tx.query('select * from public.teaching_teacher_communications where student_id=$1 and idempotency_key=$2',[studentId,idempotencyKey]);
       if(existing.rows[0])return existing.rows[0];
@@ -198,15 +188,27 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
       join public.teaching_class_sessions cs on cs.class_session_id=a.class_session_id and cs.student_id=a.student_id and cs.class_id=a.class_id
       where a.student_id=$1 and a.class_id=$2 and a.asset_id=$3 and a.state='READY'
       and cs.instructional_substate not in ('ASSESSMENT','CLASSWORK')
+      and not (cs.instructional_substate='INTERRUPTED' and coalesce(cs.resume_instructional_substate,'') in ('ASSESSMENT','CLASSWORK'))
       and exists(select 1 from public.teaching_board_items i join public.teaching_board_scenes s on s.board_scene_id=i.board_scene_id and s.student_id=i.student_id
         where i.student_id=a.student_id and s.class_session_id=a.class_session_id and i.block_type in ('image','diagram') and i.content->>'assetId'=a.asset_id)`,[studentId,classId,assetId]);return rows[0]||null;
   }
-  async function addNotebook({studentId,classId,content,sourceKind,boardItemId=null,idempotencyKey}){
+  async function addNotebook({studentId,classId,content,sourceKind,boardItemId=null,idempotencyKey,sourceRef=null}){
     return withTransaction(async(tx)=>{
+      const session=(await tx.query("select *,to_jsonb(teaching_class_sessions)->>'classroom_engine' as classroom_engine from public.teaching_class_sessions where student_id=$1 and class_id=$2 for update",[studentId,classId])).rows[0];
+      if(protectedMode(session))throw Object.assign(new Error('Notebook restricted.'),{code:'TEACHING_D14_NOTEBOOK_RESTRICTED',status:403});
+      await tx.query('select pg_advisory_xact_lock(hashtextextended($1,0))',[studentId+':notebook:'+idempotencyKey]);
+      if(sourceRef){
+        const c=require('../classroom-remodel/contracts');c.versionRef(sourceRef);let valid=false;
+        if(session?.classroom_engine!=='CLASSROOM_V1')throw Object.assign(new Error('Notebook reference session unavailable.'),{code:'TEACHING_D14_NOTEBOOK_REFERENCE_INVALID',status:422});
+        if(sourceRef.kind==='chapter'){const a=(await tx.query('select logical_id,logical_version,public_payload from public.teaching_classroom_academic_artifacts where student_id=$1 and artifact_version_id=$2',[studentId,session.classroom_chapter_artifact_id])).rows[0];valid=a?.logical_id===sourceRef.id&&a.logical_version===sourceRef.version&&(sourceRef.anchor===null||a.public_payload.units.some(u=>u.anchor===sourceRef.anchor||u.elements.some(e=>e.anchor===sourceRef.anchor)));}
+        if(sourceRef.kind==='message')valid=sourceRef.version==='1'&&sourceRef.anchor===null&&!!(await tx.query('select 1 from public.teaching_classroom_conversation where session_id=$1 and event_id=$2',[session.class_session_id,sourceRef.id])).rows[0];
+        if(sourceRef.kind==='portion')valid=sourceRef.version==='1'&&sourceRef.anchor===null&&!!(await tx.query("select 1 from public.teaching_classroom_portions where session_id=$1 and portion_id=$2 and status in ('PUBLISHED','CONFIRMED')",[session.class_session_id,sourceRef.id])).rows[0];
+        if(!valid)throw Object.assign(new Error('Notebook reference not released or not in this Class.'),{code:'TEACHING_D14_NOTEBOOK_REFERENCE_INVALID',status:422});
+      }
       const existing=await tx.query('select * from public.teaching_student_notebook_items where student_id=$1 and idempotency_key=$2',[studentId,idempotencyKey]);
-      if(existing.rows[0]){if(existing.rows[0].class_id!==classId||existing.rows[0].content!==content||existing.rows[0].board_item_id!==boardItemId)throw Object.assign(new Error('Conflicting notebook retry.'),{code:'TEACHING_D14_IDEMPOTENCY_CONFLICT',status:409});return existing.rows[0];}
+      if(existing.rows[0]){if(existing.rows[0].class_id!==classId||existing.rows[0].content!==content||existing.rows[0].board_item_id!==boardItemId||require('../classroom-remodel/academic-artifacts').hash(existing.rows[0].source_ref||null)!==require('../classroom-remodel/academic-artifacts').hash(sourceRef))throw Object.assign(new Error('Conflicting notebook retry.'),{code:'TEACHING_D14_IDEMPOTENCY_CONFLICT',status:409});return existing.rows[0];}
       if(boardItemId){const item=await tx.query('select 1 from public.teaching_board_items i join public.teaching_board_scenes s on s.board_scene_id=i.board_scene_id join public.teaching_class_sessions cs on cs.class_session_id=s.class_session_id where i.board_item_id=$1 and i.student_id=$2 and cs.class_id=$3',[boardItemId,studentId,classId]);if(!item.rows[0])throw Object.assign(new Error('Board item not in Class.'),{status:404,code:'TEACHING_D14_BOARD_ITEM_NOT_FOUND'});}
-      const {rows}=await tx.query('insert into public.teaching_student_notebook_items(notebook_item_id,student_id,class_id,board_item_id,content,source_kind,idempotency_key) values($1,$2,$3,$4,$5,$6,$7) returning *',[randomUUID(),studentId,classId,boardItemId,content,sourceKind,idempotencyKey]);return rows[0];
+      const {rows}=await tx.query('insert into public.teaching_student_notebook_items(notebook_item_id,student_id,class_id,board_item_id,content,source_kind,idempotency_key) values($1,$2,$3,$4,$5,$6,$7) returning *',[randomUUID(),studentId,classId,boardItemId,content,sourceKind,idempotencyKey]);if(sourceRef){await tx.query('update public.teaching_student_notebook_items set source_ref=$2::jsonb where notebook_item_id=$1',[rows[0].notebook_item_id,JSON.stringify(sourceRef)]);rows[0].source_ref=sourceRef;}return rows[0];
     });
   }
   async function recordInteraction({studentId,classId,session,kind,body,idempotencyKey}){

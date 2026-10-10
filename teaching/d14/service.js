@@ -1,9 +1,10 @@
 'use strict';
+const {protectedMode}=require('../classroom-remodel/protected-activity');
 
 const { classClosureTranslation } = require('./fact-pack');
 const { validateStageOutput, noteRequest } = require('./study-note');
 const { validateBlock } = require('./board');
-const MODES=Object.freeze({OPENING:'Teaching',DIAGNOSTIC:'Teaching',INSTRUCTION:'Teaching',GUIDED_PRACTICE:'Guided Practice',INDEPENDENT_PRACTICE:'Independent Practice',CLASSWORK:'Classwork — Graded',ASSESSMENT:'Test / Assessment',BREAK:'Break',REMEDIATION:'Teaching',CLOSURE:'Class Summary',INTERRUPTED:'Interrupted'});
+const MODES=Object.freeze({OPENING:'Teaching',DIAGNOSTIC:'Teaching',INSTRUCTION:'Teaching',GUIDED_PRACTICE:'Guided Practice',INDEPENDENT_PRACTICE:'Independent Practice',CLASSWORK:'Classwork',ASSESSMENT:'Test / Assessment',BREAK:'Break',REMEDIATION:'Teaching',CLOSURE:'Class Summary',INTERRUPTED:'Interrupted'});
 const RESTRICTED=new Set(['ASSESSMENT','CLASSWORK']);
 // A raised hand is for a running instructional activity, not a generic active
 // controller, closed Class, break or assessment. Keep server projection and
@@ -34,16 +35,17 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
     const source=await context(user.id,classId);
     const currentTime=clock().getTime(),starts=Date.parse(source.classRow.scheduled_start_at),ends=Date.parse(source.classRow.scheduled_end_at);
     const mode=source.session?.lifecycle_state==='CLOSED'?'CLOSURE':source.session?.instructional_substate||(currentTime>=ends?'UNSTARTED_PAST':currentTime>=starts?'START_DELAYED':'PRE_CLASS');
-    const restricted=RESTRICTED.has(mode);
+    const protectedModeKey=protectedMode(source.session);
+    const restricted=Boolean(protectedModeKey);
     const [identity,scenes,notes,studyNote,teacherMessage,firstEntry,conversation,helpRequests]=await Promise.all([
       repository.identity(user.id,source.classRow.course_id),
       restricted?[]:repository.board(user.id,source.session?.class_session_id),
       restricted?[]:repository.notebook(user.id,classId),
       repository.latestNote(user.id,classId),
-      repository.latestTeacherMessage(user.id,classId),
+      restricted?null:repository.latestTeacherMessage(user.id,classId),
       repository.firstEntry(user.id,classId),
       restricted?[]:typeof repository.conversation==='function'?repository.conversation(user.id,classId):[],
-      typeof repository.helpRequests==='function'?repository.helpRequests(user.id,classId):[],
+      restricted?[]:typeof repository.helpRequests==='function'?repository.helpRequests(user.id,classId):[],
     ]);
     const closed=source.session?.lifecycle_state==='CLOSED';
     let summary=null,closureFacts=null;
@@ -65,15 +67,15 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
       cause:source.session.interruption_metadata?.cause==='SYSTEM'?'SYSTEM':'UNDETERMINED',academicPenalty:false,
       resumeState:source.session.resume_instructional_substate||'INSTRUCTION',canResume:Boolean(source.session.resume_instructional_substate),
     }:null;
-    return Object.freeze({class:d11.class,controller:d11.controller,time:d11.time,serverNow:serverNow.toISOString(),identity:identity||{course_title:'Course',teacher_name:'KIWI Teacher'},
-      mode:MODES[mode]||(mode==='UNSTARTED_PAST'?'Class did not start':mode==='START_DELAYED'?'Start pending':'Before Class'),modeKey:mode,focus:true,objective,teacherMessage:teacherMessage?.message||null,entry,interruption,hasEntered:Boolean(firstEntry),
+    return Object.freeze({classroomEngine:source.session?.classroom_engine||'LEGACY',class:d11.class,controller:d11.controller,time:d11.time,serverNow:serverNow.toISOString(),identity:identity||{course_title:'Course',teacher_name:'KIWI Teacher'},
+      mode:MODES[mode]||(mode==='UNSTARTED_PAST'?'Class did not start':mode==='START_DELAYED'?'Start pending':'Before Class'),modeKey:mode,protectedModeKey,focus:true,objective:restricted?null:objective,teacherMessage:teacherMessage?.message||null,entry,interruption,hasEntered:Boolean(firstEntry),
       canStartClass:!source.session&&currentTime>=starts&&currentTime<ends&&source.classRow.lifecycle_state!=='CANCELLED'&&source.classRow.course_lifecycle_state==='ACTIVE'
         &&source.classRow.source_timetable_state!=='SUPERSEDED',
-      requiredMaterials:Array.isArray(source.blueprint?.blueprint_payload?.required_materials)?source.blueprint.blueprint_payload.required_materials.map(String).slice(0,12):[],
-      learningUnitId:currentLu&&planned.includes(currentLu)?currentLu:(planned[0]||null),
+      requiredMaterials:!restricted&&Array.isArray(source.blueprint?.blueprint_payload?.required_materials)?source.blueprint.blueprint_payload.required_materials.map(String).slice(0,12):[],
+      learningUnitId:restricted?null:currentLu&&planned.includes(currentLu)?currentLu:(planned[0]||null),
       board:scenes.map((s)=>({...s,items:s.items.map((item)=>validateBlock({type:item.type,content:item.content})&&item)})),
       boardHistoryAllowed:!restricted,notebook:notes,notebookAllowed:!restricted,summary,closureFacts,
-      teacherConversation:conversation,helpRequests,teacherMessagingAllowed:HELP_INSTRUCTIONAL_MODES.has(mode)&&!closed&&source.session?.lifecycle_state==='ACTIVE'
+      teacherConversation:conversation,helpRequests,teacherMessagingAllowed:source.session?.classroom_engine!=='CLASSROOM_V1'&&HELP_INSTRUCTIONAL_MODES.has(mode)&&!closed&&source.session?.lifecycle_state==='ACTIVE'
         &&source.classRow.lifecycle_state==='SCHEDULED'
         &&source.classRow.course_lifecycle_state==='ACTIVE'
         &&source.classRow.source_timetable_state==='APPROVED'
@@ -83,12 +85,13 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
       transcriptSecondary:true,controlsEnabled:source.session?.lifecycle_state==='ACTIVE',academicStateFromBrowser:false});
   }
   async function notebook(user,classId,input={}){
-    const ctx=await context(user.id,classId);if(RESTRICTED.has(ctx.session?.instructional_substate))fail('TEACHING_D14_NOTEBOOK_RESTRICTED',403);
+    const ctx=await context(user.id,classId);if(protectedMode(ctx.session))fail('TEACHING_D14_NOTEBOOK_RESTRICTED',403);
     const content=String(input.content||'').trim();if(!content||content.length>10000)fail('TEACHING_D14_NOTEBOOK_CONTENT_INVALID',400);
     const boardItemId=input.boardItemId?String(input.boardItemId):null;
     const idempotencyKey=String(input.idempotencyKey||'');if(!idempotencyKey||idempotencyKey.length>160)fail('TEACHING_D14_IDEMPOTENCY_REQUIRED',400);
-    const row=await repository.addNotebook({studentId:user.id,classId,content,sourceKind:boardItemId?'BOARD_REFERENCE':'PERSONAL',boardItemId,idempotencyKey});
-    return {notebookItemId:row.notebook_item_id,content:row.content,boardItemId:row.board_item_id,versionNo:Number(row.version_no)};
+    let sourceRef=input.sourceRef||null;if(sourceRef){try{require('../classroom-remodel/contracts').versionRef(sourceRef);if(!['chapter','portion','message'].includes(sourceRef.kind))throw Error();}catch{fail('TEACHING_D14_NOTEBOOK_REFERENCE_INVALID',422);}}
+    const row=await repository.addNotebook({studentId:user.id,classId,content,sourceKind:boardItemId?'BOARD_REFERENCE':'PERSONAL',boardItemId,idempotencyKey,sourceRef});
+    return {notebookItemId:row.notebook_item_id,content:row.content,sourceRef:row.source_ref||null,boardItemId:row.board_item_id,versionNo:Number(row.version_no)};
   }
   async function signal(user,classId,input={}){
     const ctx=await context(user.id,classId);const kind=String(input.kind||'').toUpperCase();

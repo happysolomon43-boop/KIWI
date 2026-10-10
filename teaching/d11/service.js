@@ -704,12 +704,13 @@ function createD11Service({
     const enteringInterrupted=toState==='INTERRUPTED';
     const changed=await withTransaction((tx)=>repository.transitionUsing(tx,{
       studentId:user.id,classId,expectedVersion:Number(input.expectedVersion),toState,
+      protectedActivity:input.protectedActivity||null,
       lifecycleState:enteringInterrupted?'INTERRUPTED':'ACTIVE',
       resumeState:context.session.resume_instructional_substate,
       reason:String(input.reason || 'Deterministic D11 Controller transition'),
       actionKind:enteringInterrupted?'CLASS_INTERRUPTED':(leavingInterrupted?'CLASS_RESUMED':'STATE_TRANSITION'),
       extraUpdates:{
-        ...(enteringInterrupted?{resume_instructional_substate:context.session.instructional_substate}:{}),
+        ...(enteringInterrupted?{resume_instructional_substate:context.session.classroom_engine==='CLASSROOM_V1'&&context.session.instructional_substate==='ASSESSMENT'?null:context.session.instructional_substate}:{}),
         ...(leavingInterrupted?{resume_instructional_substate:null}:{}),
       },
     }));

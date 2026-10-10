@@ -5,6 +5,7 @@ if(typeof kiwiApiRequest!=='function'||!courses?.registerSection)throw new Error
 
 const $=(tag,className='',text=null)=>{const n=document.createElement(tag);if(className)n.className=className;if(text!==null)n.textContent=String(text);return n;};
 const visualLoads=new Map();
+function releaseVisualLoadsWithin(element){for(const [img,load]of visualLoads)if(element.contains(img)){load.controller.abort();if(load.url)URL.revokeObjectURL(load.url);visualLoads.delete(img);}}
 function clearVisualLoads(){for(const {controller,url} of visualLoads.values()){controller.abort();if(url)URL.revokeObjectURL(url);}visualLoads.clear();}
 const TEXT_SCALES=Object.freeze([0.82,0.9,1,1.12]);
 function savedTextScale(){
@@ -34,7 +35,7 @@ function connectionFeedback(message){
   const region=state.host?.querySelector('.tc-connection');
   if(region)region.replaceChildren(...(message?[$('span','',message)]:[]));
 }
-const MODE={PRE_CLASS:'Before Class',START_DELAYED:'Start pending',UNSTARTED_PAST:'Did not start',OPENING:'Teaching',DIAGNOSTIC:'Teaching',INSTRUCTION:'Teaching',GUIDED_PRACTICE:'Guided Practice',INDEPENDENT_PRACTICE:'Independent Practice',CLASSWORK:'Classwork — Graded',ASSESSMENT:'Test / Assessment',BREAK:'Break',REMEDIATION:'Teaching',CLOSURE:'Class Summary',INTERRUPTED:'Interrupted'};
+const MODE={PRE_CLASS:'Before Class',START_DELAYED:'Start pending',UNSTARTED_PAST:'Did not start',OPENING:'Teaching',DIAGNOSTIC:'Teaching',INSTRUCTION:'Teaching',GUIDED_PRACTICE:'Guided Practice',INDEPENDENT_PRACTICE:'Independent Practice',CLASSWORK:'Classwork',ASSESSMENT:'Test / Assessment',BREAK:'Break',REMEDIATION:'Teaching',CLOSURE:'Class Summary',INTERRUPTED:'Interrupted'};
 function when(value){return value?new Date(value).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):'—';}
 function date(value){return value?new Date(value).toLocaleString([],{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):'—';}
 function duration(ms){let n=Math.max(0,Math.floor(ms/1000));return `${Math.floor(n/60).toString().padStart(2,'0')}:${(n%60).toString().padStart(2,'0')}`;}
@@ -51,7 +52,7 @@ function updateSelectionNote(){
   if(!state.host||state.sheet||state.reviewOnly||!state.snapshot?.notebookAllowed||!selection?.rangeCount||selection.isCollapsed){clearSelectionNote();return;}
   const range=selection.getRangeAt(0),element=node=>node?.nodeType===Node.ELEMENT_NODE?node:node?.parentElement;
   const start=element(range.startContainer),end=element(range.endContainer);
-  const surface=start?.closest('.tc-board,.tc-workspace');
+  const surface=start?.closest('.tc-board,.tc-workspace,.cr-event,.cr-source');
   const content=selection.toString().trim();
   if(!content||!surface||!state.host.contains(surface)||!surface.contains(end)||start.closest('input,textarea,button,[contenteditable]')||end?.closest('input,textarea,button,[contenteditable]')){clearSelectionNote();return;}
   const classId=state.classId,rect=range.getBoundingClientRect();
@@ -61,7 +62,7 @@ function updateSelectionNote(){
     const saved=selectionNote;if(!saved||saved.busy||saved.classId!==state.classId||!state.snapshot?.notebookAllowed||state.reviewOnly)return;
     saved.busy=true;control.disabled=true;control.textContent='Saving…';
     try{
-      await kiwiApiRequest('/teaching/classes/'+encodeURIComponent(classId)+'/notebook',{method:'POST',body:{content:saved.content,idempotencyKey:saved.key,...(saved.boardItemId?{boardItemId:saved.boardItemId}:{})}});
+      await kiwiApiRequest('/teaching/classes/'+encodeURIComponent(classId)+'/notebook',{method:'POST',body:{content:saved.content,idempotencyKey:saved.key,...(saved.boardItemId?{boardItemId:saved.boardItemId}:{}),...(saved.sourceRef?{sourceRef:saved.sourceRef}:{})}});
       control.textContent='Added to Notebook';control.setAttribute('role','status');
       window.getSelection()?.removeAllRanges();
       await fetchSnapshot().catch(()=>{});
@@ -71,7 +72,7 @@ function updateSelectionNote(){
   control.addEventListener('pointerdown',event=>event.preventDefault());
   control.setAttribute('aria-label','Add selected classroom text to Notebook');
   if(content.length>10000){control.disabled=true;control.textContent='Select less text';control.title='Notes can contain up to 10,000 characters.';}
-  selectionNote={button:control,content,classId,key:crypto.randomUUID(),boardItemId:start.closest('[data-board-item-id]')?.dataset.boardItemId||null,busy:false};
+  selectionNote={button:control,content,classId,key:crypto.randomUUID(),boardItemId:start.closest('[data-board-item-id]')?.dataset.boardItemId||null,sourceRef:remodeledView?.referenceFor(start)||null,busy:false};
   (state.expanded?.dialog||state.host).append(control);
   const viewport=window.visualViewport,left=viewport?.offsetLeft||0,top=viewport?.offsetTop||0,width=viewport?.width||window.innerWidth,height=viewport?.height||window.innerHeight;
   control.style.left=Math.max(left+8,Math.min(rect.left,left+width-control.offsetWidth-8))+'px';
@@ -79,7 +80,9 @@ function updateSelectionNote(){
 }
 document.addEventListener('selectionchange',()=>{if(selectionFrame)return;selectionFrame=requestAnimationFrame(()=>{selectionFrame=null;updateSelectionNote();});});
 document.addEventListener('scroll',()=>{if(!selectionNote?.busy)clearSelectionNote();},true);
+let remodeledView=null,remodeledLoading=null;
 function close({restore=true}={}){
+  remodeledView?.close();remodeledView=null;
   state.requestAbort?.abort();
   state.requestAbort=null;state.snapshotFlight=null;state.connectFlight=null;state.joinFlight=null;
   clearSelectionNote();collapsePanel({restore:false});clearVisualLoads();state.scene=0;closeSheet({restore:false,force:true});clearRuntime();
@@ -117,11 +120,11 @@ async function fetchSnapshot(){
 async function act(path,body){
   if(state.busy)return;state.busy=true;
   try{await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(state.classId)}/${path}`,{method:'POST',body:{...body,idempotencyKey:crypto.randomUUID()}});await fetchAfterAction();}
-  catch(error){state.host?.querySelector('.tc-message')?.replaceChildren($('span','',error.message||'That action could not be completed.'));}
+  catch(error){classroomFeedback(error.message||'That action could not be completed. Retry to check the saved state.');}
   finally{state.busy=false;}
 }
 function classroomFeedback(message) {
-  const region=state.host?.querySelector('.tc-message');
+  const region=state.host?.querySelector('.tc-message,.cr-status');
   if(region)region.replaceChildren($('span','',message));
 }
 function isUntouchedRouteHeldController(controller) {
@@ -192,7 +195,7 @@ async function controllerAction(path,body={}){
   }
   finally{state.busy=false;}
 }
-async function fetchAfterAction(){const data=await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(state.classId)}/classroom`);data._receivedAt=Date.now();if(!state.reviewOnly&&state.scene>=Math.max(0,(state.snapshot?.board?.length||0)-1))state.scene=Math.max(0,(data.board?.length||0)-1);state.snapshot=data;render();}
+async function fetchAfterAction(){const classId=state.classId,host=state.host;const data=await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(classId)}/classroom`);if(state.classId!==classId||state.host!==host)return;data._receivedAt=Date.now();if(!state.reviewOnly&&state.scene>=Math.max(0,(state.snapshot?.board?.length||0)-1))state.scene=Math.max(0,(data.board?.length||0)-1);state.snapshot=data;render();}
 // Network failures cannot destroy a previously rendered lesson or invent a
 // session interruption. Attendance JOIN is idempotent and is never attempted
 // without an authoritative active Controller.
@@ -278,6 +281,7 @@ async function open(classId,{reviewOnly=false,onReviewComplete=null}={}){
 }
 
 function trapClassroomFocus(event){
+  if(event.target.closest?.('.cr-expanded-board'))return;
   if(event.key==='Escape'){
     if(state.sheet){event.preventDefault();event.stopPropagation();closeSheet();return;}
     if(state.expanded){event.preventDefault();collapsePanel();}
@@ -343,9 +347,10 @@ function renderHeader(s){
       close();
     }catch(error){
       leave.disabled=false;
-      state.host?.querySelector('.tc-message')?.replaceChildren($('span','',`${error.message||'KIWI could not confirm your departure.'} Retry Leave Class to safely confirm the same attendance record.`));
+      classroomFeedback(`${error.message||'KIWI could not confirm your departure.'} Retry Leave Class to safely confirm the same attendance record.`);
     }
   },'tc-button tc-button--quiet');
+  leave.dataset.leaveClass='true';
   add(header,brand,identity,mode,clocks,leave);return header;
 }
 function renderTeacher(s){
@@ -403,9 +408,9 @@ function graphBlock(c){
   const xs=pts.map((p)=>p[0]),ys=pts.map((p)=>p[1]),minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
   const coords=pts.map(([x,y])=>[30+340*(x-minX)/(maxX-minX||1),185-145*(y-minY)/(maxY-minY||1)]);
   for(const path of ['M30 20V185H380',`M${coords.map((p)=>p.join(' ')).join('L')}`]){const line=document.createElementNS('http://www.w3.org/2000/svg','path');line.setAttribute('d',path);line.setAttribute('fill','none');line.setAttribute('stroke',path[0]==='M'&&path.includes('V')?'#637b70':'#92e9be');line.setAttribute('stroke-width','2');svg.append(line);}
-  wrap.append(svg);return wrap;
+  wrap.append(svg);const alternative=$('details','tc-graph-alternative');alternative.append($('summary','','Graph data and description'),$('p','',description),$('p','',pts.map(([x,y])=>'('+x+', '+y+')').join('; ')));wrap.append(alternative);return wrap;
 }
-function renderBlock(item){
+function renderBlock(item,{onSave=null}={}){
   const c=item.content||{},card=$('article','tc-board-item');card.dataset.type=item.type;if(item.boardItemId)card.dataset.boardItemId=item.boardItemId;
   const label=({text:'NOTE',equation:'EQUATION',worked_solution:'WORKED EXAMPLE',graph:'GRAPH',data:'DATA',image:'IMAGE',diagram:'DIAGRAM',code:'CODE',source_passage:'SOURCE',comparison:'COMPARE',annotation:'ANNOTATION'})[item.type]||'BOARD';
   card.append($('div','tc-board-item__label',label));
@@ -415,8 +420,8 @@ function renderBlock(item){
     case 'code':card.append(add($('pre','tc-code'),$('code','',c.text||'')));break;
     case 'worked_solution':(c.steps||[]).forEach((step,i)=>card.append(add($('div','tc-step'),$('span','',String(i+1).padStart(2,'0')),$('p','',step))));break;
     case 'graph':case 'data':card.append(graphBlock(c));break;
-    case 'image':case 'diagram':{const img=$('img','tc-visual');img.alt=c.alt||`${label.toLowerCase()} shown on the Class Board`;img.loading='lazy';img.addEventListener('error',()=>{img.remove();card.append($('p','tc-empty-copy',c.fallback?.text||c.alt||'This visual could not be loaded.'));},{once:true});card.append(img);
-      const fallback=()=>{if(!card.contains(img))return;img.remove();card.append($('p','tc-empty-copy',c.fallback?.text||c.alt||'This visual could not be loaded.'));};
+    case 'image':case 'diagram':{const img=$('img','tc-visual');img.alt=c.alt||`${label.toLowerCase()} shown on the Class Board`;img.loading='lazy';img.width=640;img.height=360;img.addEventListener('error',()=>fallback(),{once:true});card.append(img);
+      const fallback=()=>{const load=visualLoads.get(img);if(load){load.controller.abort();if(load.url)URL.revokeObjectURL(load.url);visualLoads.delete(img);}if(!card.contains(img))return;img.remove();card.append($('p','tc-empty-copy',c.fallback?.text||c.alt||'This visual could not be loaded.'));};
       if(typeof kiwiApiBlobRequest!=='function'||!/^\/api\/teaching\/classes\/[^/]+\/classroom\/assets\/[^/]+$/.test(c.src||'')){fallback();break;}
       const load={controller:new AbortController(),url:null};visualLoads.set(img,load);
       kiwiApiBlobRequest(c.src.slice(4),{signal:load.controller.signal}).then(blob=>{if(!img.isConnected||load.controller.signal.aborted)return;load.url=URL.createObjectURL(blob);img.src=load.url;}).catch(()=>fallback());
@@ -424,8 +429,8 @@ function renderBlock(item){
     case 'comparison':{const pair=$('div','tc-comparison');(c.columns||[]).forEach((col)=>pair.append(add($('div',''),$('strong','',col.title||''),$('p','',col.text))));card.append(pair);break;}
     case 'annotation':card.append($('p','tc-annotation',c.label||''));break;
   }
-  const save=button('Save to Notebook',()=>act('notebook',{content:(c.text||c.label||c.alt||(c.steps||[]).join('\n')).slice(0,10000),boardItemId:item.boardItemId}),'tc-mini-action');
-  if(!state.reviewOnly&&state.snapshot?.notebookAllowed&&item.boardItemId)card.append(save);
+  const save=button('Save to Notebook',()=>{const content=(c.text||c.label||c.alt||c.description||(c.steps||[]).join('\n')||(c.points||[]).map(([x,y])=>'('+x+', '+y+')').join('; ')||(c.columns||[]).map(col=>col.text).join('\n')||'Board reference').slice(0,10000);return onSave?onSave(item,content):act('notebook',{content,boardItemId:item.boardItemId});},'tc-mini-action');
+  if((onSave||(!state.reviewOnly&&state.snapshot?.notebookAllowed))&&item.boardItemId)card.append(save);
   return card;
 }
 function renderBoard(s){
@@ -473,9 +478,31 @@ function renderWorkspace(s){
     return panel;
   }
   if(s.modeKey==='BREAK'){panel.append(notice('A proper pause','Teaching is paused. You can step away and return when the break ends.','tc-break'));return panel;}
-  if(s.modeKey==='ASSESSMENT'){panel.append(notice('Assessment in progress','Assessment rules and responses are controlled by the formal assessment interface. Classroom resources are restricted.','tc-assessment'));return panel;}
+  if(['ASSESSMENT','CLASSWORK'].includes(s.modeKey)){
+    const assessment=s.modeKey==='ASSESSMENT';
+    panel.append(notice(assessment?'Assessment in progress':'Classwork in progress',assessment?'Open your announced Assessment in the formal assessment interface. Its owner controls launch eligibility, responses and timing.':'Open the assigned Classwork in Work. Its owner controls responses, assistance and submission.','tc-assessment'));
+    if(s.classroomEngine==='CLASSROOM_V1') {
+      const status=$('p','tc-message');status.setAttribute('role','status');
+      const launch=button('Open active '+(assessment?'Assessment':'Classwork'),async()=>{
+        const classId=state.classId;launch.disabled=true;status.textContent='Checking the active activity…';
+        try {
+          const target=await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(classId)}/classroom/protected-activity`);
+          if(state.classId!==classId||!launch.isConnected)return;
+          if(target.owner==='D16'){close({restore:false});courses.openSection?.('work',{protectedActivity:target});}
+          else if(target.owner==='D17'){
+            const handoff=await kiwiApiRequest(`/teaching/assessments/${encodeURIComponent(target.id)}/launch`);
+            if(state.classId!==classId||!launch.isConnected)return;
+            const url=new URL(handoff.targetAppPath,location.origin);
+            if(url.origin!==location.origin||url.pathname!=='/assessment-shell.html')throw new Error('Assessment launch destination is unavailable.');
+            location.assign(url.href);
+          }else throw new Error('Activity owner is unavailable.');
+        }catch(error){status.textContent='The active activity could not be opened. '+(error.message||'Return to Class and try again.');launch.disabled=false;}
+      },'tc-button tc-button--solid');panel.append(launch,status);
+    }else panel.append(button(assessment?'Open Assessments':'Open Work',()=>courses.openSection?.(assessment?'assessments':'work'),'tc-button tc-button--solid'));
+    return panel;
+  }
   if(s.modeKey==='CLOSURE'){panel.append(notice('Class is complete','Review the Summary, your Notebook and permitted Board scenes below.'));return panel;}
-  if(s.modeKey==='INTERRUPTED'){panel.append(notice('Class paused safely','Your work is preserved. Continue from the saved teaching state when you are ready; a KIWI-caused interruption is never negative academic evidence.','tc-error'));if(isUntouchedRouteHeldController(s.controller))panel.append(button('Prepare & Resume Lesson',()=>controllerAction('recover-and-resume'),'tc-button tc-button--solid'));else if(s.interruption?.canResume)panel.append(button('Resume Class',()=>controllerAction('transition',{toState:s.interruption.resumeState,expectedVersion:s.controller.stateVersion}),'tc-button tc-button--solid'));return panel;}
+  if(s.modeKey==='INTERRUPTED'){panel.append(notice('Class paused safely',s.protectedModeKey?'The protected activity owner retains its timer and response record. Instructional material remains closed while the Controller is interrupted.':'Your work is preserved. Continue from the saved teaching state when you are ready; a KIWI-caused interruption is never negative academic evidence.','tc-error'));if(isUntouchedRouteHeldController(s.controller))panel.append(button('Prepare & Resume Lesson',()=>controllerAction('recover-and-resume'),'tc-button tc-button--solid'));else if(s.interruption?.canResume)panel.append(button('Resume Class',()=>controllerAction('transition',{toState:s.interruption.resumeState,expectedVersion:s.controller.stateVersion}),'tc-button tc-button--solid'));return panel;}
   if(s.modeKey==='INDEPENDENT_PRACTICE')panel.append(notice('Productive silence','Take the time you need within the activity. Your teacher does not need a message from you to continue.'));
   if(s.objective)panel.append(add($('div','tc-objective'),$('small','','CURRENT OBJECTIVE'),$('p','',s.objective)));
   if(s.entry?.veryLate)panel.append(notice('A shorter Class today',`${s.entry.lateMinutes} minutes after the scheduled start · ${s.entry.minutesRemaining} minutes remain. The core objective needs a safe replanning decision; completion is not assumed.`, 'tc-error'));
@@ -552,9 +579,10 @@ function syncSheet(){
     ?'Your hand is raised. The Teacher is processing your question; wait for the decision before asking another.'
     :allowed?'The Teacher will decide whether to answer now, briefly defer, or explain why a question cannot be answered.':'You can review earlier questions, but cannot raise your hand during this protected or inactive activity.';
 }
+async function openConnectedNotebook(){const classId=state.classId,host=state.host;try{await fetchAfterAction();if(state.classId===classId&&state.host===host)openSheet('notebook');}catch{if(state.classId===classId&&state.host===host)classroomFeedback('Notebook could not refresh. Your saved notes are preserved; try again.');}}
 function openSheet(kind){
   collapsePanel({restore:false});
-  if(!state.snapshot||!state.host||!['notebook','teacher'].includes(kind))return;
+  if(!state.snapshot||!state.host||!['notebook','teacher'].includes(kind)||(state.snapshot.protectedModeKey||['ASSESSMENT','CLASSWORK'].includes(state.snapshot.modeKey)))return;
   if(state.sheet){if(state.sheetKind===kind)return;closeSheet({restore:false});}
   const trigger=document.activeElement;
   const shade=$('div','tc-sheet');
@@ -567,7 +595,7 @@ function openSheet(kind){
   const headline=$('h2','',title);headline.id='tc-sheet-title';
   const headingText=add($('div','tc-sheet-heading-copy'),$('div','tc-eyebrow',label),headline);
   const mark=$('span','tc-sheet-emblem',kind==='notebook'?'✎':'✋');mark.setAttribute('aria-hidden','true');
-  top.append(mark,headingText,button('×',()=>closeSheet(),'tc-sheet-close'));
+  const sheetClose=button('×',()=>closeSheet(),'tc-sheet-close');sheetClose.setAttribute('aria-label','Close '+title);top.append(mark,headingText,sheetClose);
   dialog.append($('div','tc-sheet-handle'));
   dialog.append(top);
   dialog.append($('p','tc-sheet-description',kind==='notebook'
@@ -577,7 +605,7 @@ function openSheet(kind){
     const list=$('div','tc-sheet-notes');
     const items=state.snapshot.notebook||[];
     if(!items.length)list.append($('p','tc-sheet-help','You have not saved notes for this Class yet.'));
-    items.forEach(item=>list.append(add($('article','tc-sheet-note'),$('small','',item.source_kind==='BOARD_REFERENCE'?'Saved from Board':'Personal note'),$('p','',item.content||''))));
+    items.forEach(item=>{const note=add($('article','tc-sheet-note'),$('small','',item.source_ref?'Linked classroom note':item.source_kind==='BOARD_REFERENCE'?'Saved from Board':'Personal note'),$('p','',item.content||''));if((item.source_ref||item.board_item_id)&&remodeledView)note.append(button('Open linked passage',()=>{closeSheet();remodeledView?.navigateReference(item.board_item_id?{kind:'board',id:item.board_item_id,version:'1',anchor:null}:item.source_ref);},'tc-mini-action'));list.append(note);});
     dialog.append(list);
     if(state.snapshot.notebookAllowed&&!state.reviewOnly){
       const form=$('form','tc-sheet-form');
@@ -651,11 +679,21 @@ function render(){
   const expandedKind=state.expanded?.kind,expandedScroll=state.expanded?.panel.scrollTop,readingScroll=state.host?.scrollTop||0;
   const previousWorkspace=state.host?.querySelector('#tc-panel-workspace textarea');
   const draft=previousWorkspace?{value:previousWorkspace.value,authority:previousWorkspace.dataset.authority,focused:document.activeElement===previousWorkspace,start:previousWorkspace.selectionStart,end:previousWorkspace.selectionEnd}:null;
-  collapsePanel({restore:false});clearVisualLoads();
   const s=state.snapshot;if(!s||!state.host)return;
   // A protected activity cannot inherit an already-open Notebook or Teacher sheet.
   // Close it before the refreshed Class DOM is made visible.
-  if(['ASSESSMENT','CLASSWORK'].includes(s.modeKey)&&state.sheet)closeSheet({restore:false,force:true});
+  if((s.protectedModeKey||['ASSESSMENT','CLASSWORK'].includes(s.modeKey))&&state.sheet)closeSheet({restore:false,force:true});
+  if(s.classroomEngine==='CLASSROOM_V1'&&!s.protectedModeKey&&!['ASSESSMENT','CLASSWORK'].includes(s.modeKey)){
+    if(remodeledView){remodeledView.update(s);return;}
+    if(!remodeledLoading){const host=state.host,classId=state.classId;
+      remodeledLoading=import('./classroom/classroom-view.js').then(({mountClassroomView})=>{
+        if(state.host!==host||state.classId!==classId||state.snapshot?.classroomEngine!=='CLASSROOM_V1'||(state.snapshot.protectedModeKey||['ASSESSMENT','CLASSWORK'].includes(state.snapshot.modeKey)))return;
+        remodeledView=mountClassroomView({host,classId,legacy:state.snapshot,reviewOnly:state.reviewOnly,api:kiwiApiRequest,transport:window.KIWI_API_CLIENT.classroomTransport,renderBoard:renderBlock,releaseVisuals:releaseVisualLoadsWithin,openNotebook:openConnectedNotebook,onClose:()=>close(),onTechnical:()=>act('interactions',{kind:'TECHNICAL_ISSUE'}),onLeave:()=>renderHeader(state.snapshot).querySelector('[data-leave-class]')?.click(),onProtected:()=>{remodeledView?.close();remodeledView=null;clearVisualLoads();clearSelectionNote();closeSheet({restore:false,force:true});fetchAfterAction().catch(()=>{});}});
+      }).catch(()=>connectionFeedback('Classroom view could not load. Reconnect to retry.')).finally(()=>{remodeledLoading=null;});
+    }return;
+  }
+  if(remodeledView){remodeledView.close();remodeledView=null;}
+  collapsePanel({restore:false});clearVisualLoads();
   const root=$('div','tc-shell');root.dataset.mode=s.modeKey;
   root.append(renderHeader(s));const body=$('main','tc-layout');
   const left=$('div','tc-layout__main');left.append(renderTeacher(s));
@@ -799,7 +837,7 @@ async function renderCourse({course,container,adminPreview=false}){
     if(document.visibilityState==='visible'&&!historyDialog.open)refresh();
   },30000);
 }
-courses.registerSection({id:'classroom',label:'Classroom',order:45,render:renderCourse,openClassroom:open,renderSummary:async({course,container})=>{
+courses.registerSection({id:'classroom',label:'Classroom',order:45,render:renderCourse,renderBoardItem:renderBlock,releaseBoardVisuals:releaseVisualLoadsWithin,openClassroom:open,renderSummary:async({course,container})=>{
   const card=add($('div','tc-course-summary'),$('div','tc-eyebrow','CLASSROOM'),$('h3','','The lesson has a place'),$('p','','Enter a scheduled Class to see the Board, your work and your Notebook.'));
   card.append(button('View Classes',()=>courses.openSection?.('classroom'),'tc-button tc-button--soft'));container.append(card);
 }});

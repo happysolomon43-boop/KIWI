@@ -64,13 +64,13 @@ test('Classroom projects 30, 60 and 120 minute lessons from server time and keep
   for(const minutes of [30,60,120]){
     const start='2026-09-29T10:00:00.000Z',end=new Date(Date.parse(start)+minutes*60000).toISOString();
     const ctx={classRow:{class_id:'c',course_id:'co',course_state_version:1,schedule_version:1,scheduled_start_at:start,scheduled_end_at:end},session:{class_session_id:'s',lifecycle_state:'ACTIVE',instructional_substate:'BREAK',progress_state:{}},blueprint:{blueprint_state:'VALIDATED',planned_learning_unit_refs:[],blueprint_payload:{objectives:[]}}};
-    const repository={identity:async()=>({course_title:'Course'}),board:async()=>[],notebook:async()=>[],latestNote:async()=>null,latestTeacherMessage:async()=>null,firstEntry:async()=>({created_at:start})};
+    const repository={identity:async()=>({course_title:'Course'}),board:async()=>[],notebook:async()=>[],latestNote:async()=>null,latestTeacherMessage:async()=>({message:'prior instruction'}),helpRequests:async()=>[{body:'old help'}],firstEntry:async()=>({created_at:start})};
     const d11Repository={getClassContext:async()=>ctx};
     const service=createD14Service({repository,d11Repository,d11Service:{getClass:async()=>({class:{scheduledStartAt:start,scheduledEndAt:end},controller:{lifecycleState:'ACTIVE'},time:{}})},d12Service:{},clock:()=>new Date(start),randomUUID:()=> 'uuid'});
     const view=await service.snapshot({id:'u'},'c');
     assert.equal(view.mode,'Break');assert.equal(view.entry.minutesRemaining,minutes);assert.equal(view.boardHistoryAllowed,true);
     ctx.session.instructional_substate='ASSESSMENT';
-    const protectedView=await service.snapshot({id:'u'},'c');assert.equal(protectedView.assessmentTakeover,true);assert.equal(protectedView.notebookAllowed,false);assert.equal(protectedView.boardHistoryAllowed,false);
+    const protectedView=await service.snapshot({id:'u'},'c');assert.equal(protectedView.assessmentTakeover,true);assert.equal(protectedView.notebookAllowed,false);assert.equal(protectedView.boardHistoryAllowed,false);assert.equal(protectedView.teacherMessage,null);assert.deepEqual(protectedView.helpRequests,[]);assert.equal(protectedView.learningUnitId,null);assert.deepEqual(protectedView.requiredMaterials,[]);assert.equal(protectedView.objective,null);
   }
 });
 
@@ -172,7 +172,8 @@ test('Closed Classroom stops overtime counter and replaces empty Board illustrat
 
 test('Assessment/Classwork transitions dismiss an already-open Notebook or Teacher sheet',()=>{
   const source=fs.readFileSync(path.resolve(__dirname,'../../../public/teaching-classroom.js'),'utf8');
-  assert.match(source,/if\(\['ASSESSMENT','CLASSWORK'\]\.includes\(s\.modeKey\)&&state\.sheet\)closeSheet\(\{restore:false,force:true\}\)/);
+  assert.match(source,/s\.protectedModeKey/);
+  assert.match(source,/state\.sheet\)closeSheet\(\{restore:false,force:true\}\)/);
   assert.match(source,/if\(!state\.sheet\|\|state\.sheetBusy&&!force\)return/);
 });
 
@@ -264,3 +265,5 @@ test('Expired scheduled start events and manual Starts are terminal, not retried
   assert.match(controller,/TEACHING_D11_CLASS_WINDOW_EXPIRED/);
   assert.match(controller,/!context\.session && now\.getTime\(\)>=new Date\(context\.classRow\.scheduled_end_at\)/);
 });
+
+test('the same D14 Teacher/Board validation rejects oversized prepared turns and unsafe text before publication',()=>{const {validateTeacherTurnBlocks}=require('../../../teaching/d14/board');assert.throws(()=>validateTeacherTurnBlocks('a'.repeat(5001)),{code:'TEACHING_D14_TEACHER_TURN_INVALID'});assert.throws(()=>validateTeacherTurnBlocks('<script>bad</script>'),{code:'TEACHING_D14_BOARD_BLOCK_INVALID'});assert.equal(validateTeacherTurnBlocks('Readable explanation')[0].type,'text');});

@@ -19,4 +19,24 @@ function validateBlock(block){
   return Object.freeze({type:block.type,content:Object.freeze(structuredClone(c))});
 }
 function validateBoardAction(action){if(!action||!OPERATIONS.includes(action.operation))bad();if(action.block)return Object.freeze({...action,block:validateBlock(action.block)});return Object.freeze({...action});}
-module.exports={TYPES,OPERATIONS,validateBlock,validateBoardAction};
+function validateTeacherTurnBlocks(message,blocks=[]){
+ if(typeof message!=='string'||!message.trim()||message.length>5000||!Array.isArray(blocks)||blocks.length>30)throw Object.assign(new Error('Teacher turn invalid.'),{code:'TEACHING_D14_TEACHER_TURN_INVALID',status:422});
+ const safe=blocks.map(validateBlock);
+ if(!safe.some(block=>!['image','diagram'].includes(block.type))){if(safe.length>=30)throw Object.assign(new Error('Teacher Board block limit exceeded.'),{code:'TEACHING_D14_TEACHER_TURN_INVALID',status:422});safe.unshift(validateBlock({type:'text',content:{text:message.trim()}}));}
+ return safe;
+}
+const PUBLIC_BLOCK_VERSION='d14.board-public.v1';
+// Candidate delivery projection: only renderable public fields leave private buffers.
+// Legacy validateBlock/readers retain their existing compatible behavior.
+function projectPublicBlock(block){const b=validateBlock(block),c=b.content;let content;
+ switch(b.type){
+  case 'text':case 'equation':case 'code':case 'source_passage':content={text:c.text};break;
+  case 'worked_solution':content={steps:[...c.steps]};break;
+  case 'graph':case 'data':content={points:c.points.map(p=>[...p]),...(typeof c.description==='string'?{description:c.description}:{}),...(typeof c.alt==='string'?{alt:c.alt}:{})};break;
+  case 'image':case 'diagram':content={src:c.src,assetId:c.assetId,alt:c.alt,...(['ILLUSTRATIVE','STRUCTURED_EXACT'].includes(c.visualAuthority)?{visualAuthority:c.visualAuthority}:{}),...(['SUPPLEMENTARY_ONLY','STRUCTURED_VISUAL'].includes(c.academicAuthority)?{academicAuthority:c.academicAuthority}:{}),...(c.provenance?{provenance:{generated:c.provenance.generated===true,deterministic:c.provenance.deterministic===true,sanitized:c.provenance.sanitized===true,...(/^[a-f0-9]{64}$/.test(c.provenance.sourceHash||'')?{sourceHash:c.provenance.sourceHash}:{})}}:{}),...(typeof c.fallback?.text==='string'?{fallback:{text:c.fallback.text}}:{})};break;
+  case 'comparison':content={columns:c.columns.map(col=>({text:col.text,...(typeof col.title==='string'?{title:col.title}:{})}))};break;
+  case 'annotation':content={targetItemId:c.targetItemId,label:c.label};break;
+ }
+ return validateBlock({type:b.type,content});
+}
+module.exports={TYPES,OPERATIONS,validateBlock,validateBoardAction,validateTeacherTurnBlocks,projectPublicBlock,PUBLIC_BLOCK_VERSION};
