@@ -704,6 +704,7 @@ function createD11Service({
     const enteringInterrupted=toState==='INTERRUPTED';
     const changed=await withTransaction((tx)=>repository.transitionUsing(tx,{
       studentId:user.id,classId,expectedVersion:Number(input.expectedVersion),toState,
+      protectedActivity:input.protectedActivity||null,
       lifecycleState:enteringInterrupted?'INTERRUPTED':'ACTIVE',
       resumeState:context.session.resume_instructional_substate,
       reason:String(input.reason || 'Deterministic D11 Controller transition'),

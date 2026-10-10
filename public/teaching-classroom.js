@@ -481,7 +481,24 @@ function renderWorkspace(s){
   if(['ASSESSMENT','CLASSWORK'].includes(s.modeKey)){
     const assessment=s.modeKey==='ASSESSMENT';
     panel.append(notice(assessment?'Assessment in progress':'Classwork in progress',assessment?'Open your announced Assessment in the formal assessment interface. Its owner controls launch eligibility, responses and timing.':'Open the assigned Classwork in Work. Its owner controls responses, assistance and submission.','tc-assessment'));
-    panel.append(button(assessment?'Open Assessments':'Open Work',()=>courses.openSection?.(assessment?'assessments':'work'),'tc-button tc-button--solid'));
+    if(s.classroomEngine==='CLASSROOM_V1') {
+      const status=$('p','tc-message');status.setAttribute('role','status');
+      const launch=button('Open active '+(assessment?'Assessment':'Classwork'),async()=>{
+        const classId=state.classId;launch.disabled=true;status.textContent='Checking the active activity…';
+        try {
+          const target=await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(classId)}/classroom/protected-activity`);
+          if(state.classId!==classId||!launch.isConnected)return;
+          if(target.owner==='D16')courses.openSection?.('work',{protectedActivity:target});
+          else if(target.owner==='D17'){
+            const handoff=await kiwiApiRequest(`/teaching/assessments/${encodeURIComponent(target.id)}/launch`);
+            if(state.classId!==classId||!launch.isConnected)return;
+            const url=new URL(handoff.targetAppPath,location.origin);
+            if(url.origin!==location.origin||url.pathname!=='/assessment-shell.html')throw new Error('Assessment launch destination is unavailable.');
+            location.assign(url.href);
+          }else throw new Error('Activity owner is unavailable.');
+        }catch(error){status.textContent='The active activity could not be opened. '+(error.message||'Return to Class and try again.');launch.disabled=false;}
+      },'tc-button tc-button--solid');panel.append(launch,status);
+    }else panel.append(button(assessment?'Open Assessments':'Open Work',()=>courses.openSection?.(assessment?'assessments':'work'),'tc-button tc-button--solid'));
     return panel;
   }
   if(s.modeKey==='CLOSURE'){panel.append(notice('Class is complete','Review the Summary, your Notebook and permitted Board scenes below.'));return panel;}

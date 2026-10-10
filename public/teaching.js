@@ -574,12 +574,12 @@ async function openTeachingCourse(courseId, sectionId = 'overview') {
   navigateTeaching('course', { courseId, sectionId });
 }
 
-function openTeachingCourseSection(sectionId) {
+function openTeachingCourseSection(sectionId, options = {}) {
   if (!selectedTeachingCourseId) return;
   if (sectionId !== 'overview' && !teachingCourseSections.has(sectionId)) return;
   activeTeachingCourseSection = sectionId;
   persistTeachingLocation();
-  renderCourseWorkspace();
+  renderCourseWorkspace(options);
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -703,7 +703,7 @@ function renderCourseOverview(course, container) {
   }
 }
 
-function renderCourseWorkspace() {
+function renderCourseWorkspace(options = {}) {
   const main = document.getElementById('teachingApp');
   if (!main) return;
   const course = getTeachingCourse(selectedTeachingCourseId);
@@ -752,6 +752,7 @@ function renderCourseWorkspace() {
   Promise.resolve(section.render({
     course,
     container: content,
+    protectedActivity: options.protectedActivity || null,
     openOverview: () => openTeachingCourseSection('overview'),
   })).catch((error) => {
     content.replaceChildren();

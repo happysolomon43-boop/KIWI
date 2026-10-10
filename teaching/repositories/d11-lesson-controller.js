@@ -2,6 +2,7 @@
 const {enqueueInstructionUsing}=require('../d14/instruction-event');
 
 const crypto = require('node:crypto');
+const {resolveProtectedActivity}=require('../classroom-remodel/protected-activity');
 const { buildClosureFactPack } = require('../d11/contracts');
 const {evaluateLessonInheritance}=require('../d11/preparation-inheritance');
 const {evaluateWorkspaceTransition}=require('../preparation/t0-handlers');
@@ -1129,7 +1130,7 @@ function createD11LessonControllerRepository({
   async function transitionUsing(tx, {
     studentId,classId,expectedVersion,toState,lifecycleState=null,resumeState=null,reason=null,
     actionKind='STATE_TRANSITION',sourceEventRef=null,idempotencyKey=null,safeMetadata={},
-    extraUpdates={},
+    extraUpdates={},protectedActivity=null,
   } = {}) {
     const session = await getSession(studentId,classId,tx,true);
     if (!session) {
@@ -1143,6 +1144,15 @@ function createD11LessonControllerRepository({
       error.code = 'TEACHING_D11_STALE_CONTROLLER_VERSION';
       error.status = 409;
       throw error;
+    }
+    if(session.classroom_engine==='CLASSROOM_V1') {
+      const progress={...(extraUpdates.progress_state||session.progress_state||{})};
+      if(['CLASSWORK','ASSESSMENT'].includes(toState)) {
+        const ownerRef=protectedActivity||session.progress_state?.active_protected_activity;
+        const context=await getClassContext(studentId,classId,tx);
+        progress.active_protected_activity=await resolveProtectedActivity({query:(text,params)=>tx.query(text,params),studentId,classId,courseId:context.classRow.course_id,sessionId:session.class_session_id,mode:toState,reference:ownerRef,lock:true});
+      } else if(toState!=='INTERRUPTED') delete progress.active_protected_activity;
+      extraUpdates={...extraUpdates,progress_state:progress};
     }
     const sets = [
       'instructional_substate=$4',
@@ -1635,8 +1645,17 @@ function createD11LessonControllerRepository({
     return rows?.[0] || null;
   }
 
+  async function protectedActivity(studentId,classId) {
+    const context=await getClassContext(studentId,classId);
+    const session=context?.session;
+    if(!session||session.classroom_engine!=='CLASSROOM_V1'||session.lifecycle_state!=='ACTIVE') throw Object.assign(new Error('Protected classroom session is unavailable.'),{code:'CLASSROOM_PROTECTED_ACTIVITY_UNAVAILABLE',status:409});
+    const live=await assertLiveContextCurrent(studentId,classId);
+    if(!live.ok) throw Object.assign(new Error('Classroom context changed.'),{code:'CLASSROOM_PROTECTED_ACTIVITY_STALE',status:409});
+    return resolveProtectedActivity({query,studentId,classId,courseId:context.classRow.course_id,sessionId:session.class_session_id,mode:session.instructional_substate,reference:session.progress_state?.active_protected_activity});
+  }
   return Object.freeze({
     assertReady,
+    protectedActivity,
     getClassContext,
     listClassesForCourse,
     getPlanningSignals,

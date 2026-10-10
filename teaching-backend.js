@@ -707,6 +707,9 @@ function createTeachingRouter({
     router.get('/classes/:id/classroom',requireD14Ready,async(req,res)=>{
       try{res.json(await classroomService.snapshot(req.user,req.params.id));}catch(error){sendError(res,error,'Could not load Classroom.');}
     });
+    router.get('/classes/:id/classroom/protected-activity',requireD14Ready,async(req,res)=>{
+      try{res.set('Cache-Control','private, no-store').json(await foundation.d11.repository.protectedActivity(req.user.id,req.params.id));}catch(error){sendError(res,error,'Protected activity is unavailable.');}
+    });
     router.get('/classes/:id/classroom/assets/:assetId',requireD14Ready,async(req,res)=>{
       try{
         const asset=await classroomService.visualAsset(req.user,req.params.id,req.params.assetId);

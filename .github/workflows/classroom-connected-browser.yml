@@ -4,6 +4,11 @@ on:
     paths:
       - 'public/classroom/**'
       - 'public/teaching-classroom*'
+      - 'public/teaching.js'
+      - 'public/teaching-d16.js'
+      - 'teaching/d11/**'
+      - 'teaching/repositories/d11-lesson-controller.js'
+      - 'teaching-backend.js'
       - 'teaching/classroom-remodel/**'
       - 'teaching/repositories/classroom-*'
       - 'teaching/repositories/d14-classroom.js'

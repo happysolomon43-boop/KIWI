@@ -1,0 +1,25 @@
+'use strict';
+const test=require('node:test');const assert=require('node:assert/strict');const {randomUUID}=require('node:crypto');
+const {integrationConfig}=require('./test-db');const {skipReason:skip}=integrationConfig('Classroom protected owner handoff');
+const {harness}=require('../fixtures/classroom-presentation-database');
+test('D11 atomically pins exact D16 work; owner drafts survive retry and stale bindings hold',{skip},async()=>harness(async h=>{
+ const d11=require('../../../teaching/repositories/d11-lesson-controller').createD11LessonControllerRepository({...h,randomUUID});
+ const repository=require('../../../teaching/repositories/d16-assignments').createD16AssignmentRepository({...h,randomUUID});
+ const service=require('../../../teaching/d16/service').createD16Service({repository,randomUUID});
+ const {ids}=h;
+ await h.query(`update public.teaching_class_sessions set source_course_state_version=(select state_version from public.teaching_courses where course_id=$2),source_class_schedule_version=1,source_timetable_version_id=$3,source_course_plan_version=1 where class_session_id=$1`,[h.sessionId,ids.course,ids.timetable]);
+ const user={id:ids.studentId};
+ const created=await service.createFromTrustedSpec({studentId:ids.studentId,classId:ids.classId,idempotencyKey:randomUUID(),spec:{courseId:ids.course,title:'Exact active Classwork',instructions:'Explain your reasoning.',purpose:'PRACTICE',workStake:'PREPARATION',lifecycleState:'OPEN',assistanceMode:'OPEN_LEARNING_ASSISTANCE',deadlineType:'SOFT',dueAt:new Date(Date.now()+3600000).toISOString(),estimatedEffortMinMinutes:1,estimatedEffortMaxMinutes:5}});
+ const transition=reference=>h.withTransaction(tx=>d11.transitionUsing(tx,{studentId:ids.studentId,classId:ids.classId,expectedVersion:1,toState:'CLASSWORK',protectedActivity:reference}));
+ await assert.rejects(transition(null),{code:'CLASSROOM_PROTECTED_ACTIVITY_REQUIRED'});
+ assert.equal((await d11.getSession(ids.studentId,ids.classId)).state_version,1);
+ const ref={owner:'D16',id:created.assignmentId,version:1};await transition(ref);
+ const binding=await d11.protectedActivity(ids.studentId,ids.classId);assert.equal(binding.id,created.assignmentId);
+ const draftKey=randomUUID();await service.saveDraft(user,binding.id,{response:{text:'My durable reasoning'},idempotencyKey:draftKey});await service.saveDraft(user,binding.id,{response:{text:'My durable reasoning'},idempotencyKey:draftKey});
+ const detail=await service.getAssignment(user,binding.id);assert.equal(detail.submission.response.text,'My durable reasoning');
+ assert.equal((await h.query('select count(*)::int n from public.teaching_assignment_submissions where assignment_id=$1',[binding.id])).rows[0].n,1);
+ await h.query('update public.teaching_assignments set state_version=state_version+1 where assignment_id=$1',[binding.id]);
+ await assert.rejects(d11.protectedActivity(ids.studentId,ids.classId),{code:'CLASSROOM_PROTECTED_ACTIVITY_STALE'});
+ await h.withTransaction(tx=>d11.transitionUsing(tx,{studentId:ids.studentId,classId:ids.classId,expectedVersion:2,toState:'INSTRUCTION'}));
+ assert.equal((await d11.getSession(ids.studentId,ids.classId)).progress_state.active_protected_activity,undefined);
+}));
