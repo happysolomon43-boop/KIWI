@@ -2,6 +2,8 @@
 // Synthetic locked owner artifact for connected UI qualification only.
 const {randomUUID}=require('node:crypto');
 async function assessmentFixture(h){const {studentId,classId,course}=h.ids;const ids={assessmentId:randomUUID(),blueprintId:randomUUID(),candidateId:randomUUID(),versionId:randomUUID(),packageId:randomUUID(),itemId:randomUUID()};
+ const gradebook=require('../../../teaching/repositories/d20-gradebook').createD20GradebookRepository({...h,randomUUID});
+ await gradebook.createLockedPolicy({studentId,courseId:course,policy:require('../../../teaching/d20/contracts').defaultPolicy(),idempotencyKey:randomUUID()});
  const klass=(await h.query('select scheduled_start_at,scheduled_end_at from public.teaching_classes where class_id=$1',[classId])).rows[0];
  const lineage={d19_measurement:{intended_class_id:classId,intended_class_scheduled_start_at:klass.scheduled_start_at,intended_class_scheduled_end_at:klass.scheduled_end_at},evidence_kind:'SYNTHETIC_FIXTURE'};
  await h.query("insert into public.teaching_assessments(assessment_id,student_id,course_id,assessment_type,purpose,title,graded,definition_state,policy_version,source_lineage,idempotency_key) values($1,$2,$3,'CLASSWORK','SYNTHETIC_UI_QUALIFICATION','Formal Classwork fixture',true,'READY','FIXTURE_NOT_ADOPTED',$4::jsonb,$1)",[ids.assessmentId,studentId,course,JSON.stringify(lineage)]);

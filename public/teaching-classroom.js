@@ -195,7 +195,7 @@ async function controllerAction(path,body={}){
   }
   finally{state.busy=false;}
 }
-async function fetchAfterAction(){const data=await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(state.classId)}/classroom`);data._receivedAt=Date.now();if(!state.reviewOnly&&state.scene>=Math.max(0,(state.snapshot?.board?.length||0)-1))state.scene=Math.max(0,(data.board?.length||0)-1);state.snapshot=data;render();}
+async function fetchAfterAction(){const classId=state.classId,host=state.host;const data=await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(classId)}/classroom`);if(state.classId!==classId||state.host!==host)return;data._receivedAt=Date.now();if(!state.reviewOnly&&state.scene>=Math.max(0,(state.snapshot?.board?.length||0)-1))state.scene=Math.max(0,(data.board?.length||0)-1);state.snapshot=data;render();}
 // Network failures cannot destroy a previously rendered lesson or invent a
 // session interruption. Attendance JOIN is idempotent and is never attempted
 // without an authoritative active Controller.
@@ -579,9 +579,10 @@ function syncSheet(){
     ?'Your hand is raised. The Teacher is processing your question; wait for the decision before asking another.'
     :allowed?'The Teacher will decide whether to answer now, briefly defer, or explain why a question cannot be answered.':'You can review earlier questions, but cannot raise your hand during this protected or inactive activity.';
 }
+async function openConnectedNotebook(){const classId=state.classId,host=state.host;try{await fetchAfterAction();if(state.classId===classId&&state.host===host)openSheet('notebook');}catch{if(state.classId===classId&&state.host===host)classroomFeedback('Notebook could not refresh. Your saved notes are preserved; try again.');}}
 function openSheet(kind){
   collapsePanel({restore:false});
-  if(!state.snapshot||!state.host||!['notebook','teacher'].includes(kind))return;
+  if(!state.snapshot||!state.host||!['notebook','teacher'].includes(kind)||(state.snapshot.protectedModeKey||['ASSESSMENT','CLASSWORK'].includes(state.snapshot.modeKey)))return;
   if(state.sheet){if(state.sheetKind===kind)return;closeSheet({restore:false});}
   const trigger=document.activeElement;
   const shade=$('div','tc-sheet');
@@ -681,13 +682,13 @@ function render(){
   const s=state.snapshot;if(!s||!state.host)return;
   // A protected activity cannot inherit an already-open Notebook or Teacher sheet.
   // Close it before the refreshed Class DOM is made visible.
-  if(['ASSESSMENT','CLASSWORK'].includes(s.modeKey)&&state.sheet)closeSheet({restore:false,force:true});
-  if(s.classroomEngine==='CLASSROOM_V1'&&!['ASSESSMENT','CLASSWORK'].includes(s.modeKey)){
+  if((s.protectedModeKey||['ASSESSMENT','CLASSWORK'].includes(s.modeKey))&&state.sheet)closeSheet({restore:false,force:true});
+  if(s.classroomEngine==='CLASSROOM_V1'&&!s.protectedModeKey&&!['ASSESSMENT','CLASSWORK'].includes(s.modeKey)){
     if(remodeledView){remodeledView.update(s);return;}
     if(!remodeledLoading){const host=state.host,classId=state.classId;
       remodeledLoading=import('./classroom/classroom-view.js').then(({mountClassroomView})=>{
-        if(state.host!==host||state.classId!==classId||state.snapshot?.classroomEngine!=='CLASSROOM_V1'||['ASSESSMENT','CLASSWORK'].includes(state.snapshot.modeKey))return;
-        remodeledView=mountClassroomView({host,classId,legacy:state.snapshot,reviewOnly:state.reviewOnly,api:kiwiApiRequest,transport:window.KIWI_API_CLIENT.classroomTransport,renderBoard:renderBlock,releaseVisuals:releaseVisualLoadsWithin,openNotebook:()=>openSheet('notebook'),onClose:()=>close(),onTechnical:()=>act('interactions',{kind:'TECHNICAL_ISSUE'}),onLeave:()=>renderHeader(state.snapshot).querySelector('[data-leave-class]')?.click(),onProtected:()=>{remodeledView?.close();remodeledView=null;clearVisualLoads();clearSelectionNote();closeSheet({restore:false,force:true});fetchAfterAction().catch(()=>{});}});
+        if(state.host!==host||state.classId!==classId||state.snapshot?.classroomEngine!=='CLASSROOM_V1'||(state.snapshot.protectedModeKey||['ASSESSMENT','CLASSWORK'].includes(state.snapshot.modeKey)))return;
+        remodeledView=mountClassroomView({host,classId,legacy:state.snapshot,reviewOnly:state.reviewOnly,api:kiwiApiRequest,transport:window.KIWI_API_CLIENT.classroomTransport,renderBoard:renderBlock,releaseVisuals:releaseVisualLoadsWithin,openNotebook:openConnectedNotebook,onClose:()=>close(),onTechnical:()=>act('interactions',{kind:'TECHNICAL_ISSUE'}),onLeave:()=>renderHeader(state.snapshot).querySelector('[data-leave-class]')?.click(),onProtected:()=>{remodeledView?.close();remodeledView=null;clearVisualLoads();clearSelectionNote();closeSheet({restore:false,force:true});fetchAfterAction().catch(()=>{});}});
       }).catch(()=>connectionFeedback('Classroom view could not load. Reconnect to retry.')).finally(()=>{remodeledLoading=null;});
     }return;
   }

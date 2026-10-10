@@ -1,5 +1,6 @@
 'use strict';
 
+function protectedMode(session){const mode=session?.instructional_substate;if(['ASSESSMENT','CLASSWORK'].includes(mode))return mode;if(mode==='INTERRUPTED'&&['ASSESSMENT','CLASSWORK'].includes(session?.resume_instructional_substate))return session.resume_instructional_substate;return null;}
 const blocked = (code) => Object.assign(new Error('Protected activity requires an authoritative current owner binding.'), {code, status:409});
 async function resolveProtectedActivity({query, studentId, classId, courseId, sessionId, mode, reference, lock=false}) {
   if (!reference || !['D16','D17'].includes(reference.owner) || typeof reference.id !== 'string' || !reference.id || !Number.isSafeInteger(reference.version) || reference.version < 1) throw blocked('CLASSROOM_PROTECTED_ACTIVITY_REQUIRED');
@@ -14,4 +15,4 @@ async function resolveProtectedActivity({query, studentId, classId, courseId, se
   if (assignment ? !['OPEN','STARTED'].includes(row.lifecycle_state) || (row.orthogonal_conditions||[]).some(x=>['INVALIDATED','REPLACED','EXPIRED','PAUSED'].includes(x)) : row.definition_state !== 'READY' || (mode==='CLASSWORK' && row.assessment_type !== 'CLASSWORK')) throw blocked('CLASSROOM_PROTECTED_ACTIVITY_UNAVAILABLE');
   return Object.freeze({owner:reference.owner,id:reference.id,version:reference.version,classId,courseId,sessionId,mode});
 }
-module.exports={resolveProtectedActivity};
+module.exports={resolveProtectedActivity,protectedMode};

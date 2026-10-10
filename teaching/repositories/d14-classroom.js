@@ -1,4 +1,5 @@
 'use strict';
+const {protectedMode}=require('../classroom-remodel/protected-activity');
 
 function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repository,outboxStore=null,dueEventStore=null}={}) {
   if (![query,withTransaction,randomUUID].every((f)=>typeof f==='function') || !d11Repository) throw new TypeError('D14 persistence dependencies required.');
@@ -187,13 +188,14 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
       join public.teaching_class_sessions cs on cs.class_session_id=a.class_session_id and cs.student_id=a.student_id and cs.class_id=a.class_id
       where a.student_id=$1 and a.class_id=$2 and a.asset_id=$3 and a.state='READY'
       and cs.instructional_substate not in ('ASSESSMENT','CLASSWORK')
+      and not (cs.instructional_substate='INTERRUPTED' and coalesce(cs.resume_instructional_substate,'') in ('ASSESSMENT','CLASSWORK'))
       and exists(select 1 from public.teaching_board_items i join public.teaching_board_scenes s on s.board_scene_id=i.board_scene_id and s.student_id=i.student_id
         where i.student_id=a.student_id and s.class_session_id=a.class_session_id and i.block_type in ('image','diagram') and i.content->>'assetId'=a.asset_id)`,[studentId,classId,assetId]);return rows[0]||null;
   }
   async function addNotebook({studentId,classId,content,sourceKind,boardItemId=null,idempotencyKey,sourceRef=null}){
     return withTransaction(async(tx)=>{
       const session=(await tx.query("select *,to_jsonb(teaching_class_sessions)->>'classroom_engine' as classroom_engine from public.teaching_class_sessions where student_id=$1 and class_id=$2 for update",[studentId,classId])).rows[0];
-      if(['ASSESSMENT','CLASSWORK'].includes(session?.instructional_substate))throw Object.assign(new Error('Notebook restricted.'),{code:'TEACHING_D14_NOTEBOOK_RESTRICTED',status:403});
+      if(protectedMode(session))throw Object.assign(new Error('Notebook restricted.'),{code:'TEACHING_D14_NOTEBOOK_RESTRICTED',status:403});
       await tx.query('select pg_advisory_xact_lock(hashtextextended($1,0))',[studentId+':notebook:'+idempotencyKey]);
       if(sourceRef){
         const c=require('../classroom-remodel/contracts');c.versionRef(sourceRef);let valid=false;

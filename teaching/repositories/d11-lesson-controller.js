@@ -1147,6 +1147,11 @@ function createD11LessonControllerRepository({
     }
     if(session.classroom_engine==='CLASSROOM_V1') {
       const progress={...(extraUpdates.progress_state||session.progress_state||{})};
+      const bound=session.progress_state?.active_protected_activity;
+      if(bound?.owner==='D17'&&!['ASSESSMENT','CLASSWORK','INTERRUPTED'].includes(toState)){
+        const attempt=await tx.query("select assessment_attempt_id from public.teaching_assessment_attempts where student_id=$1 and assessment_id=$2 and attempt_state='ACTIVE' for update",[studentId,bound.id]);
+        if(attempt.rows.length)throw Object.assign(new Error('The formal activity owner must finish the active attempt before instructional material can reopen.'),{code:'CLASSROOM_PROTECTED_ACTIVITY_STILL_ACTIVE',status:409});
+      }
       if(['CLASSWORK','ASSESSMENT'].includes(toState)) {
         const ownerRef=protectedActivity||session.progress_state?.active_protected_activity;
         const context=await getClassContext(studentId,classId,tx);

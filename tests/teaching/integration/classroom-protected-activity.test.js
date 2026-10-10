@@ -23,3 +23,9 @@ test('D11 atomically pins exact D16 work; owner drafts survive retry and stale b
  await h.withTransaction(tx=>d11.transitionUsing(tx,{studentId:ids.studentId,classId:ids.classId,expectedVersion:2,toState:'INSTRUCTION'}));
  assert.equal((await d11.getSession(ids.studentId,ids.classId)).progress_state.active_protected_activity,undefined);
 }));
+
+test('protected interruption hides conversation and chapter and rejects Notebook writes under the native session lock',{skip},async()=>harness(async h=>{
+ await h.accept();await h.query("update public.teaching_class_sessions set instructional_substate='INTERRUPTED',resume_instructional_substate='ASSESSMENT',lifecycle_state='INTERRUPTED',state_version=state_version+1 where class_session_id=$1",[h.sessionId]);
+ const snapshot=await h.read();assert.equal(snapshot.chapter_ref,null);assert.deepEqual(snapshot.conversation,[]);await assert.rejects(h.repository.read(h.ids.studentId,h.ids.classId),{code:'CLASSROOM_PROTECTED_ACTIVITY'});
+ await assert.rejects(h.d14Repository.addNotebook({studentId:h.ids.studentId,classId:h.ids.classId,content:'Must not be accepted here',sourceKind:'PERSONAL',idempotencyKey:randomUUID()}),{code:'TEACHING_D14_NOTEBOOK_RESTRICTED'});assert.equal((await h.d14Repository.notebook(h.ids.studentId,h.ids.classId)).length,0);
+}));
