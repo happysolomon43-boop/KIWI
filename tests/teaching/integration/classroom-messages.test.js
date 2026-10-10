@@ -115,3 +115,8 @@ test('concurrent message admission, Notebook capture and authoritative reads sha
  for(let n=0;n<4;n++)await Promise.all([r.admit(h.ids.studentId,h.ids.classId,input),h.d14Repository.addNotebook(note),h.read()]);
  assert.equal((await h.query('select count(*)::int n from public.teaching_classroom_messages where session_id=$1',[h.sessionId])).rows[0].n,1);assert.equal((await h.query('select count(*)::int n from public.teaching_student_notebook_items where student_id=$1 and idempotency_key=$2',[h.ids.studentId,note.idempotencyKey])).rows[0].n,1);assert.equal((await h.read()).messages.remaining,1);
 },{policy:messagePolicy(),concurrent:true}));
+
+test('conversation page limits never hide accepted questions or unresolved closure records',{skip},async()=>{
+ const policy=messagePolicy();policy.fields.deltaPageSize.value=1;
+ await harness(async h=>{const {repository:r,body}=setup(h);const one=await r.admit(h.ids.studentId,h.ids.classId,body()),two=await r.admit(h.ids.studentId,h.ids.classId,body('Another concern'));const snapshot=await h.read();assert.equal(snapshot.conversation.length,1);assert.deepEqual(new Set(snapshot.messages.questions.map(q=>q.id)),new Set([one.message_id,two.message_id]));await h.query("update public.teaching_class_sessions set lifecycle_state='CLOSED',state_version=state_version+1 where class_session_id=$1",[h.sessionId]);assert.equal((await h.read()).messages.questions.filter(q=>q.state==='unresolved at closure').length,2);},{policy});
+});
