@@ -1,6 +1,6 @@
 'use strict';
 
-function protectedMode(session){const mode=session?.instructional_substate;if(['ASSESSMENT','CLASSWORK'].includes(mode))return mode;if(mode==='INTERRUPTED'&&['ASSESSMENT','CLASSWORK'].includes(session?.resume_instructional_substate))return session.resume_instructional_substate;return null;}
+function protectedMode(session){const mode=session?.instructional_substate;if(['ASSESSMENT','CLASSWORK'].includes(mode))return mode;if(mode==='INTERRUPTED'&&['ASSESSMENT','CLASSWORK'].includes(session?.resume_instructional_substate))return session.resume_instructional_substate;if(mode==='INTERRUPTED'&&['ASSESSMENT','CLASSWORK'].includes(session?.progress_state?.active_protected_activity?.mode))return session.progress_state.active_protected_activity.mode;return null;}
 const blocked = (code) => Object.assign(new Error('Protected activity requires an authoritative current owner binding.'), {code, status:409});
 async function resolveProtectedActivity({query, studentId, classId, courseId, sessionId, mode, reference, lock=false}) {
   if (!reference || !['D16','D17'].includes(reference.owner) || typeof reference.id !== 'string' || !reference.id || !Number.isSafeInteger(reference.version) || reference.version < 1) throw blocked('CLASSROOM_PROTECTED_ACTIVITY_REQUIRED');

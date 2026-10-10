@@ -710,7 +710,7 @@ function createD11Service({
       reason:String(input.reason || 'Deterministic D11 Controller transition'),
       actionKind:enteringInterrupted?'CLASS_INTERRUPTED':(leavingInterrupted?'CLASS_RESUMED':'STATE_TRANSITION'),
       extraUpdates:{
-        ...(enteringInterrupted?{resume_instructional_substate:context.session.instructional_substate}:{}),
+        ...(enteringInterrupted?{resume_instructional_substate:context.session.classroom_engine==='CLASSROOM_V1'&&context.session.instructional_substate==='ASSESSMENT'?null:context.session.instructional_substate}:{}),
         ...(leavingInterrupted?{resume_instructional_substate:null}:{}),
       },
     }));

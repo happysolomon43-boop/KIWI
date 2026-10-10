@@ -12,3 +12,5 @@ test('D19 formal Classwork retains the D17 assessment shell owner',async()=>{con
 test('binding locks the selected owner row during D11 transition',async()=>{await resolveProtectedActivity({...base,lock:true,query:async sql=>{assert.match(sql,/for update$/);return {rows:[assignment]};}});});
 
 test('interrupted protected modes retain protection but ordinary interruptions preserve reading',()=>{const {protectedMode}=require('../../../teaching/classroom-remodel/protected-activity');for(const mode of ['ASSESSMENT','CLASSWORK'])assert.equal(protectedMode({instructional_substate:'INTERRUPTED',resume_instructional_substate:mode}),mode);assert.equal(protectedMode({instructional_substate:'INTERRUPTED',resume_instructional_substate:'INSTRUCTION'}),null);});
+
+test('formal interruption remains protected through its owner binding without inventing a D11 assessment-resume substate',()=>{const {protectedMode}=require('../../../teaching/classroom-remodel/protected-activity');assert.equal(protectedMode({instructional_substate:'INTERRUPTED',resume_instructional_substate:null,progress_state:{active_protected_activity:{owner:'D17',mode:'ASSESSMENT'}}}),'ASSESSMENT');});

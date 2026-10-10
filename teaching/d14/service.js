@@ -4,7 +4,7 @@ const {protectedMode}=require('../classroom-remodel/protected-activity');
 const { classClosureTranslation } = require('./fact-pack');
 const { validateStageOutput, noteRequest } = require('./study-note');
 const { validateBlock } = require('./board');
-const MODES=Object.freeze({OPENING:'Teaching',DIAGNOSTIC:'Teaching',INSTRUCTION:'Teaching',GUIDED_PRACTICE:'Guided Practice',INDEPENDENT_PRACTICE:'Independent Practice',CLASSWORK:'Classwork — Graded',ASSESSMENT:'Test / Assessment',BREAK:'Break',REMEDIATION:'Teaching',CLOSURE:'Class Summary',INTERRUPTED:'Interrupted'});
+const MODES=Object.freeze({OPENING:'Teaching',DIAGNOSTIC:'Teaching',INSTRUCTION:'Teaching',GUIDED_PRACTICE:'Guided Practice',INDEPENDENT_PRACTICE:'Independent Practice',CLASSWORK:'Classwork',ASSESSMENT:'Test / Assessment',BREAK:'Break',REMEDIATION:'Teaching',CLOSURE:'Class Summary',INTERRUPTED:'Interrupted'});
 const RESTRICTED=new Set(['ASSESSMENT','CLASSWORK']);
 // A raised hand is for a running instructional activity, not a generic active
 // controller, closed Class, break or assessment. Keep server projection and
