@@ -4,11 +4,11 @@ const {createD17AssessmentRepository}=require('../../../teaching/repositories/d1
 const source={classId:'class-1',reviewRef:'owner-review-1',
  sourceLineage:{classroomRecordRef:'classroom-record:r1@'+'a'.repeat(64),
  classClosureRef:'class-closure:c1',reviewedProposalHash:'b'.repeat(64)}};
-async function exercise({recordHash='a'.repeat(64),course='course-1',state='CLOSED',closure='c1'}={}){
+async function exercise({recordHash='a'.repeat(64),course='course-1',state='CLOSED',closure='c1',prior=false}={}){
  const seen=[];
  const tx={query:async(sql,params)=>{
   seen.push(sql);
-  if(sql.includes('idempotency_key=$2')&&sql.includes('teaching_assessment_blueprints'))return {rows:[]};
+  if(sql.includes('idempotency_key=$2')&&sql.includes('teaching_assessment_blueprints'))return {rows:prior?[{assessment_blueprint_id:'previous-bp'}]:[]};
   if(sql.includes('select * from public.teaching_assessments'))return {rows:[{assessment_id:'assess-1',course_id:'course-1'}]};
   if(sql.includes('from public.teaching_classroom_delivery d'))return {rows:[{session_id:'session-1',course_id:course,lifecycle_state:state}]};
   if(sql.includes('from public.teaching_classroom_reconciliation_versions'))return {rows:[{record_id:'r1',content_hash:recordHash}]};
@@ -35,4 +35,14 @@ test('D17 stale late evaluation, changed closure and foreign Course fail before 
   const {error,seen}=await exercise(overrides);
   assert.equal(error?.status,409);assert.equal(seen.some(s=>s.startsWith('insert into public.teaching_assessment_blueprints')),false);
  }
+});
+
+test('D17 Classroom Blueprint idempotency replay cannot return stale owner-approved evidence',async()=>{
+ const stale=await exercise({prior:true,recordHash:'c'.repeat(64)});
+ assert.equal(stale.error?.code,'TEACHING_D17_CLASSROOM_SOURCE_STALE');
+ assert.equal(stale.seen.some(sql=>sql.startsWith('insert into public.teaching_assessment_blueprints')),false);
+ const current=await exercise({prior:true});
+ assert.ifError(current.error);
+ assert.equal(current.result?.idempotent,true);
+ assert.equal(current.result?.blueprint.assessment_blueprint_id,'previous-bp');
 });
