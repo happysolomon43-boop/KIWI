@@ -30,7 +30,9 @@ test('unselected cards, empty D27 selection, version drift and foreign context n
    [[{...base,status:'CARD_VERSION_CHANGED'}],[current],'TEACHING_D27_CLASS_CARD_SET_STALE'],
    [[{...base,courseId:'other'}],[current],'TEACHING_D27_CLASS_CARD_SET_STALE'],
    [[base],[{...current,version:'v2'}],'TEACHING_D27_CLASS_CARD_SOURCE_CHANGED'],
-   [[base],[], 'TEACHING_D27_CLASS_CARD_SOURCE_CHANGED']
+   [[base],[], 'TEACHING_D27_CLASS_CARD_SOURCE_CHANGED'],
+   [[base],[{...current,protected:true}],'TEACHING_D27_CLASS_CARD_PROTECTED'],
+   [[base],[{...current,privacyClass:'C4'}],'TEACHING_D27_PROTECTED_CONTENT_FORBIDDEN']
  ])await assert.rejects(setup(refs,cards).read(owner),{code});
 });
 test('duplicate same-Subject card references are rejected before note generation',async()=>{
