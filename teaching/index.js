@@ -354,7 +354,7 @@ function createTeachingFoundation({
         lessonIntelligence:d14LessonIntelligence,
         visualService:d14VisualService,
         studyIntelligence:d14StudyIntelligence,
-        cardSetReader:d14CardSetReader,
+        cardSetReader:d14CardSetReader||(d27Repository?require('./d14/class-study-card-set').createD27ClassStudyCardSetReader({d27ServiceReader:()=>d27Service,subjectReader,d11Repository}):null),
         sourceReader:d14SourceReader,
         randomUUID,
       })
