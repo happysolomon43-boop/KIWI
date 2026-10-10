@@ -88,6 +88,8 @@ async function main(){await harness(async h=>{
   // Delivery 7: exercise real next-Class history HTTP routes and the released
   // student history renderer against this previous, now closed, PostgreSQL Class.
   // An earlier rendered portion stays an exact public record, not mastery.
+  const reconciled=await h.continuity.latestRecord(h.ids.studentId,h.ids.classId);
+  assert.ok(reconciled.record_id,'The real D11 closure must have an immutable reconciled Class record before next-Class history is queried.');
   const nextClass=h.ids.classId+'-browser-next';
   await h.query("insert into public.teaching_classes(class_id,student_id,course_id,scheduled_start_at,scheduled_end_at,timezone,source_timetable_version_id) values($1,$2,$3,clock_timestamp()+interval '1 day',clock_timestamp()+interval '1 day 1 hour','UTC',$4)",[nextClass,h.ids.studentId,h.ids.course,h.ids.timetable]);
   const cross=await context.newPage();await cross.goto(url+'/?review=1');
