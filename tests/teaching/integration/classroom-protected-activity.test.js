@@ -29,3 +29,14 @@ test('protected interruption hides conversation and chapter and rejects Notebook
  const snapshot=await h.read();assert.equal(snapshot.chapter_ref,null);assert.deepEqual(snapshot.conversation,[]);await assert.rejects(h.repository.read(h.ids.studentId,h.ids.classId),{code:'CLASSROOM_PROTECTED_ACTIVITY'});
  await assert.rejects(h.d14Repository.addNotebook({studentId:h.ids.studentId,classId:h.ids.classId,content:'Must not be accepted here',sourceKind:'PERSONAL',idempotencyKey:randomUUID()}),{code:'TEACHING_D14_NOTEBOOK_RESTRICTED'});assert.equal((await h.d14Repository.notebook(h.ids.studentId,h.ids.classId)).length,0);
 }));
+
+test('formal owner starts its locked fixture package and D18 returns a private-safe response workspace',{skip},async()=>harness(async h=>{
+ const fixture=await require('../fixtures/classroom-protected-assessment').assessmentFixture(h);
+ const repository=require('../../../teaching/repositories/d17-assessments').createD17AssessmentRepository({...h,randomUUID});
+ const service=require('../../../teaching/d17/service').createD17Service({repository,randomUUID});
+ const d18=require('../../../teaching/d18/service').createD18AssessmentShellService({repository});const user={id:h.ids.studentId};
+ const input={packageId:fixture.packageId,deviceId:'native-fixture-device',idempotencyKey:randomUUID()};
+ const first=await service.startAttempt(user,fixture.assessmentId,input),retry=await service.startAttempt(user,fixture.assessmentId,input);
+ assert.equal(retry.attempt.assessment_attempt_id,first.attempt.assessment_attempt_id);assert.equal(new Date(retry.expiresAt).toISOString(),new Date(first.expiresAt).toISOString());
+ const workspace=await d18.getAttemptWorkspace(user,first.attempt.assessment_attempt_id,{deviceId:input.deviceId});assert.equal(workspace.items.length,1);assert.equal(workspace.items[0].renderer.kind,'short');assert.equal(workspace.attempt.device_authority,'MATCH');assert.equal(JSON.stringify(workspace).includes('PRIVATE_FIXTURE'),false);
+}));
