@@ -247,7 +247,14 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
       await repository.saveNote({studentId,classId,state,stage,binding,validation:{blocked:reason},closureFactId:closure?.closure_fact_id||null,idempotencyKey:`d14-note-held:${stage}:${binding.lessonPlanRef}:${binding.closureRef||'pre'}`});
       return {state,reason,published:false};
     }
-    const [cardSet,sourceSnapshot]=await Promise.all([cardSetReader({studentId,classId,stage}),sourceReader({studentId,classId})]);
+    let cardSet,sourceSnapshot;
+    try{[cardSet,sourceSnapshot]=await Promise.all([cardSetReader({studentId,classId,stage}),sourceReader({studentId,classId})]);}
+    catch(error){
+      if(/^TEACHING_D27_CLASS_CARD_(SET_NOT_ADOPTED|SET_STALE|SOURCE_CHANGED|OWNER_UNAVAILABLE)$/.test(error?.code||'')||
+        error?.code==='TEACHING_D14_CARD_SET_CLASS_NOT_OWNED')
+        return {state:stage==='PRE_CLASS'?'ROUTE_HELD':'RECONCILIATION_HELD',reason:error.code,published:false};
+      throw error;
+    }
     if(!cardSet?.ref||!Array.isArray(cardSet.cards)||!sourceSnapshot?.ref||!Array.isArray(sourceSnapshot.spans))
       return {state:stage==='PRE_CLASS'?'ROUTE_HELD':'RECONCILIATION_HELD',reason:'VALIDATED_CARD_SET_OR_SOURCE_SNAPSHOT_REQUIRED',published:false};
     const planned=ctx.blueprint.planned_learning_unit_refs||[];
