@@ -2,6 +2,7 @@
 // D14 consumes only D27-owned, already-linked Study card references.
 // A raw subject card corpus must never become an implicit approved Class set.
 const {createHash}=require('node:crypto');
+const {assertUnprotectedPrivacy}=require('../d27/contracts');
 function fail(code){throw Object.assign(new Error(code),{code,status:409});}
 function createD27ClassStudyCardSetReader({d27ServiceReader,subjectReader,d11Repository}={}){
  if(typeof d27ServiceReader!=='function'||typeof subjectReader?.getCorpusForUser!=='function'||
@@ -30,6 +31,8 @@ function createD27ClassStudyCardSetReader({d27ServiceReader,subjectReader,d11Rep
    const version=card&&(card.updated_at||card.updatedAt||card.version||card.created_at||card.createdAt);
    if(!card||String(version)!==String(ref.referencedVersion)||!card.front_content&&!card.front||
     !card.back_content&&!card.back)fail('TEACHING_D27_CLASS_CARD_SOURCE_CHANGED');
+   if(card.protected===true||card.protectedAssessment===true||card.answerKey===true)fail('TEACHING_D27_CLASS_CARD_PROTECTED');
+   assertUnprotectedPrivacy(card.protectionClass||card.privacyClass||'C1');
    cards.push({cardId:String(ref.cardId),version:String(ref.referencedVersion),
     learningUnitId:String(ref.learningUnitId),knowledgeType:ref.knowledgeType||null,
     front:String(card.front_content||card.front),back:String(card.back_content||card.back),
