@@ -3,9 +3,10 @@ const {TEACHING_EVENTS}=require('../events/names');
 const {RECONCILIATION_DISPOSITIONS:R}=require('../runtime/constants');
 const {createClassroomPresentationRepository}=require('../repositories/classroom-presentation');
 const {createClassroomPresentationService}=require('./presentation-service');
-function createClassroomPresentationRuntime({query,withTransaction,randomUUID,d14Repository,eventStore,outboxStore,eventRuntime,publishedEvents,...options}={}){
+function createClassroomPresentationRuntime({query,withTransaction,randomUUID,d14Repository,eventStore,outboxStore,eventRuntime,publishedEvents,d11Repository,preparationIntelligence,...options}={}){
  const repository=createClassroomPresentationRepository({query,withTransaction,randomUUID,d14Repository,dueEventStore:eventStore,outboxStore});
- const service=createClassroomPresentationService({...options,repository});
+ const presenter=options.presenter||(preparationIntelligence&&options.requirementsReader?require('./presentation-intelligence').createClassroomPresentationIntelligence({intelligence:preparationIntelligence,d11Repository,requirementsReader:options.requirementsReader}):null);
+ const service=createClassroomPresentationService({...options,presenter,repository});
  if(!eventRuntime||!publishedEvents)throw new TypeError('Presentation requires the existing durable runtime');
  for(const type of [TEACHING_EVENTS.CLASSROOM_PORTION_RELEASE_DUE,TEACHING_EVENTS.CLASSROOM_DELIVERY_END_DUE])eventRuntime.register(type,{
   reconcile:async event=>{if(!event.payload?.student_id||!event.payload?.class_id)return {disposition:R.SUPERSEDED,reason:'CLASSROOM_EVENT_OWNER_MISSING'};return {disposition:R.ACTIONABLE};},

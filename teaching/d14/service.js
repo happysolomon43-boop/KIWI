@@ -127,6 +127,7 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
     };
     let ctx;
     try{ctx=await context(studentId,classId);}catch(error){return finish('CANCELLED','This Class is no longer available.');}
+    if(ctx.session?.classroom_engine==='CLASSROOM_V1')return finish('CANCELLED','Persistent classroom messages are not enabled for this session.');
     const mode=ctx.session?.instructional_substate;
     const active=ctx.session?.lifecycle_state==='ACTIVE'&&ctx.classRow?.lifecycle_state==='SCHEDULED'
       &&ctx.classRow?.course_lifecycle_state==='ACTIVE'&&ctx.classRow?.source_timetable_state==='APPROVED';

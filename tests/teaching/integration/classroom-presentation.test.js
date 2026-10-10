@@ -3,9 +3,9 @@ const test=require('node:test'),assert=require('node:assert/strict');const {rand
 const {integrationConfig,assertNonProductionDatabase,createIntegrationPool}=require('./test-db');
 const {fixture}=require('../fixtures/classroom-database');const f=require('../fixtures/classroom-remodel-academic');const {fixturePolicy}=require('../fixtures/classroom-presentation-policy');
 const {connectionString,projectRef,skipReason:skip}=integrationConfig('Classroom durable presentation');
-async function harness(run){assertNonProductionDatabase({connectionString,projectRef});const pool=createIntegrationPool(connectionString),client=await pool.connect();await client.query('BEGIN');let seq=0;
- const withTransaction=async fn=>{const name='presentation_'+(++seq);await client.query('SAVEPOINT '+name);try{const result=await fn(client);await client.query('RELEASE SAVEPOINT '+name);return result;}catch(error){await client.query('ROLLBACK TO SAVEPOINT '+name);await client.query('RELEASE SAVEPOINT '+name);throw error;}};
- const query=(...args)=>client.query(...args);
+async function harness(run,{concurrent=false}={}){assertNonProductionDatabase({connectionString,projectRef});const local=['localhost','127.0.0.1','::1'].includes(new URL(connectionString).hostname);const pool=new (require('pg').Pool)({connectionString,ssl:local?false:{rejectUnauthorized:false},max:concurrent?4:1}),client=await pool.connect();await client.query('BEGIN');let seq=0,committed=false;
+ const withTransaction=async fn=>{if(committed){const tx=await pool.connect();try{await tx.query('BEGIN');const result=await fn(tx);await tx.query('COMMIT');return result;}catch(error){await tx.query('ROLLBACK');throw error;}finally{tx.release();}}const name='presentation_'+(++seq);await client.query('SAVEPOINT '+name);try{const result=await fn(client);await client.query('RELEASE SAVEPOINT '+name);return result;}catch(error){await client.query('ROLLBACK TO SAVEPOINT '+name);await client.query('RELEASE SAVEPOINT '+name);throw error;}};
+ const query=(...args)=>committed?pool.query(...args):client.query(...args);
  try{const ids=await fixture(client);await query("update public.teaching_classes set scheduled_start_at=now()-interval '1 minute',scheduled_end_at=now()+interval '1 hour' where class_id=$1",[ids.classId]);
   const academic=require('../../../teaching/repositories/classroom-academic-artifacts').createClassroomAcademicRepository({query,withTransaction,randomUUID});
   const base={...ids,expectedScheduleVersion:1,expectedPlanVersion:1};const artifacts={};
@@ -21,8 +21,9 @@ async function harness(run){assertNonProductionDatabase({connectionString,projec
   const read=()=>repository.read(ids.studentId,ids.classId,{snapshot:true});
   const args=(snapshot,extra)=>({schemaVersion:'classroom-domain.v1',sessionId,operationKey:randomUUID(),expectedControllerVersion:snapshot.controller_version,expectedDeliveryVersion:snapshot.delivery_version,deliveryEpoch:snapshot.delivery_epoch,controlEpoch:snapshot.control_epoch,clientId:'first',...extra});
   const accept=async output=>repository.acceptSequence({studentId:ids.studentId,classId:ids.classId,operationKey:randomUUID(),output:output||f.opening(),directive:f.directive(),expected:await repository.capture(ids.studentId,ids.classId),types:['text']});
+  if(concurrent){await client.query('COMMIT');committed=true;}
   await run({ids,sessionId,query,withTransaction,repository,read,args,accept,d14Repository,dueEventStore});
- }finally{await client.query('ROLLBACK');client.release();await pool.end();}}
+ }finally{if(!committed)await client.query('ROLLBACK');client.release();await pool.end();}}
 test('presentation tables enforce service-only RLS and immutable private content',{skip},async()=>harness(async({query,repository,accept})=>{
  const tables=(await query("select c.relname,c.relrowsecurity,has_table_privilege('authenticated',c.oid,'SELECT') browser_read from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname in ('teaching_classroom_delivery','teaching_classroom_sequences','teaching_classroom_portions','teaching_classroom_conversation','teaching_classroom_delivery_receipts','teaching_classroom_delivery_commands')")).rows;assert.equal(tables.length,6);assert.ok(tables.every(t=>t.relrowsecurity&&!t.browser_read));await accept();await assert.rejects(()=>repository.command('other','missing',{}));
 }));
@@ -58,4 +59,28 @@ test('protected transition fences generation, clears public history and invalida
 test('paused authoritative end invalidates teaching without changing D11 lifecycle',{skip},async()=>harness(async h=>{
  await h.accept();const claim=await h.repository.command(h.ids.studentId,h.ids.classId,h.args(await h.read(),{intent:'claim'}));await h.repository.command(h.ids.studentId,h.ids.classId,h.args(await h.read(),{intent:'pause',leaseToken:claim.leaseToken}));
  await h.query("update public.teaching_classes set scheduled_end_at=clock_timestamp()-interval '1 second' where class_id=$1",[h.ids.classId]);const snapshot=await h.read();assert.equal(snapshot.delivery_state,'CLOSING');assert.equal(snapshot.capabilities.presentation,false);assert.equal((await h.query('select lifecycle_state from public.teaching_class_sessions where class_session_id=$1',[h.sessionId])).rows[0].lifecycle_state,'ACTIVE');
+}));
+test('independent PostgreSQL transactions serialize competing releases and duplicate receipts',{skip},async()=>harness(async h=>{
+ await h.accept();const claim=await h.repository.command(h.ids.studentId,h.ids.classId,h.args(await h.read(),{intent:'claim'}));
+ const results=await Promise.all([h.repository.release(h.ids.studentId,h.ids.classId),h.repository.release(h.ids.studentId,h.ids.classId)]);assert.equal(results.filter(r=>r.released).length,1);
+ const first=results.find(r=>r.released),snapshot=await h.read(),input=h.args(snapshot,{leaseToken:claim.leaseToken,portionId:first.portionId,renderState:'accessible_ready',active:true,representationReady:true,readyAssetIds:[]});
+ const receipts=await Promise.all([h.repository.receipt(h.ids.studentId,h.ids.classId,input),h.repository.receipt(h.ids.studentId,h.ids.classId,input)]);assert.equal(receipts.filter(r=>r.replay).length,1);
+ assert.equal((await h.query('select count(*)::int n from public.teaching_classroom_delivery_receipts where session_id=$1',[h.sessionId])).rows[0].n,1);assert.equal((await h.query('select count(*)::int n from public.teaching_teacher_communications where class_session_id=$1',[h.sessionId])).rows[0].n,1);
+ // This uniquely named committed fixture is retained in CI's disposable database;
+ // immutable provenance is never deleted or weakened for test cleanup.
+},{concurrent:true}));
+test('expired/hidden clients cannot confirm or progress; takeover restores uncertainty without resetting dwell',{skip},async()=>harness(async h=>{
+ await h.accept();const claim=await h.repository.command(h.ids.studentId,h.ids.classId,h.args(await h.read(),{intent:'claim'}));const first=await h.repository.release(h.ids.studentId,h.ids.classId);const snapshot=await h.read(),input=h.args(snapshot,{leaseToken:claim.leaseToken,portionId:first.portionId,renderState:'accessible_ready',active:false,representationReady:true,readyAssetIds:[]});
+ await assert.rejects(()=>h.repository.receipt(h.ids.studentId,h.ids.classId,input),{code:'CLASSROOM_RENDER_NOT_READY'});assert.equal((await h.read()).position.last_render_confirmed,0);
+ await h.query("update public.teaching_classroom_delivery set lease_expires_at=clock_timestamp()-interval '1 second' where session_id=$1",[h.sessionId]);await assert.rejects(()=>h.repository.receipt(h.ids.studentId,h.ids.classId,{...input,active:true}),{code:'CLASSROOM_CLIENT_LEASE_STALE'});
+ const takeover=await h.repository.command(h.ids.studentId,h.ids.classId,h.args(await h.read(),{intent:'claim',clientId:'second'}));const recovered=h.args(await h.read(),{clientId:'second',leaseToken:takeover.leaseToken,portionId:first.portionId,renderState:'accessible_ready',active:true,representationReady:true,readyAssetIds:[]});await h.repository.receipt(h.ids.studentId,h.ids.classId,recovered);assert.equal((await h.read()).position.last_render_confirmed,1);
+}));
+test('missing essential diagram holds publication; explicit text replacement has real Board anchors',{skip},async()=>harness(async h=>{
+ const expected=await h.repository.capture(h.ids.studentId,h.ids.classId),output=f.opening(),assetId='missing-essential-fixture';output.board=[{id:'board1',operation:'add',type:'diagram',content:{src:'/api/teaching/classes/'+encodeURIComponent(h.ids.classId)+'/classroom/assets/'+assetId,assetId,alt:'Force and acceleration directions'},target_ref:null,depends_on:[]}];output.interaction.portions[0].board_refs=['board1'];
+ await h.repository.acceptSequence({studentId:h.ids.studentId,classId:h.ids.classId,operationKey:'essential',output,directive:f.directive(),expected,types:['diagram'],assets:[assetId]});await h.repository.command(h.ids.studentId,h.ids.classId,h.args(await h.read(),{intent:'claim'}));assert.equal((await h.repository.release(h.ids.studentId,h.ids.classId)).reason,'ESSENTIAL_ASSET_NOT_READY');assert.equal((await h.read()).conversation.length,0);
+ await h.repository.invalidate(h.ids.studentId,h.ids.classId,'EXPLICIT_SOURCE_GROUNDED_TEXT_REPLACEMENT');await h.accept();assert.equal((await h.repository.release(h.ids.studentId,h.ids.classId)).released,true);const refs=(await h.read()).released_portions[0].content.board_refs;assert.equal(refs.length,1);assert.equal(refs[0].kind,'board');assert.equal((await h.query('select count(*)::int n from public.teaching_board_items where board_item_id=$1',[refs[0].id])).rows[0].n,1);
+}));
+test('private sequence, policy pin and committed Board identities reject mutation in PostgreSQL',{skip},async()=>harness(async h=>{
+ await h.accept();await assert.rejects(()=>h.withTransaction(tx=>tx.query("update public.teaching_classroom_sequences set payload='{}' where session_id=$1",[h.sessionId])),/IMMUTABLE/);await assert.rejects(()=>h.withTransaction(tx=>tx.query("update public.teaching_classroom_delivery set policy_version='changed' where session_id=$1",[h.sessionId])),/PIN_IMMUTABLE/);
+ await h.repository.command(h.ids.studentId,h.ids.classId,h.args(await h.read(),{intent:'claim'}));const first=await h.repository.release(h.ids.studentId,h.ids.classId);await assert.rejects(()=>h.withTransaction(tx=>tx.query("update public.teaching_classroom_portions set board_item_ids='[]',status='CONFIRMED' where portion_id=$1",[first.portionId])),/PUBLICATION_IMMUTABLE/);
 }));

@@ -12,6 +12,7 @@ function createClassroomPresentationService({repository,policyReader,openingDire
   if(body.schemaVersion!=='classroom-domain.v1')throw failure('CLASSROOM_CLIENT_SCHEMA_INCOMPATIBLE',422);
   if(receipt){if(typeof body.portionId!=='string'||!Array.isArray(body.readyAssetIds)||body.readyAssetIds.some(v=>typeof v!=='string'))throw failure('CLASSROOM_COMMAND_INVALID',422);}
   else if(!(lease?['claim','renew','takeover']:['pause','resume','pace']).includes(body.intent))throw failure('CLASSROOM_CONTROL_UNAVAILABLE',422);
+  if((receipt||!lease||body.intent==='renew')&&(typeof body.leaseToken!=='string'||!body.leaseToken))throw failure('CLASSROOM_CLIENT_LEASE_STALE');
   return body;
  }
  async function prepare({studentId,classId,pace}){
@@ -29,7 +30,12 @@ function createClassroomPresentationService({repository,policyReader,openingDire
   const expected=await repository.capture(studentId,classId);if(expected.held)return expected;
   const config=expected.policy;if(!require('./state-policy').capabilityReadiness(config,'generation').ready)throw failure('CLASSROOM_GENERATION_POLICY_MISSING',503);
   const prepared=await repository.preparationInputs(studentId,classId);if(prepared.held)return prepared;
-  const output=await presenter.generate({studentId,classId,operationKey,directive,chapter:prepared.chapter,guide:prepared.guide,authority:expected.authority,timeoutMs:value(config,'generationTimeoutMs'),retryLimit:value(config,'generationRetryLimit'),budget:value(config,'generationBudget')});
+  const abort=new AbortController();let timer;
+  const expired=new Promise(resolve=>{timer=setTimeout(()=>{abort.abort();resolve({held:true,reason:'CLASSROOM_GENERATION_OUTCOME_UNKNOWN'});},value(config,'generationTimeoutMs'));});
+  let output;
+  try{output=await Promise.race([presenter.generate({studentId,classId,operationKey,directive,chapter:prepared.chapter,guide:prepared.guide,authority:expected.authority,policy:config,signal:abort.signal,timeoutMs:value(config,'generationTimeoutMs'),retryLimit:value(config,'generationRetryLimit'),budget:value(config,'generationBudget')}),expired]);}
+  finally{clearTimeout(timer);}
+  if(output?.held)return {accepted:false,reason:output.reason};
   return repository.acceptSequence({studentId,classId,operationKey,directive,output,expected,types,assets});
  }
  return Object.freeze({prepare,prepareSpan,
