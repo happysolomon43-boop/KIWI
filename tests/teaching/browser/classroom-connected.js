@@ -9,7 +9,7 @@ const {projectChapter}=require('../../../teaching/classroom-remodel/contracts');
 async function main(){await harness(async h=>{
  const express=require('express'),app=express();app.use(express.json());app.use('/public',express.static(path.resolve(__dirname,'../../../public')));
  const service=require('../../../teaching/classroom-remodel/presentation-service').createClassroomPresentationService({repository:h.repository});
- const d11=require('../../../teaching/repositories/d11-lesson-controller').createD11LessonControllerRepository({query:h.query,withTransaction:h.withTransaction,randomUUID});
+ const d11=h.d11Repository;
  const d14=require('../../../teaching/d14/service').createD14Service({repository:h.d14Repository,d11Repository:d11,d11Service:{},d12Service:{},randomUUID});
  const router=express.Router();router.use((req,res,next)=>{if(req.headers.authorization!=='Bearer fixture-browser-owner')return res.sendStatus(401);req.user={id:h.ids.studentId};next();});
  require('../../../teaching/classroom-remodel/presentation-routes').mountClassroomPresentationRoutes(router,{service,reauthenticate:async req=>req.headers.authorization==='Bearer fixture-browser-owner'});
