@@ -26,4 +26,16 @@ DO $$ DECLARE name text; BEGIN
  EXECUTE format('CREATE POLICY classroom_task_handling_service_only ON public.%I TO service_role USING(true) WITH CHECK(true)',name);
  END LOOP;
 END $$;
+-- Immutable accepted turn content; only owner lifecycle, binding and outcome fields advance.
+CREATE FUNCTION public.teaching_classroom_task_turn_immutable() RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog AS $$
+BEGIN
+ IF TG_OP='DELETE' OR (to_jsonb(NEW)-'state'-'sequence_id'-'adjustment_state'-'adjustment_outcome') IS DISTINCT FROM (to_jsonb(OLD)-'state'-'sequence_id'-'adjustment_state'-'adjustment_outcome') THEN RAISE EXCEPTION 'CLASSROOM_TASK_TURN_CONTENT_IMMUTABLE'; END IF;
+ IF OLD.sequence_id IS NOT NULL AND NEW.sequence_id IS DISTINCT FROM OLD.sequence_id THEN RAISE EXCEPTION 'CLASSROOM_TASK_TURN_BINDING_IMMUTABLE'; END IF;
+ IF OLD.adjustment_state<>'PENDING' AND (NEW.adjustment_state,NEW.adjustment_outcome) IS DISTINCT FROM (OLD.adjustment_state,OLD.adjustment_outcome) THEN RAISE EXCEPTION 'CLASSROOM_TASK_ACTION_OUTCOME_IMMUTABLE'; END IF;
+ RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION public.teaching_classroom_task_turn_immutable() FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.teaching_classroom_task_turn_immutable() TO service_role;
+CREATE TRIGGER classroom_task_turn_immutable BEFORE UPDATE OR DELETE ON public.teaching_classroom_task_turns FOR EACH ROW EXECUTE FUNCTION public.teaching_classroom_task_turn_immutable();
+
 COMMIT;

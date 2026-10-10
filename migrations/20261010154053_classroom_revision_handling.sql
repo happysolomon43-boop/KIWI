@@ -57,4 +57,13 @@ BEGIN
  RAISE EXCEPTION 'CLASSROOM_DELIVERY_CONTENT_IMMUTABLE';
 END $$;
 
+CREATE FUNCTION public.teaching_classroom_revision_immutable() RETURNS trigger LANGUAGE plpgsql SET search_path=pg_catalog AS $$
+BEGIN
+ IF TG_OP='DELETE' OR (to_jsonb(NEW)-'state'-'sequence_id') IS DISTINCT FROM (to_jsonb(OLD)-'state'-'sequence_id') THEN RAISE EXCEPTION 'CLASSROOM_REVISION_CONTENT_IMMUTABLE'; END IF;
+ IF OLD.sequence_id IS NOT NULL AND NEW.sequence_id IS DISTINCT FROM OLD.sequence_id THEN RAISE EXCEPTION 'CLASSROOM_REVISION_BINDING_IMMUTABLE'; END IF;
+ RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION public.teaching_classroom_revision_immutable() FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.teaching_classroom_revision_immutable() TO service_role;
+CREATE TRIGGER classroom_revision_immutable BEFORE UPDATE OR DELETE ON public.teaching_classroom_revisions FOR EACH ROW EXECUTE FUNCTION public.teaching_classroom_revision_immutable();
 COMMIT;
