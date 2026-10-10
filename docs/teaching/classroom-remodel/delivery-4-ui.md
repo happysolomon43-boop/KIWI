@@ -34,6 +34,8 @@ Candidate composition and production session admission remain inactive. No conne
 
 ## Next action
 
-Inspect the current commit's CI and browser diagnostics, resolve failures, preserve a precise Delivery 4 checkpoint, and complete the remaining connected Board/history/recovery/accessibility matrix. Production activation remains held by the earlier delivery qualification and owner-adopted runtime policy gates.
+Continue from `delivery-4-checkpoint.v1.json`; complete exact protected-activity handoff and the remaining connected course-entry, recovery and manual accessibility qualification matrix. Production activation remains held by the earlier delivery qualification and owner-adopted runtime policy gates.
 
 Protected activity entry clears instructional projections and offers the existing Course Work or Assessments section. Assessment Start / Resume continues through the existing owner launch API and D18 target path. There is no authoritative active assignment/assessment identifier in the inspected D11 classroom context, so the candidate does not invent one or automatically launch a different activity. Exact active-activity handoff remains a qualification limitation.
+
+Observed source verification: `56005f36189f675571e6c8b1f298066fbb4b99bf`. Chromium passed actual owned authenticated visual loading, mixed Board/history/expansion, chapter and Board Notebook capture/retry, committed receipt, pause/pace, source focus, axe, mobile reflow, two-tab fencing, reload deadline preservation, actual D11-closed historical non-mutation and protected clearing. These are synthetic academic/identity fixtures, not live-provider or deployed-account evidence.

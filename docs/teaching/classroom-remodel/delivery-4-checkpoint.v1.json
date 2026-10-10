@@ -1,0 +1,138 @@
+{
+  "version": "classroom-remodel-delivery-checkpoint.v1",
+  "recordedAt": "2026-10-10",
+  "delivery": 4,
+  "branch": "feat/classroom-remodel-delivery-4",
+  "implementationCommit": "56005f36189f675571e6c8b1f298066fbb4b99bf",
+  "testedTree": "ce0e2cbeea9a026578476eb3ab07addfae570f80",
+  "pr": "https://github.com/happysolomon43-boop/KIWI/pull/332",
+  "prState": "OPEN_DRAFT",
+  "baseBranch": "feat/classroom-remodel-delivery-3",
+  "acceptance": "IMPLEMENTED_CANDIDATE_ACCEPTANCE_HELD",
+  "implemented": [
+    "Persistent conversation, desktop resizable complete chapter and independent mobile reading views",
+    "Stable committed event and source-element navigation, scroll/focus preservation and read-only history",
+    "Backend-authorized presentation controls, takeover fencing and render-readiness receipts",
+    "Actual allowlisted Board renderers, authenticated owned assets, expansion/history and public metadata projection",
+    "Idempotent owned versioned Notebook references through existing D14 persistence",
+    "Composer shell disabled until Delivery 5; task participation disabled until Delivery 6",
+    "Protected transitions clear content; existing Work/Assessments entry offered without inventing activity identity"
+  ],
+  "changedFiles": [
+    ".github/workflows/classroom-connected-browser.yml",
+    ".github/workflows/classroom-remodel-foundation.yml",
+    "docs/teaching/classroom-remodel/delivery-4-ui.md",
+    "docs/teaching/classroom-remodel/migration-inventory.v1.json",
+    "migrations/20261010082135_classroom_notebook_references.sql",
+    "public/classroom/classroom-view.js",
+    "public/classroom/package.json",
+    "public/classroom/reading-tools.js",
+    "public/classroom/renderers.js",
+    "public/classroom/session-client.js",
+    "public/teaching-classroom.css",
+    "public/teaching-classroom.js",
+    "scripts/setup-teaching-integration-db.js",
+    "teaching/classroom-remodel/contracts.js",
+    "teaching/d14/board.js",
+    "teaching/d14/service.js",
+    "teaching/repositories/classroom-presentation.js",
+    "teaching/repositories/d14-classroom.js",
+    "tests/teaching/browser/classroom-connected.js",
+    "tests/teaching/fixtures/classroom-presentation-database.js",
+    "tests/teaching/integration/classroom-presentation.test.js",
+    "tests/teaching/unit/classroom-presentation-transport.test.js",
+    "tests/teaching/unit/classroom-session-client.test.js",
+    "tests/teaching/unit/d14-classroom.test.js"
+  ],
+  "migrations": {
+    "authored": [
+      "migrations/20261010082135_classroom_notebook_references.sql"
+    ],
+    "sha256": "3e95a3c0d3e7aea4bbd040a6c8ba8e8d06c28cc375da7ab01f2cbb9b79a89a83",
+    "productionApplied": [],
+    "integrationProjectApplied": []
+  },
+  "effectiveVersions": {
+    "engine": "CLASSROOM_V1 inactive",
+    "contracts": "classroom-contracts.v1",
+    "domain": "classroom-domain.v1",
+    "wire": "classroom-presentation-wire.v1",
+    "boardProjection": "d14.board-public.v1",
+    "registry": "1.3 active unchanged; compiled SHA pinned per session",
+    "promptManifest": "1.4 active unchanged",
+    "candidateRegistration": "CANDIDATE_REGISTERED_NOT_FROZEN",
+    "policy": "Owner-adopted policy required; synthetic fixture policy is not production adoption"
+  },
+  "validation": {
+    "localUnitAndAI": {
+      "tests": 1679,
+      "pass": 1679,
+      "fail": 0,
+      "skip": 0
+    },
+    "localWithIntegrationWithoutDatabase": {
+      "tests": 1785,
+      "pass": 1700,
+      "fail": 0,
+      "skip": 85,
+      "limit": "Database cases skipped locally; use native CI evidence separately"
+    },
+    "webBuild": "PASS",
+    "foundationIntegrity": "PASS",
+    "currentSourceCI": {
+      "commit": "56005f36189f675571e6c8b1f298066fbb4b99bf",
+      "checks": 47,
+      "passed": 47,
+      "failed": 0
+    },
+    "priorNativeDatabase": {
+      "commit": "1a0e54be7cb1486b6f63f2da100648c21b29f0a7",
+      "job": 114181673411,
+      "tests": 106,
+      "pass": 106,
+      "fail": 0,
+      "skip": 0,
+      "evidenceKind": "OBSERVED_NATIVE_POSTGRES_SYNTHETIC_FIXTURES"
+    },
+    "browser": {
+      "job": 114181857499,
+      "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/38041278918/job/114181857499",
+      "status": "PASS",
+      "evidenceKind": "OBSERVED_CHROMIUM_CONNECTED_API_NATIVE_POSTGRES_SYNTHETIC_FIXTURES",
+      "manualScreenReader": false,
+      "liveAccount": false,
+      "liveProvider": false
+    },
+    "liveProvider": "NOT_OBSERVED",
+    "deployedBehavior": "NO_NEW_DEPLOYMENT",
+    "manualScreenReaderAndMobileKeyboard": "NOT_OBSERVED",
+    "databaseCI": {
+      "job": 114181857283,
+      "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/38041278878/job/114181857283",
+      "tests": 106,
+      "pass": 106,
+      "fail": 0,
+      "skip": 0,
+      "evidenceKind": "OBSERVED_NATIVE_POSTGRES_SYNTHETIC_FIXTURES"
+    }
+  },
+  "qualification": "All 44 scenarios remain NOT_QUALIFIED; supporting fixture checks do not qualify live providers or production",
+  "remaining": [
+    "Exact active Classwork/Assessment handoff and connected actual-owner response qualification",
+    "Manual screen-reader/mobile keyboard review, complete asset cancellation/offline/lost-ack browser matrix and course/Notebook-sheet matrix",
+    "D1/D2 provider, independent reviewer and C4 human academic evidence",
+    "Owner-adopted preparation/presentation policy and deployed session/proxy qualification"
+  ],
+  "compatibility": {
+    "legacy": "Existing sessions and active bindings retained; additive Notebook references preserve old readers",
+    "remodeled": "Optional composition inactive by default; no production admission",
+    "rollback": "Code remains inactive and additive history retained; consequential production rollback not exercised"
+  },
+  "infrastructure": {
+    "newInfrastructure": "NONE",
+    "connectedMigrations": "NONE",
+    "deployment": "NONE",
+    "bindingRetirement": "NONE"
+  },
+  "nextUnfinishedAction": "Qualify exact protected-activity handoff through the authoritative active Work/Assessment binding and actual owner response shell; finish course/Notebook-sheet, offline/asset-cancellation and manual accessibility coverage. Activation remains held on D1/D2 provider/reviewer/C4 evidence and owner policy adoption. Delivery 5 composer remains disabled."
+}
