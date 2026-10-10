@@ -86,7 +86,7 @@ export function mountClassroomView({
   const skip = node("a", "Skip to conversation", "cr-skip");
   skip.href = "#cr-conversation";
   header.prepend(skip);
-  const composer = createComposerShell(reviewOnly);
+  const composer = createComposerShell(reviewOnly,{send:input=>store.message(input),context:()=>{const s=store?.snapshot;return s?.chapter_ref&&s.position.resume_anchor?{...s.chapter_ref,kind:"source_element",anchor:s.position.resume_anchor}:null;}});
   conversation.append(feed, composer);
   main.append(conversation, chapter);
   root.append(header, main);
@@ -501,6 +501,7 @@ export function mountClassroomView({
       thisProtected();
       return;
     }
+    composer.update(s);
     updateControls(s);
     displayClock();
     status.textContent =
@@ -656,7 +657,8 @@ export function mountClassroomView({
       closed = true;
       version++;
       boardDialogs.close();
-      viewAbort.abort();
+      composer.close();
+    viewAbort.abort();
       clearInterval(clockTimer);
       store.close();
       mobile.removeEventListener("change", syncViews);

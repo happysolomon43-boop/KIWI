@@ -237,6 +237,14 @@ export function createSessionClient({
         renewal();
       }
     },
+    async message(input) {
+      if(reviewOnly||closed||!snapshot?.messages?.enabled)throw Error("CLASSROOM_MESSAGE_ROUTE_HELD");
+      const result=await api(base+"messages",{method:"POST",body:input,signal:abort.signal});
+      if(!result.accepted||!result.message_id)throw Error("CLASSROOM_MESSAGE_ACCEPTANCE_NOT_CONFIRMED");
+      // Receipt is already committed; a failed refresh cannot undo acceptance.
+      await refresh().catch(error=>onError?.(error));
+      return result;
+    },
     lease: () => mutate("client-lease", "claim"),
     takeover: () => mutate("client-lease", "takeover"),
     control: (intent, extra) => mutate("presentation-controls", intent, extra),

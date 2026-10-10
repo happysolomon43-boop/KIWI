@@ -1,26 +1,36 @@
 import { node, action } from "./renderers.js";
-export function createComposerShell(reviewOnly) {
-  const form = node("form", null, "cr-composer"),
-    label = node("label", "Message your teacher"),
-    draft = node("textarea");
-  draft.name = "classroom-message";
-  draft.id = "cr-message";
-  draft.autocomplete = "off";
-  draft.placeholder = "Ask about the current passage…";
-  draft.rows = 2;
-  label.htmlFor = draft.id;
-  draft.disabled = true;
-  const availability = node(
-    "p",
-    reviewOnly
-      ? "Past class: read-only review."
-      : "Messages become available after message admission is enabled for this session.",
-    "cr-muted",
-  );
-  availability.id = "cr-message-availability";
-  draft.setAttribute("aria-describedby", availability.id);
-  form.append(label, draft, availability);
-  form.addEventListener("submit", (e) => e.preventDefault());
+export function createComposerShell(reviewOnly, { send, context = () => null } = {}) {
+  const form=node("form",null,"cr-composer"),label=node("label","Message your teacher"),draft=node("textarea"),availability=node("p",reviewOnly?"Past class: read-only review.":"Messages become available after message admission is enabled for this session.","cr-muted"),submit=action("Send message",()=>{}),outcome=node("p",null,"cr-message-outcome"),questions=node("section",null,"cr-question-queue"),lane=node("select");
+  draft.name="classroom-message";draft.id="cr-message";draft.autocomplete="off";draft.placeholder="Ask about the current passage…";draft.rows=2;draft.disabled=true;label.htmlFor=draft.id;
+  availability.id="cr-message-availability";draft.setAttribute("aria-describedby",availability.id);outcome.setAttribute("role","status");questions.setAttribute("aria-label","Your saved questions");lane.setAttribute("aria-label","Message purpose");submit.type="submit";submit.disabled=true;
+  form.append(label,draft,lane,availability,submit,outcome,questions);
+  let snapshot=null,pending=null,busy=false,storageKey=null,restored=false,closed=false;
+  function stash(){if(!storageKey||!snapshot?.messages?.draft_retention_ms)return;try{if(!draft.value&&!pending)sessionStorage.removeItem(storageKey);else sessionStorage.setItem(storageKey,JSON.stringify({text:draft.value,pending,lane:lane.value,expiresAt:Date.now()+snapshot.messages.draft_retention_ms}));}catch{}}
+  draft.addEventListener("input",stash);lane.addEventListener("change",()=>{if(!pending)stash();});
+  function state(){const enabled=!reviewOnly&&snapshot?.messages?.enabled;draft.disabled=!enabled;draft.readOnly=busy||!!pending;lane.disabled=busy||!!pending;submit.disabled=!enabled||busy||(!pending&&lane.value==="conversation"&&snapshot.messages.remaining===0);submit.textContent=pending?"Check message acceptance":"Send message";}
+  form.update=(next)=>{
+    if(closed)return;
+    if(snapshot&&snapshot.session_id!==next.session_id){stash();pending=null;draft.value="";restored=false;}
+    snapshot=next;storageKey="kiwi-classroom-draft.v1:"+next.session_id;
+    const selected=lane.value;lane.replaceChildren();const ordinary=node("option","Question or contribution");ordinary.value="conversation";lane.append(ordinary);
+    for(const q of next.messages?.questions||[])if(q.clarification_requested){const option=node("option","Clarify saved question: "+q.text.slice(0,70));option.value=q.id;lane.append(option);}
+    lane.value=[...lane.options].some(o=>o.value===selected)?selected:"conversation";
+    if(!restored&&next.messages?.enabled){restored=true;try{const saved=JSON.parse(sessionStorage.getItem(storageKey)||"null");if(saved&&saved.expiresAt>Date.now()){draft.value=saved.text||"";pending=saved.pending||null;if([...lane.options].some(o=>o.value===saved.lane))lane.value=saved.lane;if(pending)outcome.textContent="A previous send has an uncertain outcome. Check acceptance using the same message.";}else sessionStorage.removeItem(storageKey);}catch{}}
+    availability.textContent=reviewOnly?"Past class: read-only review.":next.messages?.enabled?`${next.messages.remaining} conversational messages remaining. Requested clarification and permitted support controls remain available.`:"Messages are unavailable for this session.";
+    questions.replaceChildren();for(const q of next.messages?.questions||[]){const row=node("p",q.text+" — "+q.state+" · "+q.handling);row.dataset.messageId=q.id;questions.append(row);}
+    state();
+  };
+  form.addEventListener("submit",async e=>{
+    e.preventDefault();if(busy||closed||!snapshot?.messages?.enabled||reviewOnly)return;
+    if(!draft.value.trim()){outcome.textContent="Write a message before sending.";return;}
+    if(new TextEncoder().encode(draft.value).length>snapshot.messages.max_bytes){outcome.textContent="This message exceeds the session message-size limit.";return;}
+    if(!pending){const clarification=lane.value!=="conversation";pending={schemaVersion:"classroom-messages.v1",sessionId:snapshot.session_id,operationKey:crypto.randomUUID(),content:draft.value,intent:clarification?"clarification":"conversation",sourceRef:context(),replyTo:clarification?lane.value:null};}
+    stash();busy=true;state();outcome.textContent="Sending…";
+    try{const receipt=await send(pending);if(closed)return;outcome.textContent="Accepted and saved. "+receipt.remaining+" conversational messages remaining.";pending=null;draft.value="";stash();}
+    catch(error){if(closed)return;if(error.status&&error.status<500){pending=null;outcome.textContent="Not accepted: "+(error.code||error.message)+". Your draft is preserved.";}else outcome.textContent="Acceptance is not confirmed. Check again with the same message; it will not be charged twice.";stash();}
+    finally{busy=false;if(!closed)state();}
+  });
+  form.close=()=>{stash();closed=true;};
   return form;
 }
 export function createNotebookCapture({ api, classId, status, signal }) {

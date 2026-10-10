@@ -760,7 +760,8 @@
         "candidateFamily": "TPF-21",
         "candidateModes": [
           "prepare_guidance",
-          "coordinate_lesson"
+          "coordinate_lesson",
+          "handle_message"
         ],
         "retirementAuthorized": false
       },
@@ -2231,5 +2232,5 @@
       "retiredActiveBindings": 0
     }
   },
-  "sha256": "8a0d5aedf1eb177f3c5a2e85f8c70c6df2f92b1921dc175a37626b576335a759"
+  "sha256": "3d7bf61450e13335bddd12bffcef2f0df65fe18d5b8e526ac8cfe3f630d6835b"
 }

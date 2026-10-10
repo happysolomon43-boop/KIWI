@@ -163,7 +163,8 @@
       "id": "teaching.pedagogy.subject_sensitive_instructional_strategy",
       "modes": [
         "prepare_guidance",
-        "coordinate_lesson"
+        "coordinate_lesson",
+        "handle_message"
       ],
       "owner": "Pedagogy Engine",
       "authorityCeiling": "T2"
