@@ -3,6 +3,7 @@ const {hash}=require('./academic-artifacts');
 const {getModeSchema}=require('./mode-schemas');
 const {validateDirective}=require('./contracts');
 const {value}=require('./presentation-policy');
+const {getCapability}=require('../capability-registry');
 const held=reason=>Object.freeze({held:true,prepared:false,closureCommitted:false,reason});
 function beforeEnd(snapshot,context,policy){
  const now=Date.parse(snapshot?.server_time),end=Date.parse(snapshot?.clocks?.class_end_at);
@@ -28,11 +29,20 @@ function closingSource(snapshot,window){
    claimRestrictions:{publicationNotLearning:true,renderingNotUnderstanding:true,
      unresolvedWorkNotCancelled:true,noUnapprovedFollowUp:true,unconfirmedPortionsNotTaught:true}});
 }
+function activeRegisteredClosing(binding){
+ try{
+  const effective=getCapability(binding?.capabilityId);
+  return effective.prompt_family_id==='TPF-21'&&
+    effective.authoritative_owner_boundary==='D11/Pedagogy'&&
+    effective.execution_class==='DIRECT-AI';
+ }catch{return false;}
+}
 async function prepareBeforeEnd({studentId,classId,event,repository,service,d11Repository,closing}={}){
  const adopted=closing?.qualified===true&&closing?.binding?.familyId==='TPF-21'&&
   closing.binding.mode==='close_class'&&
   closing.binding.capabilityId==='teaching.lesson.classroom_closure_coordination'&&
   closing.binding.runtimeAuthorized===true&&closing.binding.owner==='D11/Pedagogy'&&
+  activeRegisteredClosing(closing.binding)&&
   typeof closing.coordinator?.closeClass==='function'&&
   typeof closing.reviewer?.accept==='function'&&typeof closing.directiveReader==='function';
  if(!adopted)return held('CLASSROOM_CLOSE_CLASS_GOVERNANCE_OR_REVIEW_NOT_ADOPTED');
@@ -73,4 +83,4 @@ async function prepareBeforeEnd({studentId,classId,event,repository,service,d11R
  return {prepared:true,held:false,closureCommitted:false,sourceHash:inputHash,
    reviewRef:review.ownerRef,scheduledFollowUp:false,noAutomaticOvertime:true};
 }
-module.exports={beforeEnd,closingSource,prepareBeforeEnd};
+module.exports={beforeEnd,closingSource,activeRegisteredClosing,prepareBeforeEnd};
