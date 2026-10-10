@@ -27,15 +27,28 @@ function createClassroomTaskService({repository,coordinator,reviewer,presentatio
  async function prepareHandling({studentId,classId,taskId,requestId}){
   const ready=await repository.handlingContext(studentId,classId,{taskId,requestId});if(ready.held)return ready;
   if(!requestId&&!ready.job)return {held:true};
-  if(typeof turnProvider?.generate!=='function'||typeof turnReviewer?.accept!=='function')throw failure('CLASSROOM_TASK_HANDLING_ROUTE_HELD',503);
-  const operationKey=requestId?'task-support:'+requestId:'task-feedback:'+ready.job.admission_id;
+  if(typeof turnProvider?.generate!=='function'||typeof turnReviewer?.accept!=='function'||typeof turnReviewer?.select!=='function')throw failure('CLASSROOM_TASK_HANDLING_ROUTE_HELD',503);
+  const operationKey=(requestId?'task-support:'+requestId:'task-feedback:'+ready.job.admission_id)+':epoch:'+ready.expected.deliveryEpoch;
+  const previous=await repository.loadTurn(studentId,classId,operationKey);if(previous)return previous.state==='PREPARED'?pump({studentId,classId}):{accepted:true,replay:true,turnId:previous.turn_id};
   const kind=requestId?(ready.request.kind==='help'?'assistance':'clarification'):'feedback';
   const acceptedEvaluation=ready.job?{receipt_id:hash(ready.job.acceptance_receipt),task_ref:ready.task.id,criterion_ref:'criterion:'+ready.task.private.criterion_ref.id+'@'+ready.task.private.criterion_ref.version,source_version:ready.job.context_snapshot.sources.chapter.version,assistance_version:hash(ready.job.context_snapshot.exposure||ready.job.context_snapshot.response.assistance_context),state_reference:ready.job.context_snapshot.design.input_state_reference,accepted:true}:null;
-  // Presenter receives public task and selected findings only. Private criteria,
-  // expected answers and full evaluation stay with the evaluator/reviewer.
-  const generated=await turnProvider.generate({studentId,classId,kind,operationKey,publicTask:ready.publicTask,assistanceCeiling:ready.task.assistance_ceiling,request:ready.request?{kind:ready.request.kind,text:ready.request.text}:null,selectedAction:ready.job?.selected_action||null,feedbackPoints:ready.job?.context_snapshot?ready.job.selected_action?.feedback_points||[]:[],acceptedEvaluation,chapter:ready.sources.chapter,expected:ready.expected,policy:ready.policy});
-  const receipt=await turnReviewer.accept({studentId,classId,kind,task:ready.task,generated,expected:ready.expected,evaluationId:ready.job?.evaluation_id||null,acceptedEvaluation});
-  await repository.acceptTurn({studentId,classId,taskId:ready.task.id,operationKey,kind,output:generated.output,directive:generated.directive,assistanceLevel:generated.assistanceLevel,receipt,expected:ready.expected});
+  const controller=new AbortController();let timer;
+  const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>{controller.abort();reject(failure('CLASSROOM_TASK_HANDLING_TIMEOUT',503));},value(ready.policy,'generationTimeoutMs'));});
+  const run=async()=>{
+   // The independent owner selects public-safe findings before Presenter sees them.
+   // Full evaluation and private criteria remain on this side of the boundary.
+   const selection=await turnReviewer.select({studentId,classId,kind,task:ready.task,job:ready.job,request:ready.request,expected:ready.expected,signal:controller.signal});
+   const publicContent=selection?.publicContent,selectionReceipt=selection?.receipt;
+   if(!publicContent||!Array.isArray(publicContent.feedbackPoints)||!selectionReceipt?.accepted||!selectionReceipt.independent||!selectionReceipt.ownerRef||!selectionReceipt.executionId||selectionReceipt.contentHash!==hash(publicContent)||selectionReceipt.authorityHash!==hash(ready.expected.authority)||selectionReceipt.taskId!==ready.task.id||selectionReceipt.evaluationId!==(ready.job?.evaluation_id||null))throw failure('CLASSROOM_TASK_PUBLIC_SELECTION_REQUIRED',503);
+   const selected=ready.job?.selected_action;
+   const selectedAction=selected?Object.fromEntries(['action','task_ref','assistance_ceiling','current_assistance_state','inference_ceiling','new_task_required','reason'].filter(k=>k in selected).map(k=>[k,selected[k]])):null;
+   const generated=await turnProvider.generate({studentId,classId,kind,operationKey,publicTask:ready.publicTask,assistanceCeiling:ready.task.assistance_ceiling,request:ready.request?{kind:ready.request.kind,text:ready.request.text}:null,selectedAction,feedbackPoints:publicContent.feedbackPoints,acceptedEvaluation,chapter:ready.sources.chapter,expected:ready.expected,policy:ready.policy,signal:controller.signal});
+   const receipt=await turnReviewer.accept({studentId,classId,kind,task:ready.task,generated,publicSelection:selection,expected:ready.expected,evaluationId:ready.job?.evaluation_id||null,acceptedEvaluation,signal:controller.signal});
+   if(controller.signal.aborted)throw failure('CLASSROOM_TASK_HANDLING_TIMEOUT',503);
+   await repository.acceptTurn({studentId,classId,taskId:ready.task.id,operationKey,kind,output:generated.output,directive:generated.directive,assistanceLevel:generated.assistanceLevel,receipt:{...receipt,publicSelectionReceipt:selectionReceipt},expected:ready.expected});
+  };
+  try{await Promise.race([run(),timeout]);}finally{clearTimeout(timer);}
+
   return pump({studentId,classId});
  }
  async function pump({studentId,classId}){
