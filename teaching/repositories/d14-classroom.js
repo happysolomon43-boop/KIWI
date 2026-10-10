@@ -242,7 +242,7 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
       return {...rows[0],help_request_id:helpId};
     });
   }
-  async function latestNote(studentId,classId){const {rows}=await query('select * from public.teaching_class_study_note_versions where student_id=$1 and class_id=$2 order by version_no desc limit 1',[studentId,classId]);return rows[0]||null;}
+  async function latestNote(studentId,classId,stage=null){if(stage!==null&&!['PRE_CLASS','POST_CLASS'].includes(stage))throw new TypeError('Study-note stage is invalid.');const {rows}=await query('select * from public.teaching_class_study_note_versions where student_id=$1 and class_id=$2 and ($3::text is null or stage=$3) order by version_no desc limit 1',[studentId,classId,stage]);return rows[0]||null;}
   async function saveNote({studentId,classId,state,stage,binding,payload={},validation={},closureFactId=null,idempotencyKey}){
     return withTransaction(async(tx)=>{
       if(binding.classroomRecordHash)await d11Repository.assertClassroomReconciliationUsing(tx,studentId,classId,binding.classroomRecordHash);
