@@ -99,7 +99,7 @@ function createClassroomMessageRepository({presentationRepository,randomUUID,qua
  async function failed(studentId,classId,claim,code){return lock(studentId,classId,async(tx,a,d)=>{const q=(await tx.query('select * from public.teaching_classroom_message_queue where session_id=$1 and message_id=$2 for update',[d.session_id,claim.messageId])).rows[0];if(q?.lease_token===claim.token)await failUsing(tx,a,d,q,code);return {pending:true};});}
  async function boundaryUsing(tx,a,d){
   if(!await enabled(tx,a,d))return null;
-  const last=(await tx.query('select payload from public.teaching_classroom_portions where session_id=$1 and ordinal=$2 and confirmed_at is not null',[d.session_id,d.last_published])).rows[0];
+  const last=(await tx.query('select p.payload from public.teaching_classroom_portions p join public.teaching_classroom_conversation c using(portion_id,session_id) where p.session_id=$1 and c.server_sequence=$2 and p.confirmed_at is not null',[d.session_id,d.last_published])).rows[0];
   const next=(await tx.query("select payload from public.teaching_classroom_portions where session_id=$1 and status='PREPARED' order by ordinal limit 1",[d.session_id])).rows[0];
   const rows=(await tx.query("select q.*,m.accepted_at from public.teaching_classroom_message_queue q join public.teaching_classroom_messages m using(message_id,session_id) where q.session_id=$1 and q.state not in ('answered','unresolved at closure','needing clarification') and (q.release_hold=true or q.committed_at is not null) order by m.accepted_at,q.message_id for update of q",[d.session_id])).rows;
   for(const q of rows){

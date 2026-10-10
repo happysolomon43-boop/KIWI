@@ -6,7 +6,7 @@ export function createComposerShell(reviewOnly, { send, context = () => null } =
   form.append(label,draft,lane,availability,submit,outcome,questions);
   let snapshot=null,pending=null,busy=false,storageKey=null,restored=false,closed=false;
   function stash(){if(!storageKey||!snapshot?.messages?.draft_retention_ms)return;try{if(!draft.value&&!pending)sessionStorage.removeItem(storageKey);else sessionStorage.setItem(storageKey,JSON.stringify({text:draft.value,pending,lane:lane.value,expiresAt:Date.now()+snapshot.messages.draft_retention_ms}));}catch{}}
-  draft.addEventListener("input",stash);lane.addEventListener("change",()=>{if(!pending)stash();});
+  draft.addEventListener("input",stash);lane.addEventListener("change",()=>{if(!pending)stash();state();});
   function state(){const enabled=!reviewOnly&&snapshot?.messages?.enabled;draft.disabled=!enabled;draft.readOnly=busy||!!pending;lane.disabled=busy||!!pending;submit.disabled=!enabled||busy||(!pending&&lane.value==="conversation"&&snapshot.messages.remaining===0);submit.textContent=pending?"Check message acceptance":"Send message";}
   form.update=(next)=>{
     if(closed)return;
