@@ -16,8 +16,8 @@
     "liveProviderQualified": false
   },
   "remainingDelivery7": [
-    "Register/adopt an expressly scoped TPF-21 close_class capability; schedule pre-end coordination and provide verified TPF-08 closing without fabricating D11 closure.",
-    "Provide authoritative adopted numerical policy and independent reviewers; qualify a real provider/reviewer close_class and Presenter path before enabling it.",
+    "Adopt a separately scoped, governed TPF-21 close_class capability and approved model/reviewer route; the pre-end due event and strict Presenter transition handoff are implemented but stay held without approved authority.",
+    "Qualify a live independently reviewed coordinator close_class decision and authorized TPF-08 closing, including resumption timing and actual confirmed release before D11's hard end.",
     "Inject trusted D16/D17 owner approval readers and current workload/eligibility rules; run accepted end-to-end owner handoffs, D17 record-freshness and no-homework cases.",
     "Cross-Class owner and connected browser acceptance, including confirmed linked reply and accurate subsequent history.",
     "Source-linked student Class Summary and D27 published Study Notes presentation through authorized owner readers; metadata-only private holds implemented.",
@@ -46,7 +46,7 @@
     "Read-only Class Summary version/status/source link with stale reconciliation hold",
     "Private or held Study Notes status without exposing TPF-20 payload or asserting D27 publication"
   ],
-  "headAtCheckpoint": "b397151e88119037625cb75627c750a817fea1d8",
+  "headAtCheckpoint": "401b7d6abcae52febd427eb548035e0498c41f22",
   "implementationProgress": {
     "closureAndReconciliation": "IMPLEMENTED_PREVIOUSLY",
     "historyAndReadOnlyConversation": "IMPLEMENTED_PREVIOUSLY",
@@ -56,19 +56,20 @@
     "d16OwnerIntegration": "CANDIDATE_IMPLEMENTED_PENDING_WORKLOAD_OWNER_ADOPTION",
     "d16ClosedRecordTransactionGuard": "IMPLEMENTED_PENDING_NATIVE_DATABASE_CI",
     "d17OwnerIntegration": "CANDIDATE_IMPLEMENTED_PENDING_OWNER_ADOPTION_AND_CONNECTED_ACCEPTANCE",
-    "beforeEndClosing": "NOT_IMPLEMENTED_AWAITING_GOVERNED_CLOSE_CLASS_CAPABILITY",
-    "presenterClosing": "NOT_IMPLEMENTED_AWAITING_AUTHORIZED_DIRECTIVE_AND_ROUTE"
+    "beforeEndClosing": "DURABLE_DUE_EVENT_AND_REVIEWED_PREPARATION_GATE_IMPLEMENTED_UNQUALIFIED",
+    "presenterClosing": "AUTHORIZED_TRANSITION_DIRECTIVE_GATE_IMPLEMENTED_UNQUALIFIED"
   },
   "implementationEvidence": {
     "baselineGreenCommit": "757cadcfc4c5f1771a0b424d7f0cb7a3e32af713",
     "baselineGreenGithubWorkflows": 32,
-    "currentHeadAtDocumentAuthoring": "b397151e88119037625cb75627c750a817fea1d8",
-    "currentHeadCI": "PENDING_FULL_PUBLISHED_HEAD_VERIFICATION",
+    "currentHeadAtDocumentAuthoring": "401b7d6abcae52febd427eb548035e0498c41f22",
+    "currentHeadCI": "PENDING_CURRENT_HEAD_CI",
     "unqualifiedFixturesAreNotProviderEvidence": true,
     "newUnitFiles": [
       "tests/teaching/unit/classroom-history-artifacts.test.js",
       "tests/teaching/unit/classroom-reviewed-continuity.test.js",
-      "tests/teaching/unit/classroom-delivery7-owner-handoffs.test.js"
+      "tests/teaching/unit/classroom-delivery7-owner-handoffs.test.js",
+      "tests/teaching/unit/classroom-pre-closure.test.js"
     ],
     "newNativeTest": "tests/teaching/integration/classroom-closure-continuity.test.js",
     "D16Guard": "teaching/d16/classroom-source.js"
