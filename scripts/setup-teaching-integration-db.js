@@ -26,6 +26,7 @@ const MIGRATIONS = Object.freeze([
   'migrations/20260929_platform_security_rls_hardening.sql',
   'migrations/20260929_teaching_d14_classroom_artifacts.sql',
   'migrations/20261008_teaching_d14_private_visual_assets.sql',
+  'migrations/20261008_teaching_d14_raised_hand_help_requests.sql',
   'migrations/20260930_teaching_d15_attendance.sql',
   'migrations/20261001_teaching_d16_homework_integrity.sql',
   'migrations/20261002_kiwi_integrity_session_guard.sql',
