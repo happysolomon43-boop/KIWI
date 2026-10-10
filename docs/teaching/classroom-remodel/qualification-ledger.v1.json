@@ -65,10 +65,24 @@
       "number": 4,
       "sourceRequirement": "4. **Ordinary flow:** automatic release within approved span, no Next requirement, no coordinator call per sentence.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "kind": "DELIVERY_3_FIXTURE_ONLY_NOT_LIVE_OR_DEPLOYED",
+          "files": [
+            "tests/teaching/unit/classroom-presentation-service.test.js",
+            "tests/teaching/unit/classroom-presentation-transport.test.js",
+            "tests/teaching/integration/classroom-presentation.test.js"
+          ],
+          "scope": "Native persistence/release/receipt/lease/epoch/rollback and connected fixture HTTP transport. Provider stall is a controlled fixture. Browser/screen-reader, actual-account, deployed proxy and live-provider qualification remain pending."
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
-      "testedVersions": null
+      "testedVersions": {
+        "presentationWire": "classroom-presentation-wire.v1",
+        "domain": "classroom-domain.v1",
+        "activation": "INACTIVE"
+      }
     },
     {
       "number": 5,
@@ -182,10 +196,24 @@
       "number": 17,
       "sourceRequirement": "17. **Reload during presentation:** exact current position and public history restore without duplicating teaching.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "kind": "DELIVERY_3_FIXTURE_ONLY_NOT_LIVE_OR_DEPLOYED",
+          "files": [
+            "tests/teaching/unit/classroom-presentation-service.test.js",
+            "tests/teaching/unit/classroom-presentation-transport.test.js",
+            "tests/teaching/integration/classroom-presentation.test.js"
+          ],
+          "scope": "Native persistence/release/receipt/lease/epoch/rollback and connected fixture HTTP transport. Provider stall is a controlled fixture. Browser/screen-reader, actual-account, deployed proxy and live-provider qualification remain pending."
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
-      "testedVersions": null
+      "testedVersions": {
+        "presentationWire": "classroom-presentation-wire.v1",
+        "domain": "classroom-domain.v1",
+        "activation": "INACTIVE"
+      }
     },
     {
       "number": 18,
@@ -200,37 +228,93 @@
       "number": 19,
       "sourceRequirement": "19. **Lost send/receipt acknowledgement:** same idempotency key reconciles outcome, no duplicate quota/message/delivery event.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "kind": "DELIVERY_3_FIXTURE_ONLY_NOT_LIVE_OR_DEPLOYED",
+          "files": [
+            "tests/teaching/unit/classroom-presentation-service.test.js",
+            "tests/teaching/unit/classroom-presentation-transport.test.js",
+            "tests/teaching/integration/classroom-presentation.test.js"
+          ],
+          "scope": "Native persistence/release/receipt/lease/epoch/rollback and connected fixture HTTP transport. Provider stall is a controlled fixture. Browser/screen-reader, actual-account, deployed proxy and live-provider qualification remain pending."
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
-      "testedVersions": null
+      "testedVersions": {
+        "presentationWire": "classroom-presentation-wire.v1",
+        "domain": "classroom-domain.v1",
+        "activation": "INACTIVE"
+      }
     },
     {
       "number": 20,
       "sourceRequirement": "20. **Two devices:** takeover changes control epoch, stale control actions fail, no competing timers or advancement.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "kind": "DELIVERY_3_FIXTURE_ONLY_NOT_LIVE_OR_DEPLOYED",
+          "files": [
+            "tests/teaching/unit/classroom-presentation-service.test.js",
+            "tests/teaching/unit/classroom-presentation-transport.test.js",
+            "tests/teaching/integration/classroom-presentation.test.js"
+          ],
+          "scope": "Native persistence/release/receipt/lease/epoch/rollback and connected fixture HTTP transport. Provider stall is a controlled fixture. Browser/screen-reader, actual-account, deployed proxy and live-provider qualification remain pending."
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
-      "testedVersions": null
+      "testedVersions": {
+        "presentationWire": "classroom-presentation-wire.v1",
+        "domain": "classroom-domain.v1",
+        "activation": "INACTIVE"
+      }
     },
     {
       "number": 21,
       "sourceRequirement": "21. **Background/offline client:** no unsupported render/attendance inference; reconnect reconciles and no automatic late answer backdating.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "kind": "DELIVERY_3_FIXTURE_ONLY_NOT_LIVE_OR_DEPLOYED",
+          "files": [
+            "tests/teaching/unit/classroom-presentation-service.test.js",
+            "tests/teaching/unit/classroom-presentation-transport.test.js",
+            "tests/teaching/integration/classroom-presentation.test.js"
+          ],
+          "scope": "Native persistence/release/receipt/lease/epoch/rollback and connected fixture HTTP transport. Provider stall is a controlled fixture. Browser/screen-reader, actual-account, deployed proxy and live-provider qualification remain pending."
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
-      "testedVersions": null
+      "testedVersions": {
+        "presentationWire": "classroom-presentation-wire.v1",
+        "domain": "classroom-domain.v1",
+        "activation": "INACTIVE"
+      }
     },
     {
       "number": 22,
       "sourceRequirement": "22. **Worker crash:** before/after commit, outbox and leases recover one business effect.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "kind": "DELIVERY_3_FIXTURE_ONLY_NOT_LIVE_OR_DEPLOYED",
+          "files": [
+            "tests/teaching/unit/classroom-presentation-service.test.js",
+            "tests/teaching/unit/classroom-presentation-transport.test.js",
+            "tests/teaching/integration/classroom-presentation.test.js"
+          ],
+          "scope": "Native persistence/release/receipt/lease/epoch/rollback and connected fixture HTTP transport. Provider stall is a controlled fixture. Browser/screen-reader, actual-account, deployed proxy and live-provider qualification remain pending."
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
-      "testedVersions": null
+      "testedVersions": {
+        "presentationWire": "classroom-presentation-wire.v1",
+        "domain": "classroom-domain.v1",
+        "activation": "INACTIVE"
+      }
     },
     {
       "number": 23,
@@ -247,6 +331,15 @@
             "tests/teaching/unit/classroom-remodel-runtime.test.js",
             "tests/teaching/integration/classroom-remodel-academic.test.js"
           ]
+        },
+        {
+          "kind": "DELIVERY_3_FIXTURE_ONLY_NOT_LIVE_OR_DEPLOYED",
+          "files": [
+            "tests/teaching/unit/classroom-presentation-service.test.js",
+            "tests/teaching/unit/classroom-presentation-transport.test.js",
+            "tests/teaching/integration/classroom-presentation.test.js"
+          ],
+          "scope": "Native persistence/release/receipt/lease/epoch/rollback and connected fixture HTTP transport. Provider stall is a controlled fixture. Browser/screen-reader, actual-account, deployed proxy and live-provider qualification remain pending."
         }
       ],
       "liveProviderEvidence": [],
@@ -254,17 +347,33 @@
       "testedVersions": {
         "contracts": "classroom-contracts.v1",
         "preparation": "classroom-preparation.v1",
-        "activation": "INACTIVE"
+        "activation": "INACTIVE",
+        "presentationWire": "classroom-presentation-wire.v1",
+        "domain": "classroom-domain.v1"
       }
     },
     {
       "number": 24,
       "sourceRequirement": "24. **Optional/essential visual failure:** accurate text fallback or explicit hold; no phantom asset, unsafe SVG or unowned retrieval.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "kind": "DELIVERY_3_FIXTURE_ONLY_NOT_LIVE_OR_DEPLOYED",
+          "files": [
+            "tests/teaching/unit/classroom-presentation-service.test.js",
+            "tests/teaching/unit/classroom-presentation-transport.test.js",
+            "tests/teaching/integration/classroom-presentation.test.js"
+          ],
+          "scope": "Native persistence/release/receipt/lease/epoch/rollback and connected fixture HTTP transport. Provider stall is a controlled fixture. Browser/screen-reader, actual-account, deployed proxy and live-provider qualification remain pending."
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
-      "testedVersions": null
+      "testedVersions": {
+        "presentationWire": "classroom-presentation-wire.v1",
+        "domain": "classroom-domain.v1",
+        "activation": "INACTIVE"
+      }
     },
     {
       "number": 25,

@@ -18,3 +18,7 @@ test('live Presenter adapter uses D14 controller context, durably accepts before
  await adapter.generate(args);assert.equal(request.stateReference.state_version,'2');assert.equal(request.candidatePromptBinding.familyId,'TPF-08');assert.equal(request.preparation,undefined);assert.equal(request.commit,false);assert.equal(request.generation.maxOutputTokens,policy.fields.generationBudget.value);assert.equal(request.academicInput.pinned_numeric_policy,policy);assert.equal((await adapter.generate(args)),cached);
  await assert.rejects(()=>adapter.generate({...args,policy:{version:'mismatch'}}),{code:'CLASSROOM_GENERATION_POLICY_HANDOFF_CONFLICT'});
 });
+test('presentation wire maps command safety fields and returns the canonical domain receipt',async()=>{
+ const result={operationId:'op',sessionId:'s',accepted:true,applied:true,controllerVersion:1,deliveryVersion:2,deliveryEpoch:1,controlEpoch:1,serverTime:'2026-10-10T01:00:00Z',leaseToken:'private-owned-token'};
+ const s=createClassroomPresentationService({repository:{command:async()=>result}});const response=await s.lease({id:'s'},'c',input);assert.equal(response.receipt.operation_id,'op');assert.equal(response.receipt.outcome,'applied');assert.equal(response.receipt.delivery_version,2);assert.equal(response.wire_schema_version,'classroom-presentation-wire.v1');
+});

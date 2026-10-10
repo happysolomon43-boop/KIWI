@@ -13,6 +13,8 @@ function createClassroomPresentationService({repository,policyReader,openingDire
   if(receipt){if(typeof body.portionId!=='string'||!Array.isArray(body.readyAssetIds)||body.readyAssetIds.some(v=>typeof v!=='string'))throw failure('CLASSROOM_COMMAND_INVALID',422);}
   else if(!(lease?['claim','renew','takeover']:['pause','resume','pace']).includes(body.intent))throw failure('CLASSROOM_CONTROL_UNAVAILABLE',422);
   if((receipt||!lease||body.intent==='renew')&&(typeof body.leaseToken!=='string'||!body.leaseToken))throw failure('CLASSROOM_CLIENT_LEASE_STALE');
+  const intent=receipt?'render_receipt':lease?{claim:'lease_claim',renew:'lease_renew',takeover:'lease_takeover'}[body.intent]:body.intent;
+  require('./domain-contracts').validateCommand({operation_id:body.operationKey,idempotency_key:body.operationKey,session_id:body.sessionId,intent,target_ref:null,expected_controller_version:body.expectedControllerVersion,expected_delivery_version:body.expectedDeliveryVersion,expected_delivery_epoch:body.deliveryEpoch,expected_control_epoch:body.controlEpoch,schema_version:body.schemaVersion});
   return body;
  }
  async function prepare({studentId,classId,pace}){
@@ -38,12 +40,14 @@ function createClassroomPresentationService({repository,policyReader,openingDire
   if(output?.held)return {accepted:false,reason:output.reason};
   return repository.acceptSequence({studentId,classId,operationKey,directive,output,expected,types,assets});
  }
+ function mutate(method,user,id,body,options){const checked=input(body,options);const owned=owner(user,id);return (async()=>{const result=await repository[method](...owned,checked);if(!result.serverTime)return result;
+  const receipt=require('./domain-contracts').validateReceipt({operation_id:checked.operationKey,idempotency_key:checked.operationKey,session_id:result.sessionId,accepted:result.accepted,applied:result.applied,outcome:result.accepted?(result.replay?'already_applied':'applied'):'dependency_hold',controller_version:result.controllerVersion,delivery_version:result.deliveryVersion,delivery_epoch:result.deliveryEpoch,control_epoch:result.controlEpoch,server_time:result.serverTime,reconciliation_required:!result.accepted});return {...result,wire_schema_version:'classroom-presentation-wire.v1',receipt};})();}
  return Object.freeze({prepare,prepareSpan,
   snapshot:(user,id)=>repository.read(...owner(user,id),{snapshot:true}),
   conversation:(user,id,after)=>repository.read(...owner(user,id),{after}),
-  lease:(user,id,body)=>repository.command(...owner(user,id),input(body,{lease:true})),
-  control:(user,id,body)=>repository.command(...owner(user,id),input(body)),
-  receipt:(user,id,body)=>repository.receipt(...owner(user,id),input(body,{receipt:true})),
+  lease:(user,id,body)=>mutate('command',user,id,body,{lease:true}),
+  control:(user,id,body)=>mutate('command',user,id,body,{}),
+  receipt:(user,id,body)=>mutate('receipt',user,id,body,{receipt:true}),
  });
 }
 module.exports={createClassroomPresentationService};

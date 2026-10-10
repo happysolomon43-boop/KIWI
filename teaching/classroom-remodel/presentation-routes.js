@@ -28,7 +28,7 @@ function mountClassroomPresentationRoutes(router,{service,reauthenticate}={}){
      const delta=await service.conversation(req.user,req.params.id,after);if(closed)return;
      if(delta.events.length){if(!send('classroom_delta',delta)){send('cursor_reset_required',{code:'CLASSROOM_STREAM_BACKPRESSURE'});return close();}after=delta.to_cursor;}
      const snapshot=await service.snapshot(req.user,req.params.id);if(closed)return;
-     send('classroom_state',{schema_version:snapshot.schema_version,session_id:snapshot.session_id,controller_version:snapshot.controller_version,delivery_version:snapshot.delivery_version,delivery_epoch:snapshot.delivery_epoch,control_epoch:snapshot.control_epoch,delivery_state:snapshot.delivery_state,clocks:snapshot.clocks,permitted_actions:snapshot.permitted_actions});
+     if(!send('classroom_state',{schema_version:snapshot.schema_version,session_id:snapshot.session_id,controller_version:snapshot.controller_version,delivery_version:snapshot.delivery_version,delivery_epoch:snapshot.delivery_epoch,control_epoch:snapshot.control_epoch,delivery_state:snapshot.delivery_state,clocks:snapshot.clocks,permitted_actions:snapshot.permitted_actions})){close();return;}
      timer=setTimeout(tick,snapshot.transport.reconnectBackoffMs);timer.unref?.();
     }catch(error){if(!closed){send('cursor_reset_required',{code:/^CLASSROOM_/.test(error.code||'')?error.code:'CLASSROOM_STREAM_FAILED'});close();}}
    };
