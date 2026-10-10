@@ -2,7 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict');
 const {createD14Service}=require('../../../teaching/d14/service');
 const digest='a'.repeat(64);
-const context={classRow:{class_id:'class-1',course_id:'course-1',course_state_version:1,schedule_version:2},
+const context={session:{lifecycle_state:'CLOSED'},classRow:{class_id:'class-1',course_id:'course-1',course_state_version:1,schedule_version:2},
  plan:{course_plan_id:'plan-1',version_no:1},blueprint:{blueprint_state:'VALIDATED',lesson_blueprint_id:'lesson-1',version_no:1,planned_learning_unit_refs:['u1']}};
 const pre={note_version_id:'pre-validated',stage:'PRE_CLASS',state:'PREPARED_NOT_PUBLISHABLE',note_payload:{sections:[]}};
 function harness({preNote=pre,summaryState='TRANSLATED',summaryHash=digest,previousPost=null}={}){
@@ -63,4 +63,12 @@ test('TPF-20 current private candidate replays without regenerating or promoting
  const result=await h.service.runStudyStage({studentId:'student-1',classId:'class-1',stage:'POST_CLASS'});
  assert.equal(result.replay,true);assert.equal(result.noteVersionId,'post-existing');
  assert.equal(h.calls.executed.length,0);assert.equal(h.calls.saved.length,0);
+});
+
+test('TPF-20 rejects invalid stages and refuses stale pre-Class work after closure',async()=>{
+ const h=harness();
+ await assert.rejects(h.service.runStudyStage({studentId:'student-1',classId:'class-1',stage:'UNKNOWN'}),{code:'TEACHING_D14_NOTE_STAGE_INVALID'});
+ const result=await h.service.runStudyStage({studentId:'student-1',classId:'class-1',stage:'PRE_CLASS'});
+ assert.equal(result.reason,'PRE_CLASS_NOTE_AFTER_CLOSURE_FORBIDDEN');
+ assert.equal(h.calls.executed.length,0);
 });
