@@ -1,7 +1,7 @@
 {
   "version": "classroom-delivery-7-checkpoint.v1",
   "delivery": 7,
-  "status": "INACTIVE_IN_PROGRESS_WITH_REVIEWED_HANDOFFS_AND_HISTORY_PROJECTION",
+  "status": "INACTIVE_IMPLEMENTED_CANDIDATE_PENDING_AUTHORIZED_D7_ACCEPTANCE",
   "branch": "feat/classroom-remodel-delivery-7",
   "baseCommit": "69c6a3cb975697a51947dd804a0edc45497a646d",
   "activation": "INACTIVE",
@@ -19,7 +19,7 @@
     "Adopt a separately scoped, governed TPF-21 close_class capability and approved model/reviewer route; the pre-end due event and strict Presenter transition handoff are implemented but stay held without approved authority.",
     "Qualify a live independently reviewed coordinator close_class decision and authorized TPF-08 closing, including resumption timing and actual confirmed release before D11's hard end.",
     "Inject trusted D16/D17 owner approval readers and current workload/eligibility rules; run accepted end-to-end owner handoffs, D17 record-freshness and no-homework cases.",
-    "Cross-Class owner and connected browser acceptance, including confirmed linked reply and accurate subsequent history.",
+    "Complete and independently accept the newly added native connected next-Class history and exact-conversation browser test, including reviewed reply linkage; initial rendered history remains fixture evidence only.",
     "Source-linked student Class Summary and D27 published Study Notes presentation through authorized owner readers; metadata-only private holds implemented.",
     "Obtain and validate the authoritative chapter/source correction, guide, plan and remap bundle; run resulting acceptance evidence."
   ],
@@ -46,7 +46,7 @@
     "Read-only Class Summary version/status/source link with stale reconciliation hold",
     "Private or held Study Notes status without exposing TPF-20 payload or asserting D27 publication"
   ],
-  "headAtCheckpoint": "daf79cc2b82da4da4902b0dfd5eeb65cb914eed8",
+  "headAtCheckpoint": "8d45e778b5b919f683f6cfaa40542e9dfdaf84d6",
   "implementationProgress": {
     "closureAndReconciliation": "IMPLEMENTED_PREVIOUSLY",
     "historyAndReadOnlyConversation": "IMPLEMENTED_PREVIOUSLY",
@@ -55,26 +55,37 @@
     "reviewedCrossClassQuestionSelectionAndLinks": "IMPLEMENTED_PENDING_OWNER_AND_BROWSER_ACCEPTANCE",
     "d16OwnerIntegration": "CANDIDATE_IMPLEMENTED_PENDING_WORKLOAD_OWNER_ADOPTION",
     "d16ClosedRecordTransactionGuard": "IMPLEMENTED_PENDING_NATIVE_DATABASE_CI",
-    "d17OwnerIntegration": "CANDIDATE_IMPLEMENTED_PENDING_OWNER_ADOPTION_AND_CONNECTED_ACCEPTANCE",
+    "d17OwnerIntegration": "IMPLEMENTED_WITH_TRANSACTIONAL_CLOSED_SOURCE_CHECK_PENDING_TRUSTED_OWNER_APPROVAL",
     "beforeEndClosing": "DURABLE_DUE_EVENT_AND_REVIEWED_PREPARATION_GATE_IMPLEMENTED_UNQUALIFIED",
-    "presenterClosing": "AUTHORIZED_TRANSITION_DIRECTIVE_GATE_IMPLEMENTED_UNQUALIFIED"
+    "presenterClosing": "AUTHORIZED_TRANSITION_DIRECTIVE_GATE_IMPLEMENTED_UNQUALIFIED",
+    "d17ClosedRecordTransactionGuard": "IMPLEMENTED_NATIVE_INTEGRATION_CI_PASSED_ON_8D45E778",
+    "crossClassBrowser": "IMPLEMENTED_CONNECTED_NATIVE_BROWSER_REGRESSION_PENDING_CURRENT_HEAD_RUN",
+    "browserLeaseReadiness": "CI_PASSED_ON_1E64217E_BUT_INTERMITTENT_TIMEOUT_OBSERVED_ON_PRIOR_HEAD"
   },
   "implementationEvidence": {
     "baselineGreenCommit": "757cadcfc4c5f1771a0b424d7f0cb7a3e32af713",
     "baselineGreenGithubWorkflows": 32,
-    "currentHeadAtDocumentAuthoring": "daf79cc2b82da4da4902b0dfd5eeb65cb914eed8",
-    "currentHeadCI": "32_WORKFLOWS_QUEUED_AND_RUNNING_BEFORE_SOURCE_INVENTORY_REGEN",
+    "currentHeadAtDocumentAuthoring": "8d45e778b5b919f683f6cfaa40542e9dfdaf84d6",
+    "currentHeadCI": "TEACHING_INTEGRATION_DATABASE_PASSED; FOUNDATION_AND_CONNECTED_BROWSER_IN_CI_QUEUE",
     "unqualifiedFixturesAreNotProviderEvidence": true,
     "newUnitFiles": [
       "tests/teaching/unit/classroom-history-artifacts.test.js",
       "tests/teaching/unit/classroom-reviewed-continuity.test.js",
       "tests/teaching/unit/classroom-delivery7-owner-handoffs.test.js",
-      "tests/teaching/unit/classroom-pre-closure.test.js"
+      "tests/teaching/unit/classroom-pre-closure.test.js",
+      "tests/teaching/unit/classroom-d17-atomic-source.test.js"
     ],
     "newNativeTest": "tests/teaching/integration/classroom-closure-continuity.test.js",
     "D16Guard": "teaching/d16/classroom-source.js",
-    "latestNativePostgreSqlEvidence": "b397151e88119037625cb75627c750a817fea1d8: native integration successful; foundation fingerprint failed until refreshed",
+    "latestNativePostgreSqlEvidence": "8d45e778b5b919f683f6cfaa40542e9dfdaf84d6: Teaching Integration Database successful (D17 idempotent reviewed-source guard included)",
     "inventoryVerificationSourceCommit": "daf79cc2b82da4da4902b0dfd5eeb65cb914eed8",
-    "inventorySearchFilesSha256": "eeb281d9b2453ec98c2f642849aac386ec2d08b2285d86acffad31309f37337a"
+    "inventorySearchFilesSha256": "eeb281d9b2453ec98c2f642849aac386ec2d08b2285d86acffad31309f37337a",
+    "crossClassBrowserFile": "tests/teaching/browser/classroom-connected.js"
+  },
+  "verifiedCandidateEvidence": {
+    "browserPassedHead": "1e64217e027b8b1166cfd339ba0ad90f34230e01",
+    "nativeDatabasePassedHead": "8d45e778b5b919f683f6cfaa40542e9dfdaf84d6",
+    "notProductionRelease": true,
+    "notLiveProviderQualification": true
   }
 }
