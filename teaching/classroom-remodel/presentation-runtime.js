@@ -51,6 +51,18 @@ function createClassroomPresentationRuntime({query,withTransaction,randomUUID,d1
   taskRuntime={repository:taskRepository,service:taskService,qualified};
  }
  const planning=continuity&&options.planning&&options.orchestrator?require('./delivery7-intelligence').createDelivery7Intelligence({...options.planning,downstreamOwners:{d16:d16Service,d17:d17Service},orchestrator:options.orchestrator,d11Repository,continuityRepository:continuity}):null;
+
+ eventRuntime.register(TEACHING_EVENTS.CLASSROOM_PRE_CLOSURE_DUE,{
+  reconcile:async event=>event.payload?.student_id&&event.payload?.class_id?
+    {disposition:R.ACTIONABLE}:{disposition:R.SUPERSEDED,reason:'CLASSROOM_PRE_CLOSE_OWNER_MISSING'},
+  handle:async event=>{
+    const outcome=await require('./pre-closure').prepareBeforeEnd({studentId:event.payload.student_id,
+     classId:event.payload.class_id,event,repository,service,d11Repository,
+     closing:options.planning?.closing||null});
+    return {safeMetadata:{held:outcome.held===true,reason:outcome.reason||null,
+     prepared:outcome.prepared===true,closureCommitted:false}};
+  }
+ });
  const registrations=[];
  for(const type of [TEACHING_EVENTS.CLASS_ENDED,TEACHING_EVENTS.BREAK_STARTED,TEACHING_EVENTS.ASSESSMENT_STARTED,TEACHING_EVENTS.CLASSROOM_INSTRUCTION_READY])if(type)registrations.push(publishedEvents.register(type,{subscriberId:'classroom-delivery-safety-'+type,handle:async event=>{
   const studentId=event.actorId||event.payload?.student_id,classId=event.payload?.class_id;if(!studentId||!classId)return {noop:true};

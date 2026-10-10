@@ -60,7 +60,14 @@ function createClassroomPresentationRepository({query,withTransaction,randomUUID
    const opening=(await tx.query('select payload from public.teaching_classroom_academic_private where artifact_version_id=$1',[a.binding.opening_artifact_id])).rows[0].payload;
    const anchor=opening.interaction.portions[0]?.resume_at;if(!anchor)throw failure('CLASSROOM_OPENING_UNAVAILABLE');
    const d=(await tx.query(`insert into public.teaching_classroom_delivery(session_id,student_id,class_id,binding_version,policy_version,policy,authority,pace,resume_anchor) values($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9) returning *`,[a.class_session_id,studentId,classId,a.classroom_binding_version,policy.version,JSON.stringify(policy),JSON.stringify(stamp(a)),pace,anchor])).rows[0];
-   await emit(tx,a,d,TEACHING_EVENTS.CLASSROOM_DELIVERY_END_DUE,{}, {dueAt:a.end,key:'classroom-end:'+d.session_id+':'+a.end});return {initialized:true,sessionId:a.class_session_id,replay:false};
+   await emit(tx,a,d,TEACHING_EVENTS.CLASSROOM_DELIVERY_END_DUE,{}, {dueAt:a.end,key:'classroom-end:'+d.session_id+':'+a.end});
+   const closingLead=value(policy,'closureLeadMs');
+   if(closingLead>0){
+    const due=Math.max(new Date(a.now).getTime(),new Date(a.end).getTime()-closingLead);
+    if(due<new Date(a.end).getTime())await emit(tx,a,d,TEACHING_EVENTS.CLASSROOM_PRE_CLOSURE_DUE,{lead_ms:closingLead},
+      {dueAt:new Date(due).toISOString(),key:'classroom-pre-close:'+d.session_id+':'+a.end+':'+closingLead});
+   }
+   return {initialized:true,sessionId:a.class_session_id,replay:false};
   });
  }
  async function capture(studentId,classId){return locked(studentId,classId,async(tx,a,d,reason)=>{if(reason)return {held:true,reason};return {authority:stamp(a),deliveryEpoch:Number(d.delivery_epoch),policy:d.policy,sessionId:d.session_id,binding:a.binding,pace:d.pace};});}

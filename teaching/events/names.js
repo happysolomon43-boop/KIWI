@@ -31,6 +31,7 @@ const TEACHING_EVENTS = Object.freeze({
   CLASSROOM_MESSAGE_DISPOSITION_COMMITTED: 'teaching.classroom.message_disposition_committed',
   CLASSROOM_PORTION_RELEASE_DUE: 'teaching.classroom.portion_release_due',
   CLASSROOM_DELIVERY_END_DUE: 'teaching.classroom.delivery_end_due',
+  CLASSROOM_PRE_CLOSURE_DUE: 'teaching.classroom.pre_closure_due',
   CLASSROOM_PORTION_PUBLISHED: 'teaching.classroom.portion_published',
   CLASSROOM_DELIVERY_CONFIRMED: 'teaching.classroom.delivery_confirmed',
   CLASSROOM_DELIVERY_INVALIDATED: 'teaching.classroom.delivery_invalidated',
