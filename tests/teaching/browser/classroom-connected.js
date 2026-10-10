@@ -1,0 +1,56 @@
+'use strict';
+// Observed browser + native PostgreSQL, synthetic academic fixtures/identity.
+// No provider traffic, production session, or deployment qualification implied.
+const assert=require('node:assert/strict'),path=require('node:path'),fs=require('node:fs');
+const {randomUUID}=require('node:crypto');
+const {chromium}=require('playwright');const {default:AxeBuilder}=require('@axe-core/playwright');
+const {harness}=require('../fixtures/classroom-presentation-database');const f=require('../fixtures/classroom-remodel-academic');
+const {projectChapter}=require('../../../teaching/classroom-remodel/contracts');
+async function main(){await harness(async h=>{
+ const express=require('express'),app=express();app.use(express.json());app.use('/public',express.static(path.resolve(__dirname,'../../../public')));
+ const service=require('../../../teaching/classroom-remodel/presentation-service').createClassroomPresentationService({repository:h.repository});
+ const d11=require('../../../teaching/repositories/d11-lesson-controller').createD11LessonControllerRepository({query:h.query,withTransaction:h.withTransaction,randomUUID});
+ const d14=require('../../../teaching/d14/service').createD14Service({repository:h.d14Repository,d11Repository:d11,d11Service:{},d12Service:{},randomUUID});
+ const router=express.Router();router.use((req,res,next)=>{if(req.headers.authorization!=='Bearer fixture-browser-owner')return res.sendStatus(401);req.user={id:h.ids.studentId};next();});
+ require('../../../teaching/classroom-remodel/presentation-routes').mountClassroomPresentationRoutes(router,{service,reauthenticate:async req=>req.headers.authorization==='Bearer fixture-browser-owner'});
+ router.get('/classes/:id/classroom/chapter',async(req,res)=>{try{const s=await h.read();if(!s.chapter_ref)return res.sendStatus(403);const c=(await h.query('select public_payload from public.teaching_classroom_academic_artifacts where artifact_version_id=(select classroom_chapter_artifact_id from public.teaching_class_sessions where class_session_id=$1)',[h.sessionId])).rows[0].public_payload;res.json(c);}catch(e){res.status(500).json({code:e.code});}});
+ router.get('/classes/:id/classroom/board',async(req,res)=>res.json(await h.d14Repository.board(h.ids.studentId,h.sessionId)));
+ router.post('/classes/:id/notebook',async(req,res)=>{try{res.status(201).json(await d14.notebook(req.user,req.params.id,req.body));}catch(e){res.status(e.status||500).json({code:e.code});}});
+ app.use('/api/teaching',router);
+ app.get('/',(req,res)=>res.type('html').send(`<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Connected classroom qualification fixture</title><link rel="stylesheet" href="/public/teaching-classroom.css"></head><body><div id="host"></div><script type="module">
+ import {mountClassroomView} from '/public/classroom/classroom-view.js';
+ const api=async(url,opts={})=>{const response=await fetch('/api'+url,{method:opts.method||'GET',headers:{Authorization:'Bearer fixture-browser-owner','Content-Type':'application/json'},body:opts.body?JSON.stringify(opts.body):undefined,signal:opts.signal});const data=await response.json();if(!response.ok){const e=Object.assign(new Error(data.code),{status:response.status});throw e;}return data;};
+ const classId=${JSON.stringify(h.ids.classId)};
+ const transport=async(id,{after,signal,onEvent})=>{const r=await fetch('/api/teaching/classes/'+id+'/classroom/stream?after='+after,{headers:{Authorization:'Bearer fixture-browser-owner'},signal});const reader=r.body.getReader();const decoder=new TextDecoder();let buffer='';try{while(!signal.aborted){const {value,done}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});let split;while((split=buffer.indexOf(String.fromCharCode(10,10)))>=0){const frame=buffer.slice(0,split);buffer=buffer.slice(split+2);const lines=frame.split(String.fromCharCode(10));const type=lines.find(l=>l.startsWith('event: '))?.slice(7);const data=lines.find(l=>l.startsWith('data: '))?.slice(6);if(type&&data)onEvent(type,JSON.parse(data));}}}finally{await reader.cancel().catch(()=>{});}};
+ const legacy={identity:{course_title:'Fixture physics',teacher_name:'KIWI Teacher'},modeKey:'INSTRUCTION',notebookAllowed:true,controlsEnabled:false,board:[]};
+ const renderBoard=item=>{const article=document.createElement('article');article.textContent=item.content.text||'Board';return article;};
+ window.view=mountClassroomView({host:document.querySelector('#host'),classId,legacy,reviewOnly:new URLSearchParams(location.search).has('review'),api,transport,renderBoard,openNotebook:()=>{},onClose:()=>window.view.close(),onProtected:()=>{document.querySelector('#host').textContent='Protected owner shell requested';}});
+ window.refreshBoard=async()=>{legacy.board=await api('/teaching/classes/'+classId+'/classroom/board');window.view.update(legacy);};
+ </script></body></html>`));
+ const server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});let browser;
+ try{browser=await chromium.launch({headless:true});const context=await browser.newContext({viewport:{width:1440,height:900},reducedMotion:'reduce'}),page=await context.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));const url='http://127.0.0.1:'+server.address().port;
+  const opening=f.opening();opening.interaction.portions[0].teacher_message=('Connected reasoning with conditions and a worked example. <script>window.injected=true</script>\n').repeat(90);await h.accept(opening);
+  await page.goto(url);await page.getByRole('button',{name:'Start teaching here',exact:true}).click();await page.getByRole('button',{name:'Pause',exact:true}).waitFor({state:'visible'});await page.waitForFunction(()=>!document.querySelector('.cr-controls button:nth-of-type(3)')?.disabled);
+  const due=(await h.dueEventStore.claimDue({workerId:'browser-fixture-worker',now:new Date(),leaseMs:60000})).find(e=>e.event_type==='teaching.classroom.portion_release_due'&&e.payload.class_id===h.ids.classId);assert.ok(due);assert.equal((await h.repository.release(h.ids.studentId,h.ids.classId,{event:due})).released,true);
+  await page.waitForFunction(()=>document.querySelector('.cr-developed-text')?.textContent.includes('Connected reasoning'));
+  await page.evaluate(()=>window.refreshBoard());await page.waitForFunction(()=>document.querySelector('.cr-status')?.textContent.includes('presenting'));
+  // Wait for a committed application-render receipt, not just rendered DOM.
+  await page.waitForFunction(async classId=>{const r=await fetch('/api/teaching/classes/'+classId+'/classroom/session',{headers:{Authorization:'Bearer fixture-browser-owner'}});return (await r.json()).position.last_render_confirmed===1;},h.ids.classId);
+  assert.equal((await h.read()).position.last_render_confirmed,1);assert.equal(await page.evaluate(()=>window.injected),undefined);
+  await page.getByRole('button',{name:'Pause',exact:true}).click();await page.getByRole('button',{name:'Resume',exact:true}).waitFor();assert.equal((await h.read()).delivery_state,'PAUSED');
+  await page.getByRole('button',{name:'Read linked passage',exact:true}).click();await page.waitForFunction(()=>document.querySelector('[data-anchor="U01.E01"]')===document.activeElement);
+  await page.getByRole('button',{name:'Save passage to Notebook'}).first().click();await page.waitForFunction(()=>document.querySelector('.cr-status')?.textContent==='Saved to Notebook.');const notes=await h.d14Repository.notebook(h.ids.studentId,h.ids.classId);assert.equal(notes.length,1);assert.equal(notes[0].source_ref.anchor,'U01.E01');await page.getByRole('button',{name:'Save passage to Notebook'}).first().click();assert.equal((await h.d14Repository.notebook(h.ids.studentId,h.ids.classId)).length,1);
+  assert.equal(await page.getByLabel('Message your teacher',{exact:true}).isDisabled(),true);
+  await page.getByLabel('Teaching pace').selectOption('slow');assert.equal((await h.read()).pace,'slow');assert.equal((await h.read()).delivery_state,'PAUSED');
+  await page.evaluate(()=>{const feed=document.querySelector('.cr-feed');feed.scrollTop=120;document.querySelector('.cr-controls button').focus();});const scroll=await page.locator('.cr-feed').evaluate(n=>n.scrollTop);const focus=await page.evaluate(()=>document.activeElement.textContent);await page.evaluate(()=>window.refreshBoard());assert.equal(await page.locator('.cr-feed').evaluate(n=>n.scrollTop),scroll);assert.equal(await page.evaluate(()=>document.activeElement.textContent),focus);
+  const accessibility=await new AxeBuilder({page}).include('.cr-shell').withTags(['wcag2a','wcag2aa','wcag21aa']).analyze();assert.deepEqual(accessibility.violations.map(v=>({id:v.id,nodes:v.nodes.map(n=>n.target)})),[]);
+  await page.setViewportSize({width:390,height:844});await page.getByRole('button',{name:'Chapter',exact:true}).click();assert.equal(await page.locator('.cr-conversation').evaluate(n=>n.inert),true);await page.getByRole('button',{name:'Conversation',exact:true}).click();assert.equal(await page.locator('.cr-chapter').evaluate(n=>n.inert),true);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  await page.getByLabel('Reading text size').fill('150');await page.getByLabel('Reading text size').dispatchEvent('input');await page.setViewportSize({width:320,height:700});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  fs.mkdirSync('artifacts/classroom-browser',{recursive:true});await page.screenshot({path:'artifacts/classroom-browser/mobile.png',fullPage:true});await page.setViewportSize({width:1440,height:900});await page.screenshot({path:'artifacts/classroom-browser/desktop.png',fullPage:true});
+  const before=(await h.query('select count(*)::int n from public.teaching_classroom_delivery_commands where session_id=$1',[h.sessionId])).rows[0].n;
+  const review=await context.newPage();await review.goto(url+'/?review=1');await review.getByText('Past class: read-only review.',{exact:true}).waitFor();assert.equal((await h.query('select count(*)::int n from public.teaching_classroom_delivery_commands where session_id=$1',[h.sessionId])).rows[0].n,before);await review.close();
+  await h.query("update public.teaching_class_sessions set instructional_substate='ASSESSMENT',state_version=state_version+1 where class_session_id=$1",[h.sessionId]);await page.getByText('Protected owner shell requested',{exact:true}).waitFor();assert.equal(await page.locator('.cr-developed-text').count(),0);assert.equal(await page.locator('.cr-chapter-content').count(),0);assert.deepEqual(errors,[]);
+  console.log('PASS: native publication/render receipt, pause/pace, source focus, durable Notebook retry, scroll/focus preservation, disabled composer, axe WCAG, mobile/reflow, historical no mutation, protected clearing. SYNTHETIC_FIXTURE_NOT_PROVIDER_OR_DEPLOYMENT');
+ }finally{await browser?.close();await new Promise(resolve=>server.close(resolve));}
+},{concurrent:true});}
+main().catch(e=>{console.error(e);process.exitCode=1;});

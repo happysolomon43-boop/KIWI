@@ -79,7 +79,9 @@ function updateSelectionNote(){
 }
 document.addEventListener('selectionchange',()=>{if(selectionFrame)return;selectionFrame=requestAnimationFrame(()=>{selectionFrame=null;updateSelectionNote();});});
 document.addEventListener('scroll',()=>{if(!selectionNote?.busy)clearSelectionNote();},true);
+let remodeledView=null,remodeledLoading=null;
 function close({restore=true}={}){
+  remodeledView?.close();remodeledView=null;
   state.requestAbort?.abort();
   state.requestAbort=null;state.snapshotFlight=null;state.connectFlight=null;state.joinFlight=null;
   clearSelectionNote();collapsePanel({restore:false});clearVisualLoads();state.scene=0;closeSheet({restore:false,force:true});clearRuntime();
@@ -117,11 +119,11 @@ async function fetchSnapshot(){
 async function act(path,body){
   if(state.busy)return;state.busy=true;
   try{await kiwiApiRequest(`/teaching/classes/${encodeURIComponent(state.classId)}/${path}`,{method:'POST',body:{...body,idempotencyKey:crypto.randomUUID()}});await fetchAfterAction();}
-  catch(error){state.host?.querySelector('.tc-message')?.replaceChildren($('span','',error.message||'That action could not be completed.'));}
+  catch(error){classroomFeedback(error.message||'That action could not be completed. Retry to check the saved state.');}
   finally{state.busy=false;}
 }
 function classroomFeedback(message) {
-  const region=state.host?.querySelector('.tc-message');
+  const region=state.host?.querySelector('.tc-message,.cr-status');
   if(region)region.replaceChildren($('span','',message));
 }
 function isUntouchedRouteHeldController(controller) {
@@ -343,9 +345,10 @@ function renderHeader(s){
       close();
     }catch(error){
       leave.disabled=false;
-      state.host?.querySelector('.tc-message')?.replaceChildren($('span','',`${error.message||'KIWI could not confirm your departure.'} Retry Leave Class to safely confirm the same attendance record.`));
+      classroomFeedback(`${error.message||'KIWI could not confirm your departure.'} Retry Leave Class to safely confirm the same attendance record.`);
     }
   },'tc-button tc-button--quiet');
+  leave.dataset.leaveClass='true';
   add(header,brand,identity,mode,clocks,leave);return header;
 }
 function renderTeacher(s){
@@ -403,7 +406,7 @@ function graphBlock(c){
   const xs=pts.map((p)=>p[0]),ys=pts.map((p)=>p[1]),minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
   const coords=pts.map(([x,y])=>[30+340*(x-minX)/(maxX-minX||1),185-145*(y-minY)/(maxY-minY||1)]);
   for(const path of ['M30 20V185H380',`M${coords.map((p)=>p.join(' ')).join('L')}`]){const line=document.createElementNS('http://www.w3.org/2000/svg','path');line.setAttribute('d',path);line.setAttribute('fill','none');line.setAttribute('stroke',path[0]==='M'&&path.includes('V')?'#637b70':'#92e9be');line.setAttribute('stroke-width','2');svg.append(line);}
-  wrap.append(svg);return wrap;
+  wrap.append(svg);const alternative=$('details','tc-graph-alternative');alternative.append($('summary','','Graph data and description'),$('p','',description),$('p','',pts.map(([x,y])=>'('+x+', '+y+')').join('; ')));wrap.append(alternative);return wrap;
 }
 function renderBlock(item){
   const c=item.content||{},card=$('article','tc-board-item');card.dataset.type=item.type;if(item.boardItemId)card.dataset.boardItemId=item.boardItemId;
@@ -577,7 +580,7 @@ function openSheet(kind){
     const list=$('div','tc-sheet-notes');
     const items=state.snapshot.notebook||[];
     if(!items.length)list.append($('p','tc-sheet-help','You have not saved notes for this Class yet.'));
-    items.forEach(item=>list.append(add($('article','tc-sheet-note'),$('small','',item.source_kind==='BOARD_REFERENCE'?'Saved from Board':'Personal note'),$('p','',item.content||''))));
+    items.forEach(item=>{const note=add($('article','tc-sheet-note'),$('small','',item.source_ref?'Linked classroom note':item.source_kind==='BOARD_REFERENCE'?'Saved from Board':'Personal note'),$('p','',item.content||''));if(item.source_ref&&remodeledView)note.append(button('Open linked passage',()=>{closeSheet();remodeledView?.navigateReference(item.source_ref);},'tc-mini-action'));list.append(note);});
     dialog.append(list);
     if(state.snapshot.notebookAllowed&&!state.reviewOnly){
       const form=$('form','tc-sheet-form');
@@ -651,11 +654,21 @@ function render(){
   const expandedKind=state.expanded?.kind,expandedScroll=state.expanded?.panel.scrollTop,readingScroll=state.host?.scrollTop||0;
   const previousWorkspace=state.host?.querySelector('#tc-panel-workspace textarea');
   const draft=previousWorkspace?{value:previousWorkspace.value,authority:previousWorkspace.dataset.authority,focused:document.activeElement===previousWorkspace,start:previousWorkspace.selectionStart,end:previousWorkspace.selectionEnd}:null;
-  collapsePanel({restore:false});clearVisualLoads();
   const s=state.snapshot;if(!s||!state.host)return;
   // A protected activity cannot inherit an already-open Notebook or Teacher sheet.
   // Close it before the refreshed Class DOM is made visible.
   if(['ASSESSMENT','CLASSWORK'].includes(s.modeKey)&&state.sheet)closeSheet({restore:false,force:true});
+  if(s.classroomEngine==='CLASSROOM_V1'&&!['ASSESSMENT','CLASSWORK'].includes(s.modeKey)){
+    if(remodeledView){remodeledView.update(s);return;}
+    if(!remodeledLoading){const host=state.host,classId=state.classId;
+      remodeledLoading=import('./classroom/classroom-view.js').then(({mountClassroomView})=>{
+        if(state.host!==host||state.classId!==classId||state.snapshot?.classroomEngine!=='CLASSROOM_V1'||['ASSESSMENT','CLASSWORK'].includes(state.snapshot.modeKey))return;
+        remodeledView=mountClassroomView({host,classId,legacy:state.snapshot,reviewOnly:state.reviewOnly,api:kiwiApiRequest,transport:window.KIWI_API_CLIENT.classroomTransport,renderBoard:renderBlock,openNotebook:()=>openSheet('notebook'),onClose:()=>close(),onTechnical:()=>act('interactions',{kind:'TECHNICAL_ISSUE'}),onLeave:()=>renderHeader(state.snapshot).querySelector('[data-leave-class]')?.click(),onProtected:()=>{remodeledView?.close();remodeledView=null;clearVisualLoads();closeSheet({restore:false,force:true});fetchAfterAction().catch(()=>{});}});
+      }).catch(()=>connectionFeedback('Classroom view could not load. Reconnect to retry.')).finally(()=>{remodeledLoading=null;});
+    }return;
+  }
+  if(remodeledView){remodeledView.close();remodeledView=null;}
+  collapsePanel({restore:false});clearVisualLoads();
   const root=$('div','tc-shell');root.dataset.mode=s.modeKey;
   root.append(renderHeader(s));const body=$('main','tc-layout');
   const left=$('div','tc-layout__main');left.append(renderTeacher(s));

@@ -1,0 +1,51 @@
+name: Classroom Connected Browser
+on:
+  pull_request:
+    paths:
+      - 'public/classroom/**'
+      - 'public/teaching-classroom*'
+      - 'teaching/classroom-remodel/**'
+      - 'teaching/repositories/classroom-*'
+      - 'teaching/repositories/d14-classroom.js'
+      - 'teaching/d14/service.js'
+      - 'migrations/**'
+      - 'tests/teaching/browser/**'
+      - 'tests/teaching/fixtures/classroom-*'
+      - '.github/workflows/classroom-connected-browser.yml'
+permissions:
+  contents: read
+jobs:
+  classroom-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: public.ecr.aws/docker/library/postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: kiwi_teaching_browser
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d kiwi_teaching_browser"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEACHING_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/kiwi_teaching_browser
+      TEACHING_TEST_PROJECT_REF: local-browser-ci
+      TEACHING_TEST_BOOTSTRAP: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund
+      - run: npm install --no-save --package-lock=false playwright@1.62.1 @axe-core/playwright@4.10.2
+      - run: npx playwright install --with-deps chromium
+      - run: node scripts/setup-teaching-integration-db.js
+      - run: node tests/teaching/browser/classroom-connected.js
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: classroom-browser-evidence
+          path: artifacts/classroom-browser
+          if-no-files-found: ignore

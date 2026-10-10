@@ -65,7 +65,7 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
       cause:source.session.interruption_metadata?.cause==='SYSTEM'?'SYSTEM':'UNDETERMINED',academicPenalty:false,
       resumeState:source.session.resume_instructional_substate||'INSTRUCTION',canResume:Boolean(source.session.resume_instructional_substate),
     }:null;
-    return Object.freeze({class:d11.class,controller:d11.controller,time:d11.time,serverNow:serverNow.toISOString(),identity:identity||{course_title:'Course',teacher_name:'KIWI Teacher'},
+    return Object.freeze({classroomEngine:source.session?.classroom_engine||'LEGACY',class:d11.class,controller:d11.controller,time:d11.time,serverNow:serverNow.toISOString(),identity:identity||{course_title:'Course',teacher_name:'KIWI Teacher'},
       mode:MODES[mode]||(mode==='UNSTARTED_PAST'?'Class did not start':mode==='START_DELAYED'?'Start pending':'Before Class'),modeKey:mode,focus:true,objective,teacherMessage:teacherMessage?.message||null,entry,interruption,hasEntered:Boolean(firstEntry),
       canStartClass:!source.session&&currentTime>=starts&&currentTime<ends&&source.classRow.lifecycle_state!=='CANCELLED'&&source.classRow.course_lifecycle_state==='ACTIVE'
         &&source.classRow.source_timetable_state!=='SUPERSEDED',
@@ -73,7 +73,7 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
       learningUnitId:currentLu&&planned.includes(currentLu)?currentLu:(planned[0]||null),
       board:scenes.map((s)=>({...s,items:s.items.map((item)=>validateBlock({type:item.type,content:item.content})&&item)})),
       boardHistoryAllowed:!restricted,notebook:notes,notebookAllowed:!restricted,summary,closureFacts,
-      teacherConversation:conversation,helpRequests,teacherMessagingAllowed:HELP_INSTRUCTIONAL_MODES.has(mode)&&!closed&&source.session?.lifecycle_state==='ACTIVE'
+      teacherConversation:conversation,helpRequests,teacherMessagingAllowed:source.session?.classroom_engine!=='CLASSROOM_V1'&&HELP_INSTRUCTIONAL_MODES.has(mode)&&!closed&&source.session?.lifecycle_state==='ACTIVE'
         &&source.classRow.lifecycle_state==='SCHEDULED'
         &&source.classRow.course_lifecycle_state==='ACTIVE'
         &&source.classRow.source_timetable_state==='APPROVED'
@@ -87,8 +87,9 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
     const content=String(input.content||'').trim();if(!content||content.length>10000)fail('TEACHING_D14_NOTEBOOK_CONTENT_INVALID',400);
     const boardItemId=input.boardItemId?String(input.boardItemId):null;
     const idempotencyKey=String(input.idempotencyKey||'');if(!idempotencyKey||idempotencyKey.length>160)fail('TEACHING_D14_IDEMPOTENCY_REQUIRED',400);
-    const row=await repository.addNotebook({studentId:user.id,classId,content,sourceKind:boardItemId?'BOARD_REFERENCE':'PERSONAL',boardItemId,idempotencyKey});
-    return {notebookItemId:row.notebook_item_id,content:row.content,boardItemId:row.board_item_id,versionNo:Number(row.version_no)};
+    let sourceRef=input.sourceRef||null;if(sourceRef){try{require('../classroom-remodel/contracts').versionRef(sourceRef);if(!['chapter','portion','message'].includes(sourceRef.kind))throw Error();}catch{fail('TEACHING_D14_NOTEBOOK_REFERENCE_INVALID',422);}}
+    const row=await repository.addNotebook({studentId:user.id,classId,content,sourceKind:boardItemId?'BOARD_REFERENCE':'PERSONAL',boardItemId,idempotencyKey,sourceRef});
+    return {notebookItemId:row.notebook_item_id,content:row.content,sourceRef:row.source_ref||null,boardItemId:row.board_item_id,versionNo:Number(row.version_no)};
   }
   async function signal(user,classId,input={}){
     const ctx=await context(user.id,classId);const kind=String(input.kind||'').toUpperCase();
