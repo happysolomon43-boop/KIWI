@@ -2,6 +2,7 @@
 
 const {fail,assertLifecycleTransition,normalizeConditions,extensionFeasibility,studentIntegrityProjection}=require('../d16/contracts');
 const {TEACHING_EVENTS}=require('../events/names');
+const {assertClassroomSourceUsing}=require('../d16/classroom-source');
 const {EVENT_CATEGORIES}=require('../runtime/constants');
 
 function createD16AssignmentRepository({query,withTransaction,randomUUID,clock=()=>new Date(),dueEventStore=null}={}){
@@ -43,6 +44,7 @@ function createD16AssignmentRepository({query,withTransaction,randomUUID,clock=(
     if(!idempotencyKey)throw fail('Assignment creation requires idempotency key.','TEACHING_D16_IDEMPOTENCY_REQUIRED',400);
     return withTransaction(async(tx)=>{
       const prior=await q(tx,`select a.* from public.teaching_assignments a join public.teaching_assignment_history h on h.assignment_id=a.assignment_id and h.student_id=a.student_id where a.student_id=$1 and h.idempotency_key=$2 limit 1`,[studentId,idempotencyKey]);if(prior.rows?.[0])return {assignment:prior.rows[0],idempotent:true};
+      await assertClassroomSourceUsing(tx,{studentId,classId:sourceClassId,courseId:spec.courseId,sourceLineage:spec.sourceLineage,learningUnitIds:spec.learningUnitIds});
       const course=await ensureCourse(studentId,spec.courseId,tx,true);if(!['ACTIVE','READY'].includes(String(course.lifecycle_state)))throw fail('Homework can only be authored for a Ready or Active Course.','TEACHING_D16_COURSE_NOT_WORK_ACTIVE',409,{lifecycleState:course.lifecycle_state});
       const id=randomUUID(),conds=normalizeConditions(spec.conditions||[]);
       const {rows}=await q(tx,`insert into public.teaching_assignments(assignment_id,student_id,course_id,source_class_id,title,instructions,learning_unit_refs,source_lineage,purpose,work_stake,lifecycle_state,orthogonal_conditions,state_version,estimated_effort_min_minutes,estimated_effort_max_minutes,deadline_type,original_due_at,due_at,deadline_policy_version,integrity_policy_version,correction_policy_version,assistance_mode,response_kind,solution_release_policy,graded,dependency_refs,feedback_release_policy) values($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11,$12::jsonb,1,$13,$14,$15,$16,$16,$17,$18,$19,$20,$21,$22::jsonb,$23,$24::jsonb,$25::jsonb) returning *`,[id,studentId,spec.courseId,sourceClassId,spec.title,spec.instructions,json(spec.learningUnitIds),json(spec.sourceLineage),spec.purpose,spec.workStake,spec.lifecycleState,json(conds),spec.estimatedEffortMinMinutes,spec.estimatedEffortMaxMinutes,spec.deadlineType,spec.dueAt,spec.deadlinePolicyVersion,spec.integrityPolicyVersion,spec.correctionPolicyVersion,spec.assistanceMode,spec.responseKind,json(spec.solutionReleasePolicy),spec.graded,json(spec.dependencyRefs),json(spec.feedbackReleasePolicy)]);

@@ -88,3 +88,18 @@ test('prior history exposes versioned summary and note publication metadata, nev
   // The older-summary conflict is tested with immutable historic rows in the
   // projector unit suite; PostgreSQL correctly rejects rewriting committed summaries.
 }));
+
+test('D16 atomic reviewed source check rejects stale, foreign and untaught classroom assignments',{skip},()=>harness(async h=>{
+ const {assertClassroomSourceUsing}=require('../../../teaching/d16/classroom-source');
+ await h.accept();
+ const closed=await h.d11Repository.commitClosure({studentId:h.ids.studentId,classId:h.ids.classId,expectedVersion:1});
+ const record=await h.continuity.latestRecord(h.ids.studentId,h.ids.classId);
+ const spec={studentId:h.ids.studentId,classId:h.ids.classId,courseId:h.ids.course,
+  sourceLineage:{classroomRecordRef:'classroom-record:'+record.record_id+'@'+record.content_hash,
+   classClosureRef:'class-closure:'+closed.closureFact.closure_fact_id,reviewedProposalHash:'a'.repeat(64)},
+  learningUnitIds:record.record.confirmed_taught_learning_unit_refs};
+ await assert.rejects(()=>h.withTransaction(tx=>assertClassroomSourceUsing(tx,{...spec,studentId:'foreign'})),{code:'TEACHING_D16_CLASSROOM_SOURCE_NOT_OWNED_OR_CLOSED'});
+ await assert.rejects(()=>h.withTransaction(tx=>assertClassroomSourceUsing(tx,{...spec,sourceLineage:{...spec.sourceLineage,classroomRecordRef:'classroom-record:stale@'+record.content_hash}})),{code:'TEACHING_D16_CLASSROOM_SOURCE_STALE'});
+ await assert.rejects(()=>h.withTransaction(tx=>assertClassroomSourceUsing(tx,{...spec,learningUnitIds:['not-taught']})),{code:'TEACHING_D16_CLASSROOM_SCOPE_NOT_CONFIRMED'});
+ assert.equal((await h.withTransaction(tx=>assertClassroomSourceUsing(tx,{...spec}))).contentHash,record.content_hash);
+},{learningUnit:true}));
