@@ -19,4 +19,10 @@ function validateBlock(block){
   return Object.freeze({type:block.type,content:Object.freeze(structuredClone(c))});
 }
 function validateBoardAction(action){if(!action||!OPERATIONS.includes(action.operation))bad();if(action.block)return Object.freeze({...action,block:validateBlock(action.block)});return Object.freeze({...action});}
-module.exports={TYPES,OPERATIONS,validateBlock,validateBoardAction};
+function validateTeacherTurnBlocks(message,blocks=[]){
+ if(typeof message!=='string'||!message.trim()||message.length>5000||!Array.isArray(blocks)||blocks.length>30)throw Object.assign(new Error('Teacher turn invalid.'),{code:'TEACHING_D14_TEACHER_TURN_INVALID',status:422});
+ const safe=blocks.map(validateBlock);
+ if(!safe.some(block=>!['image','diagram'].includes(block.type))){if(safe.length>=30)throw Object.assign(new Error('Teacher Board block limit exceeded.'),{code:'TEACHING_D14_TEACHER_TURN_INVALID',status:422});safe.unshift(validateBlock({type:'text',content:{text:message.trim()}}));}
+ return safe;
+}
+module.exports={TYPES,OPERATIONS,validateBlock,validateBoardAction,validateTeacherTurnBlocks};

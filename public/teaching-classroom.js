@@ -51,7 +51,7 @@ function updateSelectionNote(){
   if(!state.host||state.sheet||state.reviewOnly||!state.snapshot?.notebookAllowed||!selection?.rangeCount||selection.isCollapsed){clearSelectionNote();return;}
   const range=selection.getRangeAt(0),element=node=>node?.nodeType===Node.ELEMENT_NODE?node:node?.parentElement;
   const start=element(range.startContainer),end=element(range.endContainer);
-  const surface=start?.closest('.tc-board,.tc-workspace');
+  const surface=start?.closest('.tc-board,.tc-workspace,.cr-event,.cr-source');
   const content=selection.toString().trim();
   if(!content||!surface||!state.host.contains(surface)||!surface.contains(end)||start.closest('input,textarea,button,[contenteditable]')||end?.closest('input,textarea,button,[contenteditable]')){clearSelectionNote();return;}
   const classId=state.classId,rect=range.getBoundingClientRect();
@@ -61,7 +61,7 @@ function updateSelectionNote(){
     const saved=selectionNote;if(!saved||saved.busy||saved.classId!==state.classId||!state.snapshot?.notebookAllowed||state.reviewOnly)return;
     saved.busy=true;control.disabled=true;control.textContent='Saving…';
     try{
-      await kiwiApiRequest('/teaching/classes/'+encodeURIComponent(classId)+'/notebook',{method:'POST',body:{content:saved.content,idempotencyKey:saved.key,...(saved.boardItemId?{boardItemId:saved.boardItemId}:{})}});
+      await kiwiApiRequest('/teaching/classes/'+encodeURIComponent(classId)+'/notebook',{method:'POST',body:{content:saved.content,idempotencyKey:saved.key,...(saved.boardItemId?{boardItemId:saved.boardItemId}:{}),...(saved.sourceRef?{sourceRef:saved.sourceRef}:{})}});
       control.textContent='Added to Notebook';control.setAttribute('role','status');
       window.getSelection()?.removeAllRanges();
       await fetchSnapshot().catch(()=>{});
@@ -71,7 +71,7 @@ function updateSelectionNote(){
   control.addEventListener('pointerdown',event=>event.preventDefault());
   control.setAttribute('aria-label','Add selected classroom text to Notebook');
   if(content.length>10000){control.disabled=true;control.textContent='Select less text';control.title='Notes can contain up to 10,000 characters.';}
-  selectionNote={button:control,content,classId,key:crypto.randomUUID(),boardItemId:start.closest('[data-board-item-id]')?.dataset.boardItemId||null,busy:false};
+  selectionNote={button:control,content,classId,key:crypto.randomUUID(),boardItemId:start.closest('[data-board-item-id]')?.dataset.boardItemId||null,sourceRef:remodeledView?.referenceFor(start)||null,busy:false};
   (state.expanded?.dialog||state.host).append(control);
   const viewport=window.visualViewport,left=viewport?.offsetLeft||0,top=viewport?.offsetTop||0,width=viewport?.width||window.innerWidth,height=viewport?.height||window.innerHeight;
   control.style.left=Math.max(left+8,Math.min(rect.left,left+width-control.offsetWidth-8))+'px';
@@ -280,6 +280,7 @@ async function open(classId,{reviewOnly=false,onReviewComplete=null}={}){
 }
 
 function trapClassroomFocus(event){
+  if(event.target.closest?.('.cr-expanded-board'))return;
   if(event.key==='Escape'){
     if(state.sheet){event.preventDefault();event.stopPropagation();closeSheet();return;}
     if(state.expanded){event.preventDefault();collapsePanel();}
@@ -663,7 +664,7 @@ function render(){
     if(!remodeledLoading){const host=state.host,classId=state.classId;
       remodeledLoading=import('./classroom/classroom-view.js').then(({mountClassroomView})=>{
         if(state.host!==host||state.classId!==classId||state.snapshot?.classroomEngine!=='CLASSROOM_V1'||['ASSESSMENT','CLASSWORK'].includes(state.snapshot.modeKey))return;
-        remodeledView=mountClassroomView({host,classId,legacy:state.snapshot,reviewOnly:state.reviewOnly,api:kiwiApiRequest,transport:window.KIWI_API_CLIENT.classroomTransport,renderBoard:renderBlock,openNotebook:()=>openSheet('notebook'),onClose:()=>close(),onTechnical:()=>act('interactions',{kind:'TECHNICAL_ISSUE'}),onLeave:()=>renderHeader(state.snapshot).querySelector('[data-leave-class]')?.click(),onProtected:()=>{remodeledView?.close();remodeledView=null;clearVisualLoads();closeSheet({restore:false,force:true});fetchAfterAction().catch(()=>{});}});
+        remodeledView=mountClassroomView({host,classId,legacy:state.snapshot,reviewOnly:state.reviewOnly,api:kiwiApiRequest,transport:window.KIWI_API_CLIENT.classroomTransport,renderBoard:renderBlock,openNotebook:()=>openSheet('notebook'),onClose:()=>close(),onTechnical:()=>act('interactions',{kind:'TECHNICAL_ISSUE'}),onLeave:()=>renderHeader(state.snapshot).querySelector('[data-leave-class]')?.click(),onProtected:()=>{remodeledView?.close();remodeledView=null;clearVisualLoads();clearSelectionNote();closeSheet({restore:false,force:true});fetchAfterAction().catch(()=>{});}});
       }).catch(()=>connectionFeedback('Classroom view could not load. Reconnect to retry.')).finally(()=>{remodeledLoading=null;});
     }return;
   }

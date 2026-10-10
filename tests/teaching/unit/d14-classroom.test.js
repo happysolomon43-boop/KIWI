@@ -264,3 +264,5 @@ test('Expired scheduled start events and manual Starts are terminal, not retried
   assert.match(controller,/TEACHING_D11_CLASS_WINDOW_EXPIRED/);
   assert.match(controller,/!context\.session && now\.getTime\(\)>=new Date\(context\.classRow\.scheduled_end_at\)/);
 });
+
+test('the same D14 Teacher/Board validation rejects oversized prepared turns and unsafe text before publication',()=>{const {validateTeacherTurnBlocks}=require('../../../teaching/d14/board');assert.throws(()=>validateTeacherTurnBlocks('a'.repeat(5001)),{code:'TEACHING_D14_TEACHER_TURN_INVALID'});assert.throws(()=>validateTeacherTurnBlocks('<script>bad</script>'),{code:'TEACHING_D14_BOARD_BLOCK_INVALID'});assert.equal(validateTeacherTurnBlocks('Readable explanation')[0].type,'text');});

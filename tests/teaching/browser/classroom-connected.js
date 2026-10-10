@@ -29,7 +29,7 @@ async function main(){await harness(async h=>{
  </script></body></html>`));
  const server=await new Promise(resolve=>{const s=app.listen(0,'127.0.0.1',()=>resolve(s));});let browser;
  try{browser=await chromium.launch({headless:true});const context=await browser.newContext({viewport:{width:1440,height:900},reducedMotion:'reduce'}),page=await context.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));const url='http://127.0.0.1:'+server.address().port;
-  const opening=f.opening();opening.interaction.portions[0].teacher_message=('Connected reasoning with conditions and a worked example. <script>window.injected=true</script>\n').repeat(90);await h.accept(opening);
+  const opening=f.opening();opening.interaction.portions[0].teacher_message=('Connected reasoning with conditions and a worked example. <img src=x onerror=window.injected=true>\n').repeat(40);await h.accept(opening);
   await page.goto(url);await page.getByRole('button',{name:'Start teaching here',exact:true}).click();await page.getByRole('button',{name:'Pause',exact:true}).waitFor({state:'visible'});await page.waitForFunction(()=>!document.querySelector('.cr-controls button:nth-of-type(3)')?.disabled);
   const due=(await h.dueEventStore.claimDue({workerId:'browser-fixture-worker',now:new Date(),leaseMs:60000})).find(e=>e.event_type==='teaching.classroom.portion_release_due'&&e.payload.class_id===h.ids.classId);assert.ok(due);assert.equal((await h.repository.release(h.ids.studentId,h.ids.classId,{event:due})).released,true);
   await page.waitForFunction(()=>document.querySelector('.cr-developed-text')?.textContent.includes('Connected reasoning'));
