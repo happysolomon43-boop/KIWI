@@ -179,6 +179,7 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
   async function processLessonTurn({studentId,classId,sessionId,controllerVersion}) {
     if(!lessonIntelligence)return {accepted:true,noop:true,reason:'TEACHER_ROUTE_HELD'};
     const ctx=await context(studentId,classId);
+    if(ctx.session?.classroom_engine==='CLASSROOM_V1')return {accepted:true,noop:true,reason:'DURABLE_CLASSROOM_PRESENTATION_OWNER'};
     const {permitted}=require('./visual-service');
     if(!permitted(ctx)||ctx.session.class_session_id!==sessionId||Number(ctx.session.state_version)!==Number(controllerVersion))return {accepted:true,noop:true,reason:'LESSON_MOVED_ON'};
     const key='d14-instruction:'+sessionId+':v'+controllerVersion;

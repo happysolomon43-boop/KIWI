@@ -1,0 +1,61 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict');const {randomUUID}=require('node:crypto');
+const {integrationConfig,assertNonProductionDatabase,createIntegrationPool}=require('./test-db');
+const {fixture}=require('../fixtures/classroom-database');const f=require('../fixtures/classroom-remodel-academic');const {fixturePolicy}=require('../fixtures/classroom-presentation-policy');
+const {connectionString,projectRef,skipReason:skip}=integrationConfig('Classroom durable presentation');
+async function harness(run){assertNonProductionDatabase({connectionString,projectRef});const pool=createIntegrationPool(connectionString),client=await pool.connect();await client.query('BEGIN');let seq=0;
+ const withTransaction=async fn=>{const name='presentation_'+(++seq);await client.query('SAVEPOINT '+name);try{const result=await fn(client);await client.query('RELEASE SAVEPOINT '+name);return result;}catch(error){await client.query('ROLLBACK TO SAVEPOINT '+name);await client.query('RELEASE SAVEPOINT '+name);throw error;}};
+ const query=(...args)=>client.query(...args);
+ try{const ids=await fixture(client);await query("update public.teaching_classes set scheduled_start_at=now()-interval '1 minute',scheduled_end_at=now()+interval '1 hour' where class_id=$1",[ids.classId]);
+  const academic=require('../../../teaching/repositories/classroom-academic-artifacts').createClassroomAcademicRepository({query,withTransaction,randomUUID});
+  const base={...ids,expectedScheduleVersion:1,expectedPlanVersion:1};const artifacts={};
+  for(const kind of ['chapter','plan','guide','opening']){const context=kind==='chapter'?{requiredUnits:['U01']}:{chapter:f.chapter(),essentialAnchors:['U01.E01'],directive:f.directive(),supportedBoardOperations:[]};const dependencies=Object.values(artifacts).map(a=>({kind:a.artifact_kind,ref:a.logical_id,version:a.logical_version,artifactId:a.artifact_version_id}));const a=await academic.saveCandidate({...base,kind,operationKey:kind,logicalId:kind+'1',logicalVersion:'1',payload:f[kind](),producer:f.producer(kind),context,dependencies});await academic.recordValidation({studentId:ids.studentId,artifactId:a.artifact_version_id,receipt:{accepted:true,independent:true,routeQualified:true,reviewId:'FIXTURE_NOT_PROVIDER',contentHash:a.content_sha256}});artifacts[kind]=a;}
+  await academic.bindReady({...base,blueprintId:ids.blueprint,chapterId:artifacts.chapter.artifact_version_id,planId:artifacts.plan.artifact_version_id,guideId:artifacts.guide.artifact_version_id,openingId:artifacts.opening.artifact_version_id,receipt:{ready:true,delivery1GatePassed:true,routesQualified:true,pplReady:true,evidenceKind:'FIXTURE'}});
+  const sessionId=ids.classId+'-session';await query("insert into public.teaching_class_sessions(class_session_id,student_id,class_id,course_id,course_plan_id,lesson_blueprint_id,lifecycle_state,instructional_substate,state_version,started_at,classroom_engine,classroom_chapter_artifact_id,classroom_binding_version) values($1,$2,$3,$4,$5,$6,'ACTIVE','INSTRUCTION',1,now(),'CLASSROOM_V1',$7,1)",[sessionId,ids.studentId,ids.classId,ids.course,ids.coursePlanId,ids.blueprint,artifacts.chapter.artifact_version_id]);
+  const d11Repository=require('../../../teaching/repositories/d11-lesson-controller').createD11LessonControllerRepository({query,withTransaction,randomUUID});
+  const d14Repository=require('../../../teaching/repositories/d14-classroom').createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repository});
+  const dueEventStore=require('../../../teaching/runtime/postgres-event-store').createPostgresTeachingEventStore({query,randomUUID});
+  const outboxStore=require('../../../teaching/runtime/postgres-outbox-store').createPostgresTeachingOutboxStore({query,randomUUID});
+  const repository=require('../../../teaching/repositories/classroom-presentation').createClassroomPresentationRepository({query,withTransaction,randomUUID,d14Repository,dueEventStore,outboxStore});
+  await repository.initialize({studentId:ids.studentId,classId:ids.classId,policy:fixturePolicy(),pace:'normal'});
+  const read=()=>repository.read(ids.studentId,ids.classId,{snapshot:true});
+  const args=(snapshot,extra)=>({schemaVersion:'classroom-domain.v1',sessionId,operationKey:randomUUID(),expectedControllerVersion:snapshot.controller_version,expectedDeliveryVersion:snapshot.delivery_version,deliveryEpoch:snapshot.delivery_epoch,controlEpoch:snapshot.control_epoch,clientId:'first',...extra});
+  const accept=async output=>repository.acceptSequence({studentId:ids.studentId,classId:ids.classId,operationKey:randomUUID(),output:output||f.opening(),directive:f.directive(),expected:await repository.capture(ids.studentId,ids.classId),types:['text']});
+  await run({ids,sessionId,query,withTransaction,repository,read,args,accept,d14Repository,dueEventStore});
+ }finally{await client.query('ROLLBACK');client.release();await pool.end();}}
+test('presentation tables enforce service-only RLS and immutable private content',{skip},async()=>harness(async({query,repository,accept})=>{
+ const tables=(await query("select c.relname,c.relrowsecurity,has_table_privilege('authenticated',c.oid,'SELECT') browser_read from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='public' and c.relname in ('teaching_classroom_delivery','teaching_classroom_sequences','teaching_classroom_portions','teaching_classroom_conversation','teaching_classroom_delivery_receipts','teaching_classroom_delivery_commands')")).rows;assert.equal(tables.length,6);assert.ok(tables.every(t=>t.relrowsecurity&&!t.browser_read));await accept();await assert.rejects(()=>repository.command('other','missing',{}));
+}));
+test('publication is durable and private until released; receipts, reload, duplicate due and takeover preserve one effect',{skip},async()=>harness(async h=>{
+ const {ids,repository,read,args,accept,query,dueEventStore}=h;const output=f.opening();output.interaction.portions.push({...f.clone(output.interaction.portions[0]),id:'portion2',sequence:2,teacher_message:'Now retain the stated conditions when applying this relationship.'});await accept(output);
+ assert.equal((await read()).conversation.length,0);assert.equal((await read()).released_portions.length,0);
+ const claim=await repository.command(ids.studentId,ids.classId,args(await read(),{intent:'claim'}));assert.ok(claim.leaseToken);
+ const event=(await dueEventStore.claimDue({workerId:'fixture-worker',now:new Date(),leaseMs:60000})).find(e=>e.event_type==='teaching.classroom.portion_release_due');assert.ok(event);
+ const first=await repository.release(ids.studentId,ids.classId,{event});assert.equal(first.released,true);assert.equal((await repository.release(ids.studentId,ids.classId,{event})).released,false);
+ let snapshot=await read();assert.equal(snapshot.conversation.length,1);assert.equal(snapshot.position.last_render_confirmed,0);assert.equal(snapshot.capabilities.messages,false);
+ const receipt=args(snapshot,{portionId:first.portionId,leaseToken:claim.leaseToken,renderState:'accessible_ready',active:true,representationReady:true,readyAssetIds:[]});
+ assert.equal((await repository.receipt(ids.studentId,ids.classId,receipt)).masteryEstablished,false);assert.equal((await repository.receipt(ids.studentId,ids.classId,receipt)).replay,true);
+ await query('select pg_sleep(0.03)');assert.equal((await repository.release(ids.studentId,ids.classId,{event})).reason,'STALE_DUE_PORTION');
+ snapshot=await read();const takeover=await repository.command(ids.studentId,ids.classId,args(snapshot,{intent:'takeover',clientId:'second'}));assert.equal(takeover.controlEpoch,2);
+ await assert.rejects(async()=>repository.command(ids.studentId,ids.classId,args(await read(),{intent:'pause',leaseToken:claim.leaseToken})),{code:'CLASSROOM_CLIENT_LEASE_STALE'});
+ assert.equal((await repository.release(ids.studentId,ids.classId)).released,true);
+ assert.equal((await query('select count(*)::int n from public.teaching_teacher_communications where class_session_id=$1',[h.sessionId])).rows[0].n,2);
+ assert.equal((await read()).conversation.length,2);const delta=await repository.read(ids.studentId,ids.classId,{after:1});assert.equal(delta.events.length,1);assert.equal(delta.events[0].sequence,2);
+ await assert.rejects(()=>repository.read(ids.studentId,ids.classId,{after:99}),{code:'CLASSROOM_CURSOR_RESET_REQUIRED'});
+}));
+test('atomic D14 failure rolls back conversation, portion publication and outbox',{skip},async()=>harness(async h=>{
+ await h.accept();await h.repository.command(h.ids.studentId,h.ids.classId,h.args(await h.read(),{intent:'claim'}));const original=h.d14Repository.publishTeacherTurnUsing;
+ // Repository object is frozen; inject a wrapper in a second engine over the same state.
+ const failing=require('../../../teaching/repositories/classroom-presentation').createClassroomPresentationRepository({query:h.query,withTransaction:h.withTransaction,randomUUID,dueEventStore:h.dueEventStore,outboxStore:{appendUsing:()=>{throw new Error('crash-before-commit');}},d14Repository:{publishTeacherTurnUsing:original}});
+ await assert.rejects(()=>failing.release(h.ids.studentId,h.ids.classId),/crash-before-commit/);assert.equal((await h.read()).conversation.length,0);assert.equal((await h.query('select count(*)::int n from public.teaching_teacher_communications where class_session_id=$1',[h.sessionId])).rows[0].n,0);assert.equal((await h.repository.release(h.ids.studentId,h.ids.classId)).released,true);
+}));
+test('protected transition fences generation, clears public history and invalidates pending portions',{skip},async()=>harness(async h=>{
+ const expected=await h.repository.capture(h.ids.studentId,h.ids.classId);await h.accept();await h.query("update public.teaching_class_sessions set instructional_substate='ASSESSMENT',state_version=state_version+1 where class_session_id=$1",[h.sessionId]);
+ assert.equal((await h.repository.acceptSequence({studentId:h.ids.studentId,classId:h.ids.classId,operationKey:'late',output:f.opening(),directive:f.directive(),expected})).accepted,false);
+ const snapshot=await h.read();assert.equal(snapshot.chapter_ref,null);assert.equal(snapshot.position.resume_anchor,null);assert.deepEqual(snapshot.conversation,[]);assert.equal(snapshot.delivery_state,'RECOVERING');assert.equal((await h.repository.release(h.ids.studentId,h.ids.classId)).released,false);
+ assert.equal((await h.query("select count(*)::int n from public.teaching_classroom_portions where session_id=$1 and status='SUPERSEDED'",[h.sessionId])).rows[0].n,1);
+}));
+test('paused authoritative end invalidates teaching without changing D11 lifecycle',{skip},async()=>harness(async h=>{
+ await h.accept();const claim=await h.repository.command(h.ids.studentId,h.ids.classId,h.args(await h.read(),{intent:'claim'}));await h.repository.command(h.ids.studentId,h.ids.classId,h.args(await h.read(),{intent:'pause',leaseToken:claim.leaseToken}));
+ await h.query("update public.teaching_classes set scheduled_end_at=clock_timestamp()-interval '1 second' where class_id=$1",[h.ids.classId]);const snapshot=await h.read();assert.equal(snapshot.delivery_state,'CLOSING');assert.equal(snapshot.capabilities.presentation,false);assert.equal((await h.query('select lifecycle_state from public.teaching_class_sessions where class_session_id=$1',[h.sessionId])).rows[0].lifecycle_state,'ACTIVE');
+}));
