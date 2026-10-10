@@ -77,7 +77,7 @@ function createClassroomTaskService({repository,coordinator,reviewer,presentatio
    const accepted=await turnReviewer.acceptQuestion({studentId,classId,task:designed.task,generated,expected,signal:controller.signal});
    if(!accepted?.accepted||!accepted.independent||!accepted.ownerRef||!accepted.executionId||accepted.taskId!==designed.task.id||accepted.contentHash!==hash({output:generated.output,directive:generated.directive})||accepted.authorityHash!==hash(expected.authority))throw failure('CLASSROOM_TASK_QUESTION_REVIEW_REQUIRED',503);
    if(controller.signal.aborted)throw failure('CLASSROOM_TASK_HANDLING_TIMEOUT',503);
-   await presentationRepository.acceptSequence({studentId,classId,operationKey:operationKey+':question',output:generated.output,directive:generated.directive,expected,types:generated.types||['text'],assets:generated.assets||[],classroomTaskId:designed.task.id});
+   const prepared=await presentationRepository.acceptSequence({studentId,classId,operationKey:operationKey+':question',output:generated.output,directive:generated.directive,expected,types:generated.types||['text'],assets:generated.assets||[],classroomTaskId:designed.task.id});if(!prepared.accepted)throw failure(prepared.reason||'CLASSROOM_TASK_QUESTION_STALE',409);
    return repository.completeAction(studentId,classId,turnId,{action:action.action,taskId:designed.task.id,variationReviewRef:validation.variationReviewRef,questionReview:accepted});
   };
   try{return await Promise.race([run(),timeout]);}finally{clearTimeout(timer);}
