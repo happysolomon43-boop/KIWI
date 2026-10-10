@@ -22,7 +22,7 @@ function createD27ClassStudyCardSetReader({d27ServiceReader,subjectReader,d11Rep
     !ref.subjectId||!ref.cardId||!ref.learningUnitId||!ref.referencedVersion||
     String(ref.currentVersion)!==String(ref.referencedVersion))
     fail('TEACHING_D27_CLASS_CARD_SET_STALE');
-   const identity=ref.subjectId+':'+ref.cardId;
+   const identity=ref.subjectId+':'+ref.cardId+':'+ref.learningUnitId;
    if(identities.has(identity))fail('TEACHING_D27_CLASS_CARD_SET_DUPLICATE');
    identities.add(identity);
    if(!cardSets.has(ref.subjectId))cardSets.set(ref.subjectId,await subjectReader.getCorpusForUser(studentId,ref.subjectId));
@@ -35,7 +35,7 @@ function createD27ClassStudyCardSetReader({d27ServiceReader,subjectReader,d11Rep
     front:String(card.front_content||card.front),back:String(card.back_content||card.back),
     validated:true});
   }
-  cards.sort((a,b)=>a.cardId.localeCompare(b.cardId));
+  cards.sort((a,b)=>a.cardId.localeCompare(b.cardId)||a.learningUnitId.localeCompare(b.learningUnitId));
   const digest=createHash('sha256').update(JSON.stringify({studentId,courseId,classId,cards})).digest('hex');
   return Object.freeze({ref:'d27-class-card-set:'+classId+'@'+digest,cards:Object.freeze(cards)});
  };
