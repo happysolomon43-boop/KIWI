@@ -21,8 +21,10 @@ test('no-homework is allowed only as an explicit independently adopted owner dec
 test('D17 handoff only forwards owner-selected blueprint to existing eligibility validation',()=>{
  const proposal={...base,mode:'guide_assessment',output:{artifacts:{assessment_guidance:{}}}};
  const a={approved:true,independent:true,owner:'D17',ownerRef:'d17',reviewRef:'r2',inputHash:'i1',recordHash:'v1',outputHash:hash(proposal.output),
-  decision:'PREPARE_ELIGIBLE_BLUEPRINT',assessmentId:'assessment',input:{blueprint:{slots:[]},measurementRequirements:{coverage:'actual'}}};
+  decision:'PREPARE_ELIGIBLE_BLUEPRINT',assessmentId:'assessment',input:{blueprint:{slots:[]},measurementRequirements:{coverage:'actual'}},sourceLineage:{classroomRecordRef:'classroom-record:r1@v1',classClosureRef:'class-closure:c1',reviewedProposalHash:hash(proposal.output)}};
  assert.equal(validateReviewedOwnerHandoff({proposal,approval:a,record}).owner,'D17');
  assert.throws(()=>validateReviewedOwnerHandoff({proposal,approval:{...a,input:{...a.input,lane:'FORECAST_PLANNING'}},record}));
  assert.throws(()=>validateReviewedOwnerHandoff({proposal,approval:{...a,owner:'D20'},record}));
+ assert.throws(()=>validateReviewedOwnerHandoff({proposal,approval:{...a,sourceLineage:{...a.sourceLineage,classroomRecordRef:'classroom-record:stale'}},record}));
+ assert.throws(()=>validateReviewedOwnerHandoff({proposal,approval:{...a,sourceLineage:null},record}));
 });

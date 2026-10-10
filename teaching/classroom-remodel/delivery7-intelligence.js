@@ -113,8 +113,14 @@ function validateReviewedOwnerHandoff({proposal,approval,record,workload}={}) {
     !approval.assessmentId||!approval.input?.blueprint||!approval.input?.measurementRequirements||
     approval.input.lane&&approval.input.lane!=='ELIGIBLE_CANDIDATE')
   throw failure('CLASSROOM_ASSESSMENT_OWNER_BLUEPRINT_REQUIRED',409);
- // Existing D17 ownership/eligibility/package validation must still execute.
- return {owner:'D17',assessmentId:approval.assessmentId,input:approval.input};
+ // The owner must attest the exact latest Class and its D11 closure.
+ // D17 will re-check these under the delivery row lock at Blueprint commit.
+ const lineage=approval.sourceLineage;
+ if(!lineage||lineage.classroomRecordRef!=='classroom-record:'+record.record_id+'@'+record.content_hash||
+  typeof lineage.classClosureRef!=='string'||!/^class-closure:[^@]+$/.test(lineage.classClosureRef)||
+  lineage.reviewedProposalHash!==hash(proposal.output))
+  throw failure('CLASSROOM_ASSESSMENT_OWNER_SOURCE_REQUIRED',409);
+ return {owner:'D17',assessmentId:approval.assessmentId,input:approval.input,sourceLineage:lineage};
 }
 
 function createDelivery7Intelligence({orchestrator,d11Repository,continuityRepository,requirementsReader,reviewer=null,chapterReader=null,downstreamOwners=null,ownerApprovalReader=null}={}) {
@@ -201,7 +207,7 @@ function createDelivery7Intelligence({orchestrator,d11Repository,continuityRepos
   if(typeof downstreamOwners?.d17?.prepareBlueprint!=='function')
    return {held:true,reason:'CLASSROOM_D17_OWNER_ROUTE_UNAVAILABLE',committed:false};
   const prepared=await downstreamOwners.d17.prepareBlueprint({id:studentId},reviewed.assessmentId,
-   {...reviewed.input,lane:'ELIGIBLE_CANDIDATE',idempotencyKey:'classroom-d17:'+hash({reviewRef:approval.reviewRef,recordHash:fresh.record.content_hash}),
+   {...reviewed.input,lane:'ELIGIBLE_CANDIDATE',classroomSource:{classId,sourceLineage:reviewed.sourceLineage,reviewRef:approval.reviewRef},idempotencyKey:'classroom-d17:'+hash({reviewRef:approval.reviewRef,recordHash:fresh.record.content_hash}),
     provenanceRefs:[...new Set([...(reviewed.input.provenanceRefs||[]),`classroom-record:${fresh.record.record_id}@${fresh.record.content_hash}`,`classroom-planning-review:${approval.reviewRef}`])]});
   return {accepted:true,committed:true,owner:'D17',assessmentId:reviewed.assessmentId,
    blueprintId:prepared?.blueprint?.assessment_blueprint_id||null,reviewRef:approval.reviewRef,
