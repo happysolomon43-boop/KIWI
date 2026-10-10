@@ -13,7 +13,7 @@ test('publication is durable and private until released; receipts, reload, dupli
  const claim=await repository.command(ids.studentId,ids.classId,args(await read(),{intent:'claim'}));assert.ok(claim.leaseToken);
  const event=(await dueEventStore.claimDue({workerId:'fixture-worker',now:new Date(),leaseMs:60000})).find(e=>e.event_type==='teaching.classroom.portion_release_due'&&e.payload.class_id===h.ids.classId);assert.ok(event);
  const first=await repository.release(ids.studentId,ids.classId,{event});assert.equal(first.released,true);assert.equal((await repository.release(ids.studentId,ids.classId,{event})).released,false);
- let snapshot=await read();assert.equal(snapshot.conversation.length,1);assert.equal(snapshot.position.last_render_confirmed,0);assert.equal(snapshot.capabilities.messages,false);
+ let snapshot=await read();assert.equal(snapshot.conversation.length,1);assert.equal(snapshot.released_portions[0].event_id,snapshot.conversation[0].id);assert.equal(snapshot.position.last_render_confirmed,0);assert.equal(snapshot.capabilities.messages,false);
  const receipt=args(snapshot,{portionId:first.portionId,leaseToken:claim.leaseToken,renderState:'accessible_ready',active:true,representationReady:true,readyAssetIds:[]});
  assert.equal((await repository.receipt(ids.studentId,ids.classId,receipt)).masteryEstablished,false);assert.equal((await repository.receipt(ids.studentId,ids.classId,receipt)).replay,true);
  await query('select pg_sleep(0.03)');assert.equal((await repository.release(ids.studentId,ids.classId,{event})).reason,'STALE_DUE_PORTION');

@@ -30,6 +30,10 @@ export function mountClassroomView({
   let lastClockTime = null,
     clockReceived = performance.now();
   const displayClock = () => {
+    if (reviewOnly) {
+      classClock.textContent = "Past class · read-only record";
+      return;
+    }
     const s = store?.snapshot;
     if (!s?.clocks.class_end_at) return;
     if (lastClockTime !== s.server_time) {
@@ -51,7 +55,7 @@ export function mountClassroomView({
       String(seconds % 60).padStart(2, "0") +
       " remaining in the teaching window";
   };
-  const clockTimer = setInterval(displayClock, 1000);
+  const clockTimer = reviewOnly ? null : setInterval(displayClock, 1000);
   const status = node("p", "Connecting…", "cr-status");
   status.setAttribute("role", "status");
   status.setAttribute("aria-live", "polite");
@@ -460,13 +464,7 @@ export function mountClassroomView({
       ),
     );
     if (ready.length !== required.length) return;
-    if (
-      ![...seen.values()].some(
-        (n) =>
-          n.querySelector(".cr-developed-text")?.textContent ===
-          p.content.teacher_message,
-      )
-    )
+    if (![...seen.values()].some((n) => n.dataset.eventId === p.event_id))
       return;
     const boardRefs = p.content.board_refs || [];
     if (boardRefs.some((ref) => !boardSeen.has(ref.id))) return;
@@ -547,16 +545,11 @@ export function mountClassroomView({
             img.dataset.assetId = item.content.assetId;
             img.addEventListener("load", confirmReady, { once: true });
           }
-        const match = (data.events || []).find(
-          (e) => e.text === p.content.teacher_message,
+        const target = [...seen.values()].find(
+          (n) => n.dataset.eventId === p.event_id,
         );
-        const target = match
-          ? seen.get(match.sequence)
-          : [...seen.values()].find(
-              (n) =>
-                n.querySelector(".cr-developed-text")?.textContent ===
-                p.content.teacher_message,
-            );
+        if (!target) continue;
+        target.dataset.portionId = p.id;
         (target || feed).append(board);
         const expand = action("Expand Board reference", () =>
           expandBoard(board, expand),
