@@ -60,8 +60,28 @@ function delivery7Request({context,mode,requestKey,record=null,history=null,requ
  };
 }
 
+
+function reviewedContinuationLinks({receipt,history}={}) {
+ const selected=receipt?.approvedQuestionRefs;
+ if(!receipt?.accepted||!receipt.independent||!receipt.ownerRef||!Array.isArray(selected))
+  throw failure('CLASSROOM_CONTINUITY_OWNER_SELECTION_REQUIRED',409);
+ const permitted=new Set((history?.records||[]).filter(r=>r.state==='EXACT_RECORDS_AVAILABLE')
+  .flatMap(r=>(r.classroom?.pending_questions||[]).filter(q=>q.state==='unresolved at closure')
+   .map(q=>String(r.session_id)+':'+String(q.message_id))));
+ const seen=new Set();
+ return selected.map(ref=>{
+  if(!ref||Object.keys(ref).sort().join(',')!=='messageId,sourceSessionId'||
+     typeof ref.messageId!=='string'||typeof ref.sourceSessionId!=='string')
+   throw failure('CLASSROOM_CONTINUITY_LINK_REFERENCE_INVALID',422);
+  const key=ref.sourceSessionId+':'+ref.messageId;
+  if(!permitted.has(key)||seen.has(key))throw failure('CLASSROOM_CONTINUITY_SOURCE_NOT_REVIEWABLE',409);
+  seen.add(key);return Object.freeze({sourceSessionId:ref.sourceSessionId,messageId:ref.messageId});
+ });
+}
+
 function createDelivery7Intelligence({orchestrator,d11Repository,continuityRepository,requirementsReader,reviewer=null,chapterReader=null}={}) {
  if(typeof orchestrator?.execute!=='function'||!d11Repository||!continuityRepository||typeof requirementsReader!=='function')throw new TypeError('Delivery 7 requires existing orchestration, owned records and adopted requirements');
+ const reviewedContinuity=new WeakMap();
  async function inputs(args){
   const context=await d11Repository.getClassContext(args.studentId,args.classId);
   if(!context)throw failure('CLASSROOM_SESSION_NOT_FOUND',404);
@@ -87,8 +107,29 @@ function createDelivery7Intelligence({orchestrator,d11Repository,continuityRepos
   if(!receipt?.accepted||!receipt.independent||!result.executionId||receipt.executionId!==result.executionId||receipt.inputHash!==request.planningBinding.inputHash||receipt.outputHash!==hash(output)||!receipt.ownerRef)return {held:true,reason:'CLASSROOM_PLANNING_INDEPENDENT_REVIEW_REQUIRED',committed:false};
   const current=delivery7Request(await inputs(args));
   if(current.planningBinding.inputHash!==request.planningBinding.inputHash)throw failure('CLASSROOM_PLANNING_RESULT_STALE',409);
-  return {proposed:true,committed:false,mode:args.mode,output,receipt,binding:request.planningBinding,assignmentCreated:false,followUpScheduled:false,officialOutcome:false};
+  const proposal={proposed:true,committed:false,mode:args.mode,output,receipt,binding:request.planningBinding,assignmentCreated:false,followUpScheduled:false,officialOutcome:false};
+  if(args.mode==='prepare_continuity')reviewedContinuity.set(proposal,{studentId:args.studentId,classId:args.classId,requestKey:args.operationKey});
+  return proposal;
  }
- return Object.freeze({propose});
+ // Trusted internal workflow: the independent owner selects exact unresolved
+ // source IDs. Merely generating continuity prose cannot schedule or resolve
+ // a question; each link remains an unscheduled durable cross-Class reference.
+ async function linkReviewedContinuity({studentId,classId,proposal}={}){
+  const bound=proposal&&reviewedContinuity.get(proposal);
+  if(!bound||bound.studentId!==studentId||bound.classId!==classId||proposal.mode!=='prepare_continuity')
+   throw failure('CLASSROOM_CONTINUITY_REVIEWED_PROPOSAL_REQUIRED',409);
+  const current=delivery7Request(await inputs({studentId,classId,mode:'prepare_continuity',operationKey:bound.requestKey}));
+  if(current.planningBinding.inputHash!==proposal.binding.inputHash)
+   throw failure('CLASSROOM_CONTINUITY_REVIEW_STALE',409);
+  const links=reviewedContinuationLinks({receipt:proposal.receipt,history:await continuityRepository.history(studentId,classId)});
+  const accepted=[];
+  for(const link of links){
+   const operationKey='reviewed-continuity:'+hash({inputHash:proposal.binding.inputHash,link});
+   const result=await continuityRepository.linkQuestion({...link,studentId,classId,operationKey});
+   accepted.push({...link,linkId:result.linkId,replay:result.replay===true});
+  }
+  return {accepted:true,links:accepted,scheduled:false,questionsResolved:false,academicEvidenceCommitted:false};
+ }
+ return Object.freeze({propose,linkReviewedContinuity});
 }
-module.exports={MODES,delivery7Request,createDelivery7Intelligence};
+module.exports={MODES,delivery7Request,reviewedContinuationLinks,createDelivery7Intelligence};
