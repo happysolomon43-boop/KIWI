@@ -1,7 +1,7 @@
 {
   "version": "classroom-delivery-7-checkpoint.v1",
   "delivery": 7,
-  "status": "INACTIVE_IN_PROGRESS_CLOSURE_CONTINUITY_CORE_IMPLEMENTED",
+  "status": "INACTIVE_IN_PROGRESS_WITH_REVIEWED_HANDOFFS_AND_HISTORY_PROJECTION",
   "branch": "feat/classroom-remodel-delivery-7",
   "baseCommit": "69c6a3cb975697a51947dd804a0edc45497a646d",
   "activation": "INACTIVE",
@@ -16,15 +16,17 @@
     "liveProviderQualified": false
   },
   "remainingDelivery7": [
-    "Before-end close_class and authorized Presenter closing workflow, including an adopted capability binding",
-    "Consume reviewed planning proposals in the existing D16/D17 owner workflows",
-    "Source-linked summaries, older-summary conflict handling and notes publication-state UI",
-    "Cross-Class owner workflow and connected browser acceptance"
+    "Register/adopt an expressly scoped TPF-21 close_class capability; schedule pre-end coordination and provide verified TPF-08 closing without fabricating D11 closure.",
+    "Provide authoritative adopted numerical policy and independent reviewers; qualify a real provider/reviewer close_class and Presenter path before enabling it.",
+    "Inject trusted D16/D17 owner approval readers and current workload/eligibility rules; run accepted end-to-end owner handoffs, D17 record-freshness and no-homework cases.",
+    "Cross-Class owner and connected browser acceptance, including confirmed linked reply and accurate subsequent history.",
+    "Source-linked student Class Summary and D27 published Study Notes presentation through authorized owner readers; metadata-only private holds implemented.",
+    "Obtain and validate the authoritative chapter/source correction, guide, plan and remap bundle; run resulting acceptance evidence."
   ],
   "inheritedAcceptanceBlockers": [
-    "Numerical configuration owner adoption",
-    "Live provider and independent reviewer qualification",
-    "Validated source-correction chapter, guide, plan and remap bundle",
+    "Adopted runtime numerical policy and owner-selected review configuration still absent",
+    "Live provider and independent reviewer qualification still absent",
+    "Validated source-correction chapter, guide, plan and remap bundle still absent",
     "44-scenario qualification ledger remains NOT_QUALIFIED"
   ],
   "delivery8": "BLOCKED_BY_DELIVERIES_1_TO_7_ACCEPTANCE",
@@ -40,6 +42,35 @@
   "implementedHistoryUI": [
     "Recent Class availability and latest reconciled closure facts",
     "Separate paginated released historical conversation with original source references",
-    "Protected takeover, replacement-session and view-close stale-response rejection"
-  ]
+    "Protected takeover, replacement-session and view-close stale-response rejection",
+    "Read-only Class Summary version/status/source link with stale reconciliation hold",
+    "Private or held Study Notes status without exposing TPF-20 payload or asserting D27 publication"
+  ],
+  "headAtCheckpoint": "b397151e88119037625cb75627c750a817fea1d8",
+  "implementationProgress": {
+    "closureAndReconciliation": "IMPLEMENTED_PREVIOUSLY",
+    "historyAndReadOnlyConversation": "IMPLEMENTED_PREVIOUSLY",
+    "sourceLinkedSummaryAndNotesPublicationMetadata": "IMPLEMENTED_PENDING_FINAL_CI",
+    "olderSummaryCurrentRecordConflict": "IMPLEMENTED_PENDING_FINAL_CI",
+    "reviewedCrossClassQuestionSelectionAndLinks": "IMPLEMENTED_PENDING_OWNER_AND_BROWSER_ACCEPTANCE",
+    "d16OwnerIntegration": "CANDIDATE_IMPLEMENTED_PENDING_WORKLOAD_OWNER_ADOPTION",
+    "d16ClosedRecordTransactionGuard": "IMPLEMENTED_PENDING_NATIVE_DATABASE_CI",
+    "d17OwnerIntegration": "CANDIDATE_IMPLEMENTED_PENDING_OWNER_ADOPTION_AND_CONNECTED_ACCEPTANCE",
+    "beforeEndClosing": "NOT_IMPLEMENTED_AWAITING_GOVERNED_CLOSE_CLASS_CAPABILITY",
+    "presenterClosing": "NOT_IMPLEMENTED_AWAITING_AUTHORIZED_DIRECTIVE_AND_ROUTE"
+  },
+  "implementationEvidence": {
+    "baselineGreenCommit": "757cadcfc4c5f1771a0b424d7f0cb7a3e32af713",
+    "baselineGreenGithubWorkflows": 32,
+    "currentHeadAtDocumentAuthoring": "b397151e88119037625cb75627c750a817fea1d8",
+    "currentHeadCI": "PENDING_FULL_PUBLISHED_HEAD_VERIFICATION",
+    "unqualifiedFixturesAreNotProviderEvidence": true,
+    "newUnitFiles": [
+      "tests/teaching/unit/classroom-history-artifacts.test.js",
+      "tests/teaching/unit/classroom-reviewed-continuity.test.js",
+      "tests/teaching/unit/classroom-delivery7-owner-handoffs.test.js"
+    ],
+    "newNativeTest": "tests/teaching/integration/classroom-closure-continuity.test.js",
+    "D16Guard": "teaching/d16/classroom-source.js"
+  }
 }
