@@ -216,6 +216,18 @@
             "tests/teaching/integration/classroom-presentation.test.js",
             "tests/teaching/unit/classroom-session-client.test.js"
           ]
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "736e8fac1aaee4525e56c231f800b2654a201bb9",
+          "evidenceKind": "OBSERVED_CHROMIUM_CONNECTED_API_NATIVE_POSTGRES_SYNTHETIC_FIXTURES",
+          "description": "Recovery checks: lost acknowledgement after actual Notebook commit retries identical body with one row; offline tab takeover retains deadline and render position; pending owned-asset cancellation and loaded blob revocation; delayed protected/closed delta rejection and clean stream EOF cursor recovery (unit). Exact owner-shell handoff, manual accessibility, provider and deployment evidence remain unqualified.",
+          "files": [
+            "tests/teaching/browser/classroom-connected.js",
+            "tests/teaching/unit/classroom-session-client.test.js"
+          ],
+          "browserRun": 38042927078,
+          "browserJob": 114186613563
         }
       ],
       "liveProviderEvidence": [],
@@ -248,6 +260,18 @@
             "tests/teaching/integration/classroom-presentation.test.js"
           ],
           "scope": "Native persistence/release/receipt/lease/epoch/rollback and connected fixture HTTP transport. Provider stall is a controlled fixture. Browser/screen-reader, actual-account, deployed proxy and live-provider qualification remain pending."
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "736e8fac1aaee4525e56c231f800b2654a201bb9",
+          "evidenceKind": "OBSERVED_CHROMIUM_CONNECTED_API_NATIVE_POSTGRES_SYNTHETIC_FIXTURES",
+          "description": "Recovery checks: lost acknowledgement after actual Notebook commit retries identical body with one row; offline tab takeover retains deadline and render position; pending owned-asset cancellation and loaded blob revocation; delayed protected/closed delta rejection and clean stream EOF cursor recovery (unit). Exact owner-shell handoff, manual accessibility, provider and deployment evidence remain unqualified.",
+          "files": [
+            "tests/teaching/browser/classroom-connected.js",
+            "tests/teaching/unit/classroom-session-client.test.js"
+          ],
+          "browserRun": 38042927078,
+          "browserJob": 114186613563
         }
       ],
       "liveProviderEvidence": [],
@@ -282,6 +306,18 @@
             "tests/teaching/integration/classroom-presentation.test.js",
             "tests/teaching/unit/classroom-session-client.test.js"
           ]
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "736e8fac1aaee4525e56c231f800b2654a201bb9",
+          "evidenceKind": "OBSERVED_CHROMIUM_CONNECTED_API_NATIVE_POSTGRES_SYNTHETIC_FIXTURES",
+          "description": "Recovery checks: lost acknowledgement after actual Notebook commit retries identical body with one row; offline tab takeover retains deadline and render position; pending owned-asset cancellation and loaded blob revocation; delayed protected/closed delta rejection and clean stream EOF cursor recovery (unit). Exact owner-shell handoff, manual accessibility, provider and deployment evidence remain unqualified.",
+          "files": [
+            "tests/teaching/browser/classroom-connected.js",
+            "tests/teaching/unit/classroom-session-client.test.js"
+          ],
+          "browserRun": 38042927078,
+          "browserJob": 114186613563
         }
       ],
       "liveProviderEvidence": [],
@@ -305,6 +341,18 @@
             "tests/teaching/integration/classroom-presentation.test.js"
           ],
           "scope": "Native persistence/release/receipt/lease/epoch/rollback and connected fixture HTTP transport. Provider stall is a controlled fixture. Browser/screen-reader, actual-account, deployed proxy and live-provider qualification remain pending."
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "736e8fac1aaee4525e56c231f800b2654a201bb9",
+          "evidenceKind": "OBSERVED_CHROMIUM_CONNECTED_API_NATIVE_POSTGRES_SYNTHETIC_FIXTURES",
+          "description": "Recovery checks: lost acknowledgement after actual Notebook commit retries identical body with one row; offline tab takeover retains deadline and render position; pending owned-asset cancellation and loaded blob revocation; delayed protected/closed delta rejection and clean stream EOF cursor recovery (unit). Exact owner-shell handoff, manual accessibility, provider and deployment evidence remain unqualified.",
+          "files": [
+            "tests/teaching/browser/classroom-connected.js",
+            "tests/teaching/unit/classroom-session-client.test.js"
+          ],
+          "browserRun": 38042927078,
+          "browserJob": 114186613563
         }
       ],
       "liveProviderEvidence": [],
@@ -398,6 +446,18 @@
             "tests/teaching/integration/classroom-presentation.test.js",
             "tests/teaching/unit/classroom-session-client.test.js"
           ]
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "736e8fac1aaee4525e56c231f800b2654a201bb9",
+          "evidenceKind": "OBSERVED_CHROMIUM_CONNECTED_API_NATIVE_POSTGRES_SYNTHETIC_FIXTURES",
+          "description": "Recovery checks: lost acknowledgement after actual Notebook commit retries identical body with one row; offline tab takeover retains deadline and render position; pending owned-asset cancellation and loaded blob revocation; delayed protected/closed delta rejection and clean stream EOF cursor recovery (unit). Exact owner-shell handoff, manual accessibility, provider and deployment evidence remain unqualified.",
+          "files": [
+            "tests/teaching/browser/classroom-connected.js",
+            "tests/teaching/unit/classroom-session-client.test.js"
+          ],
+          "browserRun": 38042927078,
+          "browserJob": 114186613563
         }
       ],
       "liveProviderEvidence": [],
@@ -502,6 +562,18 @@
             "tests/teaching/integration/classroom-presentation.test.js",
             "tests/teaching/unit/classroom-session-client.test.js"
           ]
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "736e8fac1aaee4525e56c231f800b2654a201bb9",
+          "evidenceKind": "OBSERVED_CHROMIUM_CONNECTED_API_NATIVE_POSTGRES_SYNTHETIC_FIXTURES",
+          "description": "Recovery checks: lost acknowledgement after actual Notebook commit retries identical body with one row; offline tab takeover retains deadline and render position; pending owned-asset cancellation and loaded blob revocation; delayed protected/closed delta rejection and clean stream EOF cursor recovery (unit). Exact owner-shell handoff, manual accessibility, provider and deployment evidence remain unqualified.",
+          "files": [
+            "tests/teaching/browser/classroom-connected.js",
+            "tests/teaching/unit/classroom-session-client.test.js"
+          ],
+          "browserRun": 38042927078,
+          "browserJob": 114186613563
         }
       ],
       "liveProviderEvidence": [],
@@ -706,6 +778,18 @@
             "tests/teaching/integration/classroom-presentation.test.js",
             "tests/teaching/unit/classroom-session-client.test.js"
           ]
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "736e8fac1aaee4525e56c231f800b2654a201bb9",
+          "evidenceKind": "OBSERVED_CHROMIUM_CONNECTED_API_NATIVE_POSTGRES_SYNTHETIC_FIXTURES",
+          "description": "Recovery checks: lost acknowledgement after actual Notebook commit retries identical body with one row; offline tab takeover retains deadline and render position; pending owned-asset cancellation and loaded blob revocation; delayed protected/closed delta rejection and clean stream EOF cursor recovery (unit). Exact owner-shell handoff, manual accessibility, provider and deployment evidence remain unqualified.",
+          "files": [
+            "tests/teaching/browser/classroom-connected.js",
+            "tests/teaching/unit/classroom-session-client.test.js"
+          ],
+          "browserRun": 38042927078,
+          "browserJob": 114186613563
         }
       ],
       "liveProviderEvidence": [],
@@ -716,7 +800,20 @@
       "number": 43,
       "sourceRequirement": "43. **Deployment:** stream reconnect/poll fallback, auth refresh, worker restart, migration/grant readiness and compatible frontend/backend version.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "supportOnly": true,
+          "sourceCommit": "736e8fac1aaee4525e56c231f800b2654a201bb9",
+          "evidenceKind": "OBSERVED_CHROMIUM_CONNECTED_API_NATIVE_POSTGRES_SYNTHETIC_FIXTURES",
+          "description": "Recovery checks: lost acknowledgement after actual Notebook commit retries identical body with one row; offline tab takeover retains deadline and render position; pending owned-asset cancellation and loaded blob revocation; delayed protected/closed delta rejection and clean stream EOF cursor recovery (unit). Exact owner-shell handoff, manual accessibility, provider and deployment evidence remain unqualified.",
+          "files": [
+            "tests/teaching/browser/classroom-connected.js",
+            "tests/teaching/unit/classroom-session-client.test.js"
+          ],
+          "browserRun": 38042927078,
+          "browserJob": 114186613563
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
       "testedVersions": null

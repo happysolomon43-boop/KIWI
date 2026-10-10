@@ -3,8 +3,8 @@
   "recordedAt": "2026-10-10",
   "delivery": 4,
   "branch": "feat/classroom-remodel-delivery-4",
-  "implementationCommit": "56005f36189f675571e6c8b1f298066fbb4b99bf",
-  "testedTree": "ce0e2cbeea9a026578476eb3ab07addfae570f80",
+  "implementationCommit": "736e8fac1aaee4525e56c231f800b2654a201bb9",
+  "testedTree": "4581577f66e106b7f534007cd0d3216e2ef3f08a",
   "pr": "https://github.com/happysolomon43-boop/KIWI/pull/332",
   "prState": "OPEN_DRAFT",
   "baseBranch": "feat/classroom-remodel-delivery-3",
@@ -16,7 +16,10 @@
     "Actual allowlisted Board renderers, authenticated owned assets, expansion/history and public metadata projection",
     "Idempotent owned versioned Notebook references through existing D14 persistence",
     "Composer shell disabled until Delivery 5; task participation disabled until Delivery 6",
-    "Protected transitions clear content; existing Work/Assessments entry offered without inventing activity identity"
+    "Protected transitions clear content; existing Work/Assessments entry offered without inventing activity identity",
+    "Cleanly ended streams reconcile and reconnect using the committed cursor and existing deadlines; abort listeners are removed per stream",
+    "Delayed transport frames cannot restore instructional data after protected clearing or closure",
+    "Lease controls recover after prior claim/takeover so an authorized takeover is usable again"
   ],
   "changedFiles": [
     ".github/workflows/classroom-connected-browser.yml",
@@ -42,7 +45,9 @@
     "tests/teaching/integration/classroom-presentation.test.js",
     "tests/teaching/unit/classroom-presentation-transport.test.js",
     "tests/teaching/unit/classroom-session-client.test.js",
-    "tests/teaching/unit/d14-classroom.test.js"
+    "tests/teaching/unit/d14-classroom.test.js",
+    "docs/teaching/classroom-remodel/delivery-4-checkpoint.v1.json",
+    "docs/teaching/classroom-remodel/qualification-ledger.v1.json"
   ],
   "migrations": {
     "authored": [
@@ -65,8 +70,8 @@
   },
   "validation": {
     "localUnitAndAI": {
-      "tests": 1679,
-      "pass": 1679,
+      "tests": 1681,
+      "pass": 1681,
       "fail": 0,
       "skip": 0
     },
@@ -75,16 +80,11 @@
       "pass": 1700,
       "fail": 0,
       "skip": 85,
-      "limit": "Database cases skipped locally; use native CI evidence separately"
+      "limit": "Database cases skipped locally; use native CI evidence separately",
+      "commit": "56005f36189f675571e6c8b1f298066fbb4b99bf"
     },
     "webBuild": "PASS",
     "foundationIntegrity": "PASS",
-    "currentSourceCI": {
-      "commit": "56005f36189f675571e6c8b1f298066fbb4b99bf",
-      "checks": 47,
-      "passed": 47,
-      "failed": 0
-    },
     "priorNativeDatabase": {
       "commit": "1a0e54be7cb1486b6f63f2da100648c21b29f0a7",
       "job": 114181673411,
@@ -94,7 +94,35 @@
       "skip": 0,
       "evidenceKind": "OBSERVED_NATIVE_POSTGRES_SYNTHETIC_FIXTURES"
     },
-    "browser": {
+    "liveProvider": "NOT_OBSERVED",
+    "deployedBehavior": "NO_NEW_DEPLOYMENT",
+    "manualScreenReaderAndMobileKeyboard": "NOT_OBSERVED",
+    "databaseCI": {
+      "commit": "736e8fac1aaee4525e56c231f800b2654a201bb9",
+      "run": 38042927115,
+      "job": 114186613576,
+      "tests": 106,
+      "pass": 106,
+      "fail": 0,
+      "skip": 0,
+      "rlsGaps": 0,
+      "browserMutationGrants": 0,
+      "evidenceKind": "OBSERVED_NATIVE_POSTGRES_SYNTHETIC_FIXTURES"
+    },
+    "priorSourceCI": {
+      "commit": "56005f36189f675571e6c8b1f298066fbb4b99bf",
+      "checks": 47,
+      "passed": 47,
+      "failed": 0
+    },
+    "currentSourceCI": {
+      "commit": "736e8fac1aaee4525e56c231f800b2654a201bb9",
+      "workflows": 32,
+      "passed": 32,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "priorBrowser": {
       "job": 114181857499,
       "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/38041278918/job/114181857499",
       "status": "PASS",
@@ -103,23 +131,43 @@
       "liveAccount": false,
       "liveProvider": false
     },
-    "liveProvider": "NOT_OBSERVED",
-    "deployedBehavior": "NO_NEW_DEPLOYMENT",
-    "manualScreenReaderAndMobileKeyboard": "NOT_OBSERVED",
-    "databaseCI": {
-      "job": 114181857283,
-      "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/38041278878/job/114181857283",
-      "tests": 106,
-      "pass": 106,
-      "fail": 0,
-      "skip": 0,
-      "evidenceKind": "OBSERVED_NATIVE_POSTGRES_SYNTHETIC_FIXTURES"
+    "browser": {
+      "commit": "736e8fac1aaee4525e56c231f800b2654a201bb9",
+      "run": 38042927078,
+      "job": 114186613563,
+      "url": "https://github.com/happysolomon43-boop/KIWI/actions/runs/38042927078/job/114186613563",
+      "status": "PASS",
+      "evidenceKind": "OBSERVED_CHROMIUM_CONNECTED_API_NATIVE_POSTGRES_SYNTHETIC_FIXTURES",
+      "coverageAdded": [
+        "Notebook lost acknowledgement after committed save; identical retry and one persisted row",
+        "Offline takeover retry without deadline/render progression reset",
+        "Pending owned asset cancellation and loaded blob URL revocation"
+      ],
+      "manualScreenReader": false,
+      "liveAccount": false,
+      "liveProvider": false
+    },
+    "recoveryRevisionHistory": [
+      {
+        "commit": "e98520b6a6e28eaf69c7e364269c421b79863b0d",
+        "browserJob": 114185674646,
+        "browserStatus": "FAIL",
+        "reason": "Offline check exposed lease buttons remaining disabled after prior claim. Fixed in implementationCommit.",
+        "foundationStatus": "FAIL",
+        "foundationReason": "Generated inventory search digest not refreshed. Regenerated and locally verified in implementationCommit."
+      }
+    ],
+    "recoveryVerifiedSourceCI": {
+      "commit": "427b82a277ba9ab0e42e532fc84deaa5dddc8d59",
+      "workflows": 32,
+      "passed": 32,
+      "failed": 0
     }
   },
   "qualification": "All 44 scenarios remain NOT_QUALIFIED; supporting fixture checks do not qualify live providers or production",
   "remaining": [
     "Exact active Classwork/Assessment handoff and connected actual-owner response qualification",
-    "Manual screen-reader/mobile keyboard review, complete asset cancellation/offline/lost-ack browser matrix and course/Notebook-sheet matrix",
+    "Manual screen-reader/mobile keyboard review and complete course/Notebook-sheet matrix; current recovery additions qualify fixture cases only",
     "D1/D2 provider, independent reviewer and C4 human academic evidence",
     "Owner-adopted preparation/presentation policy and deployed session/proxy qualification"
   ],
@@ -132,7 +180,8 @@
     "newInfrastructure": "NONE",
     "connectedMigrations": "NONE",
     "deployment": "NONE",
-    "bindingRetirement": "NONE"
+    "bindingRetirement": "NONE",
+    "automaticPreview": "Prior PR bot reports an automatic Vercel preview; candidate backend/session behavior there is not qualified. No production rollout performed."
   },
-  "nextUnfinishedAction": "Qualify exact protected-activity handoff through the authoritative active Work/Assessment binding and actual owner response shell; finish course/Notebook-sheet, offline/asset-cancellation and manual accessibility coverage. Activation remains held on D1/D2 provider/reviewer/C4 evidence and owner policy adoption. Delivery 5 composer remains disabled."
+  "nextUnfinishedAction": "Implement and qualify exact protected-activity handoff through an authoritative active Work/Assessment binding and actual owner response shell, then complete course/Notebook-sheet and manual accessibility matrix. Activation remains held on D1/D2 provider/reviewer/C4 evidence and owner policy adoption. Delivery 5 composer remains disabled."
 }
