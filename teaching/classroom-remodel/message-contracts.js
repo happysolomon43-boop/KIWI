@@ -12,7 +12,7 @@ function validateInput(input){
  return {...input,sourceRef:input.sourceRef??null,replyTo:input.replyTo??null};
 }
 function ready(policy){const s=require('./state-policy');return s.capabilityReadiness(policy,'messages').ready&&s.capabilityReadiness(policy,'generation').ready;}
-function assertPolicy(policy){if(!ready(policy))throw failure('CLASSROOM_MESSAGE_POLICY_MISSING',503);if(policy.fields.messageRateLimit.unit!=='accepted_messages_per_window'||policy.fields.conversationalAllowance.unit!=='accepted_turns_per_session')throw failure('CLASSROOM_MESSAGE_POLICY_UNIT_MISSING',503);return policy;}
+function assertPolicy(policy){if(!ready(policy))throw failure('CLASSROOM_MESSAGE_POLICY_MISSING',503);if(policy.fields.messageRateLimit.unit!=='accepted_messages_per_window'||policy.fields.conversationalAllowance.unit!=='accepted_turns_per_session'||policy.fields.generationBudget.unit!=='output_tokens_per_attempt')throw failure('CLASSROOM_MESSAGE_POLICY_UNIT_MISSING',503);return policy;}
 function validateDisposition(output,{messageId,chapter,acknowledged=[]}={}){
  c.validateCoordinator(output,{mode:'handle_message',messageRefs:[messageId],chapter,confirmedAcknowledgements:acknowledged});
  if(output.status!=='complete'||output.review_required)throw failure('CLASSROOM_MESSAGE_ROUTING_HELD',409);

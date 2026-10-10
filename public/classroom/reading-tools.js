@@ -4,7 +4,7 @@ export function createComposerShell(reviewOnly, { send, context = () => null } =
   draft.name="classroom-message";draft.id="cr-message";draft.autocomplete="off";draft.placeholder="Ask about the current passage…";draft.rows=2;draft.disabled=true;label.htmlFor=draft.id;
   availability.id="cr-message-availability";draft.setAttribute("aria-describedby",availability.id);outcome.setAttribute("role","status");questions.setAttribute("aria-label","Your saved questions");lane.setAttribute("aria-label","Message purpose");submit.type="submit";submit.disabled=true;
   form.append(label,draft,lane,availability,submit,outcome,questions);
-  let snapshot=null,pending=null,busy=false,storageKey=null,restored=false,closed=false;
+  let snapshot=null,pending=null,busy=false,storageKey=null,restored=false,closed=false,laneSignature=null;
   function stash(){if(!storageKey||!snapshot?.messages?.draft_retention_ms)return;try{if(!draft.value&&!pending)sessionStorage.removeItem(storageKey);else sessionStorage.setItem(storageKey,JSON.stringify({text:draft.value,pending,lane:lane.value,expiresAt:Date.now()+snapshot.messages.draft_retention_ms}));}catch{}}
   draft.addEventListener("input",stash);lane.addEventListener("change",()=>{if(!pending)stash();state();});
   function state(){const enabled=!reviewOnly&&snapshot?.messages?.enabled;draft.disabled=!enabled;draft.readOnly=busy||!!pending;lane.disabled=busy||!!pending;submit.disabled=!enabled||busy||(!pending&&lane.value==="conversation"&&snapshot.messages.remaining===0);submit.textContent=pending?"Check message acceptance":"Send message";}
@@ -12,9 +12,9 @@ export function createComposerShell(reviewOnly, { send, context = () => null } =
     if(closed)return;
     if(snapshot&&snapshot.session_id!==next.session_id){stash();pending=null;draft.value="";restored=false;}
     snapshot=next;storageKey="kiwi-classroom-draft.v1:"+next.session_id;
-    const selected=lane.value;lane.replaceChildren();const ordinary=node("option","Question or contribution");ordinary.value="conversation";lane.append(ordinary);
-    for(const q of next.messages?.questions||[])if(q.clarification_requested){const option=node("option","Clarify saved question: "+q.text.slice(0,70));option.value=q.id;lane.append(option);}
-    lane.value=[...lane.options].some(o=>o.value===selected)?selected:"conversation";
+    const options=[{id:"conversation",text:"Question or contribution"},...(next.messages?.questions||[]).filter(q=>q.clarification_requested).map(q=>({id:q.id,text:"Clarify saved question: "+q.text.slice(0,70)}))];
+    const signature=JSON.stringify(options);
+    if(signature!==laneSignature){const selected=lane.value;lane.replaceChildren();for(const item of options){const option=node("option",item.text);option.value=item.id;lane.append(option);}lane.value=options.some(o=>o.id===selected)?selected:"conversation";laneSignature=signature;}
     if(!restored&&next.messages?.enabled){restored=true;try{const saved=JSON.parse(sessionStorage.getItem(storageKey)||"null");if(saved&&saved.expiresAt>Date.now()){draft.value=saved.text||"";pending=saved.pending||null;if([...lane.options].some(o=>o.value===saved.lane))lane.value=saved.lane;if(pending)outcome.textContent="A previous send has an uncertain outcome. Check acceptance using the same message.";}else sessionStorage.removeItem(storageKey);}catch{}}
     availability.textContent=reviewOnly?"Past class: read-only review.":next.messages?.enabled?`${next.messages.remaining} conversational messages remaining. Requested clarification and permitted support controls remain available.`:"Messages are unavailable for this session.";
     questions.replaceChildren();for(const q of next.messages?.questions||[]){const row=node("p",q.text+" — "+q.state+" · "+q.handling);row.dataset.messageId=q.id;questions.append(row);}
