@@ -1,0 +1,125 @@
+{
+  "version": "classroom-remodel-delivery-checkpoint.v1",
+  "recordedAt": "2026-10-10",
+  "delivery": 3,
+  "branch": "feat/classroom-remodel-delivery-3",
+  "implementationCommit": "f7070f8a95bd440128154f038d8e6aecf0ae23ca",
+  "testedTree": "d5adf3f9dc8e0d08791907e97af0f44e579cfa8c",
+  "pr": "https://github.com/happysolomon43-boop/KIWI/pull/331",
+  "prState": "OPEN_DRAFT",
+  "baseBranch": "feat/classroom-remodel-delivery-2",
+  "acceptance": "IMPLEMENTED_CANDIDATE_ACCEPTANCE_HELD",
+  "implemented": [
+    "Private immutable prepared sequences, bounded buffers and atomic D14 Teacher/Board publication",
+    "Existing durable due-event/outbox runtime owns release, deadlines, recovery and hard-end invalidation",
+    "Active-client leases, takeover fencing, committed idempotent controls and application-only render receipts",
+    "Owned authenticated session/delta/SSE APIs and shared bearer-authenticated SSE/poll transport",
+    "Essential asset hold/recovery, optional text fallback and committed real Board references",
+    "Exact prompt/schema/registry/session pins; changed bindings invalidate unreleased output"
+  ],
+  "changedFiles": [
+    ".github/workflows/classroom-remodel-foundation.yml",
+    "docs/teaching/classroom-remodel/delivery-3-runtime.md",
+    "docs/teaching/classroom-remodel/migration-inventory.v1.json",
+    "docs/teaching/classroom-remodel/qualification-ledger.v1.json",
+    "migrations/20261010005010_classroom_durable_presentation.sql",
+    "public/kiwi-api-client.js",
+    "scripts/setup-teaching-integration-db.js",
+    "teaching-backend.js",
+    "teaching/classroom-remodel/presentation-intelligence.js",
+    "teaching/classroom-remodel/presentation-policy.js",
+    "teaching/classroom-remodel/presentation-routes.js",
+    "teaching/classroom-remodel/presentation-runtime.js",
+    "teaching/classroom-remodel/presentation-service.js",
+    "teaching/d14/service.js",
+    "teaching/events/names.js",
+    "teaching/index.js",
+    "teaching/orchestrator/teaching-orchestrator.js",
+    "teaching/repositories/classroom-presentation.js",
+    "teaching/repositories/d14-classroom.js",
+    "tests/teaching/fixtures/classroom-database.js",
+    "tests/teaching/fixtures/classroom-presentation-policy.js",
+    "tests/teaching/integration/classroom-presentation.test.js",
+    "tests/teaching/integration/classroom-remodel-academic.test.js",
+    "tests/teaching/unit/classroom-presentation-service.test.js",
+    "tests/teaching/unit/classroom-presentation-transport.test.js",
+    "tests/teaching/unit/d05-orchestrator-runtime.test.js"
+  ],
+  "migrations": {
+    "authored": [
+      "migrations/20261010005010_classroom_durable_presentation.sql"
+    ],
+    "productionApplied": [],
+    "integrationProjectApplied": [],
+    "isolatedPostgres": "Fresh native PostgreSQL 17 CI bootstrap"
+  },
+  "effectiveVersions": {
+    "engine": "CLASSROOM_V1 inactive",
+    "contracts": "classroom-contracts.v1",
+    "domain": "classroom-domain.v1",
+    "wire": "classroom-presentation-wire.v1",
+    "registry": "1.3 active unchanged; actual compiled SHA pinned per session",
+    "promptManifest": "1.4 active unchanged",
+    "candidateRegistration": "CANDIDATE_REGISTERED_NOT_FROZEN",
+    "policy": "Explicit owner-adopted version required; fixtures are not production policy"
+  },
+  "validation": {
+    "localFullSuite": {
+      "tests": 1671,
+      "pass": 1671,
+      "fail": 0,
+      "skip": 0
+    },
+    "foundationIntegrity": "PASS",
+    "priorSourceCI": {
+      "commit": "f6bc0b135531c2364a98c5073531b9aaf2d4bb20",
+      "checks": 47,
+      "passed": 47
+    },
+    "priorNativeDatabase": {
+      "job": 114097801488,
+      "tests": 103,
+      "pass": 103,
+      "fail": 0,
+      "skip": 0,
+      "rlsGaps": 0,
+      "browserDmlGrants": 0,
+      "evidenceKind": "OBSERVED_NATIVE_POSTGRES_SYNTHETIC_FIXTURES"
+    },
+    "currentSourceCI": {
+      "commit": "f7070f8a95bd440128154f038d8e6aecf0ae23ca",
+      "checks": 47,
+      "passed": 47,
+      "failed": 0
+    },
+    "liveProvider": "NOT_OBSERVED",
+    "deployedBehavior": "NO_NEW_DEPLOYMENT",
+    "fullBrowserAccessibility": "Delivery 4 pending",
+    "databaseCI": {
+      "job": 114170024906,
+      "tests": 103,
+      "pass": 103,
+      "fail": 0,
+      "skip": 0,
+      "rlsGaps": 0,
+      "browserDmlGrants": 0,
+      "evidenceKind": "OBSERVED_NATIVE_POSTGRES_SYNTHETIC_FIXTURES"
+    }
+  },
+  "qualification": "All 44 blueprint scenarios remain NOT_QUALIFIED; fixture and native transaction checks are supporting evidence only",
+  "remaining": [
+    "D1/D2 live-provider and independent reviewer qualification; C4 human academic review",
+    "Owner adoption of preparation and presentation policies; live session/proxy qualification"
+  ],
+  "compatibility": {
+    "legacy": "Existing active routes/bindings retained; D14 legacy SQL compatible with pre-migration schema",
+    "remodeled": "Optional composition inactive by default; no new production admission",
+    "rollback": "Code can remain inactive; additive history preserved. No consequential production rollback exercised"
+  },
+  "infrastructure": {
+    "productionRenderCommit": "a77aec6fbd49b89a4538610e434151e2f5fb8cde",
+    "supabase": "Production and integration PostgreSQL 17.6; classroom preparation and delivery tables absent on connected projects",
+    "newInfrastructure": "NONE"
+  },
+  "nextUnfinishedAction": "Implement Delivery 4 inactive conversation/chapter/Board/Notebook UI and verify connected browser behavior. Activation remains held on D1/D2 provider/reviewer/C4 evidence and owner policy adoption."
+}

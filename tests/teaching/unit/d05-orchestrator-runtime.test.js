@@ -1298,3 +1298,14 @@ test('D05 propagates safe validation failure details instead of collapsing rejec
   assert.equal(result.validationFailure.repairable, 'TARGETED_REPAIR');
   assert.equal(getOwnerCalls(), 0);
 });
+
+test('D05 preserves authority checks while a trusted caller adds a restrictive attempt ceiling',async()=>{
+ let guarded=0,providerCalls=0;
+ const {orchestrator,getOwnerCalls}=harness({capabilityId:T1,aiRun:async(_task,_request,options)=>{
+  assert.equal(typeof options.beforeAttempt,'function');await options.beforeAttempt();providerCalls++;
+  await assert.rejects(()=>options.beforeAttempt(),{code:'CLASSROOM_GENERATION_RETRY_BUDGET_EXHAUSTED'});
+  return {structured:{classification:'ok',reviewNeeded:false}};
+ }});
+ const result=await orchestrator.execute(baseRequest(T1,{commit:false,beforeAttempt:async()=>{if(guarded++)throw Object.assign(new Error('budget exhausted'),{code:'CLASSROOM_GENERATION_RETRY_BUDGET_EXHAUSTED'});}}));
+ assert.equal(result.accepted,true);assert.equal(providerCalls,1);assert.equal(getOwnerCalls(),0);
+});

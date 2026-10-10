@@ -121,7 +121,7 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
     }
     return current;
   }
-  async function publishTeacherTurn({studentId,classId,expectedControllerVersion,message,blocks=[],idempotencyKey,helpRequestId=null,expectedBlueprintId=null,expectedBlueprintVersion=null,expectedScheduleVersion=null,expectedCourseStateVersion=null,expectedPlanId=null,expectedPlanVersion=null}){
+  async function publishTeacherTurnUsing(tx,{studentId,classId,expectedControllerVersion,message,blocks=[],idempotencyKey,helpRequestId=null,expectedBlueprintId=null,expectedBlueprintVersion=null,expectedScheduleVersion=null,expectedCourseStateVersion=null,expectedPlanId=null,expectedPlanVersion=null}){
     const {validateBlock}=require('../d14/board');
     if(typeof message!=='string'||!message.trim()||message.length>5000||!Array.isArray(blocks)||blocks.length>30)throw Object.assign(new Error('Teacher turn invalid.'),{code:'TEACHING_D14_TEACHER_TURN_INVALID',status:422});
     const safe=blocks.map(validateBlock);
@@ -134,7 +134,7 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
       if(safe.length>=30)throw Object.assign(new Error('Teacher Board block limit exceeded.'),{code:'TEACHING_D14_TEACHER_TURN_INVALID',status:422});
       safe.unshift(validateBlock({type:'text',content:{text:message.trim()}}));
     }
-    return withTransaction(async(tx)=>{
+    return (async(tx)=>{
       const existing=await tx.query('select * from public.teaching_teacher_communications where student_id=$1 and idempotency_key=$2',[studentId,idempotencyKey]);
       if(existing.rows[0])return existing.rows[0];
       const parent=await assertCurrentTeachingAuthority(tx,studentId,classId);
@@ -168,8 +168,9 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
         for(const [i,b] of safe.entries())await tx.query('insert into public.teaching_board_items(board_item_id,student_id,board_scene_id,ordinal,block_type,content,provenance_refs) values($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb)',[randomUUID(),studentId,sceneId,i,b.type,JSON.stringify(b.content),JSON.stringify([`teacher-communication:${rows[0].communication_id}`])]);
       }
       return rows[0];
-    });
+    })(tx);
   }
+  async function publishTeacherTurn(input){return withTransaction(tx=>publishTeacherTurnUsing(tx,input));}
   async function queueInstruction(studentId,classId) {
     return withTransaction(async(tx)=>{
       const {rows=[]}=await tx.query('select * from public.teaching_class_sessions where student_id=$1 and class_id=$2 for share',[studentId,classId]);
@@ -213,9 +214,10 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
       const existing=await tx.query('select * from public.teaching_classroom_interactions where student_id=$1 and idempotency_key=$2',[studentId,idempotencyKey]);
       if(existing.rows[0]){if(existing.rows[0].class_id!==classId||existing.rows[0].interaction_kind!==kind||existing.rows[0].body!==body)throw Object.assign(new Error('Conflicting interaction retry.'),{status:409,code:'TEACHING_D14_IDEMPOTENCY_CONFLICT'});if(['ASK_TEACHER','NEED_HELP'].includes(kind)){const {rows:h=[]}=await tx.query('select help_request_id from public.teaching_classroom_help_requests where interaction_id=$1',[existing.rows[0].interaction_id]);return {...existing.rows[0],help_request_id:h[0]?.help_request_id||null};}return existing.rows[0];}
       if(['JOIN','ASK_TEACHER','NEED_HELP'].includes(kind))await assertCurrentTeachingAuthority(tx,studentId,classId);
-      const current=await tx.query('select class_session_id,state_version,lifecycle_state from public.teaching_class_sessions where student_id=$1 and class_id=$2 for update',[studentId,classId]);
+      const current=await tx.query("select class_session_id,state_version,lifecycle_state,to_jsonb(teaching_class_sessions)->>'classroom_engine' as classroom_engine from public.teaching_class_sessions where student_id=$1 and class_id=$2 for update",[studentId,classId]);
       if(session && (current.rows[0]?.class_session_id!==session.class_session_id||Number(current.rows[0]?.state_version)!==Number(session.state_version)))throw Object.assign(new Error('Class changed. Reload before acting.'),{status:409,code:'TEACHING_D14_STALE_CONTROLLER'});
       if(['ASK_TEACHER','NEED_HELP'].includes(kind)){
+        if(current.rows[0]?.classroom_engine==='CLASSROOM_V1')throw Object.assign(new Error('Persistent classroom messages are not enabled for this session.'),{code:'CLASSROOM_MESSAGES_NOT_ENABLED',status:409});
         // The session row above is locked, serializing concurrent student
         // submissions across workers. Keep one raised hand in flight.
         const {rows:recent=[]}=await tx.query("select status,created_at from public.teaching_classroom_help_requests where student_id=$1 and class_id=$2 order by created_at desc limit 1",[studentId,classId]);
@@ -241,6 +243,6 @@ function createD14ClassroomRepository({query,withTransaction,randomUUID,d11Repos
       const {rows}=await tx.query('insert into public.teaching_class_study_note_versions(note_version_id,student_id,class_id,version_no,state,stage,binding,note_payload,validation,closure_fact_id,idempotency_key) values($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10,$11) returning *',[randomUUID(),studentId,classId,Number(old?.version_no||0)+1,state,stage,JSON.stringify(binding),JSON.stringify(payload),JSON.stringify(validation),closureFactId,idempotencyKey]);return rows[0];
     });
   }
-  return Object.freeze({assertReady,listClasses,identity,board,notebook,addNotebook,recordInteraction,conversation,helpRequests,retireOutstandingHelp,getHelp,claimHelp,finalizeHelp,latestNote,saveNote,latestTeacherMessage,firstEntry,publishTeacherTurn,claimVisual,finishVisual,visualAsset,queueInstruction,teacherTurn});
+  return Object.freeze({assertReady,listClasses,identity,board,notebook,addNotebook,recordInteraction,conversation,helpRequests,retireOutstandingHelp,getHelp,claimHelp,finalizeHelp,latestNote,saveNote,latestTeacherMessage,firstEntry,publishTeacherTurn,publishTeacherTurnUsing,claimVisual,finishVisual,visualAsset,queueInstruction,teacherTurn});
 }
 module.exports={createD14ClassroomRepository};

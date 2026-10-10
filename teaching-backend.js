@@ -51,6 +51,8 @@ function createTeachingRouter({
   teachingRuntimePlatform = null,
   classroomPreparationService = null,
   classroomPreparationOptions = null,
+  classroomPresentationOptions = null,
+  classroomPresentationService = null,
 } = {}) {
   if (typeof authenticate !== 'function') {
     throw new TypeError('KIWI Teaching backend requires the existing authenticate middleware.');
@@ -73,6 +75,7 @@ function createTeachingRouter({
     d10RuntimePlatform: teachingRuntimePlatform || null,
     d11Intelligence,
     classroomPreparationOptions,
+    classroomPresentationOptions,
     d11PublishedEventRegistry,
     d12Intelligence,
     d12PublishedEventRegistry,
@@ -810,6 +813,7 @@ function createTeachingRouter({
     }
   });
 
+  require('./teaching/classroom-remodel/presentation-routes').mountClassroomPresentationRoutes(router,{service:classroomPresentationService||foundation.classroomPresentation?.service,reauthenticate:async req=>{if(env.KIWI_CLASSROOM_TEST_INSTANCE==='true')return !!req.user?.classroomTest;return new Promise((resolve,reject)=>{const response={status(){return this;},json(){resolve(false);},send(){resolve(false);}};try{Promise.resolve(authenticate(req,response,()=>resolve(true))).catch(reject);}catch(error){reject(error);}});}});
   mountClassroomChapterRoute(router,{service:classroomPreparationService||foundation.classroomPreparation?.service,sendError});
   return router;
 }

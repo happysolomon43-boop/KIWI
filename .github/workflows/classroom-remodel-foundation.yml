@@ -9,6 +9,8 @@ on:
       - 'tests/teaching/unit/classroom-remodel-academic.test.js'
       - 'tests/teaching/unit/classroom-remodel-invocation.test.js'
       - 'tests/teaching/unit/classroom-remodel-runtime.test.js'
+      - 'tests/teaching/unit/classroom-presentation*.test.js'
+      - 'tests/teaching/fixtures/classroom-*'
       - 'tests/teaching/fixtures/classroom-remodel-academic.js'
       - '.github/workflows/classroom-remodel-foundation.yml'
   push:
@@ -21,6 +23,8 @@ on:
       - 'tests/teaching/unit/classroom-remodel-academic.test.js'
       - 'tests/teaching/unit/classroom-remodel-invocation.test.js'
       - 'tests/teaching/unit/classroom-remodel-runtime.test.js'
+      - 'tests/teaching/unit/classroom-presentation*.test.js'
+      - 'tests/teaching/fixtures/classroom-*'
       - 'tests/teaching/fixtures/classroom-remodel-academic.js'
 permissions:
   contents: read
@@ -37,5 +41,5 @@ jobs:
       - run: python scripts/build-classroom-prompt-candidates.py
       - run: git diff --exit-code -- teaching/classroom-remodel/prompts
       - run: node scripts/verify-classroom-remodel-foundation.js
-      - run: node --test tests/teaching/unit/classroom-remodel-foundation.test.js tests/teaching/unit/classroom-remodel-academic.test.js tests/teaching/unit/classroom-remodel-invocation.test.js tests/teaching/unit/classroom-remodel-runtime.test.js tests/teaching/unit/d03-control-plane.test.js tests/teaching/unit/d03-prompt-bodies.test.js tests/teaching/unit/d12-response-pedagogy.test.js
+      - run: node --test tests/teaching/unit/classroom-remodel-foundation.test.js tests/teaching/unit/classroom-remodel-academic.test.js tests/teaching/unit/classroom-remodel-invocation.test.js tests/teaching/unit/classroom-remodel-runtime.test.js tests/teaching/unit/classroom-presentation-service.test.js tests/teaching/unit/classroom-presentation-transport.test.js tests/teaching/unit/d03-control-plane.test.js tests/teaching/unit/d03-prompt-bodies.test.js tests/teaching/unit/d12-response-pedagogy.test.js
       - run: npm run build:web

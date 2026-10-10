@@ -244,6 +244,45 @@ async function kiwiApiBlobRequest(endpoint, options={}) {
   });
 }
 
+// Delivery 3 transport only. It does not send render receipts or progress teaching.
+async function classroomTransport(classId,{after=0,onEvent,signal}={}) {
+  const base='/teaching/classes/'+encodeURIComponent(classId)+'/classroom/';
+  let snapshot=await kiwiApiRequest(base+'session',{signal}),cursor=after;
+  if(!Number.isSafeInteger(cursor)||cursor<0)throw new Error('Invalid classroom cursor.');
+  const emit=(type,data)=>{if(typeof onEvent==='function')onEvent(type,data);};
+  const accept=data=>{
+    if(data.session_id!==snapshot.session_id||data.from_cursor!==cursor)throw new Error('CLASSROOM_CURSOR_RESET_REQUIRED');
+    let next=cursor;for(const event of data.events){if(event.sequence!==++next)throw new Error('CLASSROOM_DELTA_GAP');}
+    if(next!==data.to_cursor)throw new Error('CLASSROOM_DELTA_INCOMPLETE');
+    emit('classroom_delta',data);cursor=next;
+  };
+  const backoff=()=>new Promise(resolve=>{if(signal?.aborted)return resolve();const timer=setTimeout(done,snapshot.transport.reconnectBackoffMs);function done(){clearTimeout(timer);signal?.removeEventListener('abort',done);resolve();}signal?.addEventListener('abort',done,{once:true});});
+  const poll=async()=>{while(!signal?.aborted){try{accept(await kiwiApiRequest(base+'conversation?after='+cursor,{signal}));snapshot=await kiwiApiRequest(base+'session',{signal});emit('classroom_state',snapshot);}catch(error){if(signal?.aborted)return;emit('transport_error',{code:error.code||error.message,cursor});throw error;}await backoff();}};
+  if(!global.ReadableStream||!global.TextDecoder)return poll();
+  while(!signal?.aborted){
+    let reader,cancel;
+    try{
+      const accessToken=token('kiwi_auth_token');
+      const response=await requestWithSession(base+'stream?after='+cursor,{method:'GET',headers:{Accept:'text/event-stream',...(accessToken?{Authorization:`Bearer ${accessToken}`}:{})},signal},undefined,async(response,path)=>{if(!response.ok)return parseResponse(response,path);return response;});
+      if(!response.body?.getReader||!(response.headers.get('Content-Type')||'').includes('text/event-stream'))return poll();
+      reader=response.body.getReader();cancel=()=>reader.cancel().catch(()=>{});signal?.addEventListener('abort',cancel,{once:true});const decoder=new TextDecoder();const lf=String.fromCharCode(10);let buffer='',refresh=false;
+      while(!signal?.aborted){const part=await reader.read();if(part.done)break;buffer+=decoder.decode(part.value,{stream:true}).replaceAll(String.fromCharCode(13)+lf,lf);let boundary;
+        while((boundary=buffer.indexOf(lf+lf))>=0){const frame=buffer.slice(0,boundary);buffer=buffer.slice(boundary+2);let type='message';const data=[];
+          for(const line of frame.split(lf)){if(line.startsWith('event:'))type=line.slice(6).trim();if(line.startsWith('data:'))data.push(line.slice(5).trimStart());}
+          if(!data.length)continue;const payload=JSON.parse(data.join(lf));
+          if(type==='classroom_delta')accept(payload);
+          else if(type==='auth_refresh_required'){refresh=true;break;}
+          else if(type==='cursor_reset_required'){emit(type,payload);return;}
+          else emit(type,payload);
+        }if(refresh)break;
+      }
+      if(refresh&&!await refreshAccessToken())throw new Error('CLASSROOM_AUTH_REFRESH_REQUIRED');
+    }catch(error){if(signal?.aborted)return;if(/CLASSROOM_(CURSOR|DELTA|AUTH)/.test(error.code||error.message)){emit('cursor_reset_required',{code:error.code||error.message,cursor});return;}emit('transport_fallback',{cursor});return poll();}
+    finally{signal?.removeEventListener('abort',cancel);await reader?.cancel().catch(()=>{});}
+    await backoff();
+  }
+}
+
 function hasKiwiSession() {
   return Boolean(token('kiwi_auth_token') || token('kiwi_refresh_token'));
 }
@@ -327,6 +366,7 @@ global.KIWI_API_CLIENT = Object.freeze({
   kiwiApiRawRequest,
   kiwiApiBlobRequest,
   hasKiwiSession,
+  classroomTransport,
 });
 
 if (global.document?.readyState === 'loading') {

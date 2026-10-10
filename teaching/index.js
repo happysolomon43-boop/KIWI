@@ -66,6 +66,7 @@ function createTeachingFoundation({
   d10RuntimePlatform = null,
   d11Intelligence = null,
   classroomPreparationOptions = null,
+  classroomPresentationOptions = null,
   d11PublishedEventRegistry = null,
   d12Intelligence = null,
   d12PublishedEventRegistry = null,
@@ -383,8 +384,10 @@ function createTeachingFoundation({
     : null;
 
   const classroomPreparation=classroomPreparationOptions&&d11Service?require('./classroom-remodel/preparation-runtime').createClassroomPreparationRuntime({...classroomPreparationOptions,query,withTransaction,randomUUID,d11Repository,d11Service,preparationRepository:d11PreparationRepository}):null;
+  const classroomPresentation=classroomPresentationOptions&&d14Repository&&d10RuntimePlatform?require('./classroom-remodel/presentation-runtime').createClassroomPresentationRuntime({...classroomPresentationOptions,query,withTransaction,randomUUID,d14Repository,d11Repository,eventStore:d10RuntimePlatform.eventStore,outboxStore:d10RuntimePlatform.outboxStore,eventRuntime:d10RuntimePlatform.eventRuntime,publishedEvents:d11PublishedEventRegistry}):null;
   return Object.freeze({
     classroomPreparation,
+    classroomPresentation,
     config,
     modules,
     integrations: Object.freeze({
