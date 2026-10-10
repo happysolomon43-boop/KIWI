@@ -30,7 +30,7 @@ function validateStageOutput({output,stage,binding,plannedLearningUnits,actualTa
   for(const [key,field] of Object.entries(aliases))if(String(supplied[key]||'')!==String(binding[field]||''))fail('TEACHING_D14_NOTE_STALE_BINDING');
   const planned=ids(plannedLearningUnits),actual=ids(actualTaughtLearningUnits),sources=refSet(sourceRefs);
   const cards=new Set((cardSet?.cards||[]).map((c)=>`${c.cardId}@${c.version}`));
-  if(stage==='POST_CLASS'&&(!binding.closureRef||!binding.summaryRef||!priorNote))fail('TEACHING_D14_NOTE_CLOSURE_REQUIRED');
+  if(stage==='POST_CLASS'&&(!binding.closureRef||!binding.summaryRef||priorNote?.state!=='PREPARED_NOT_PUBLISHABLE'||!priorNote.note_version_id))fail('TEACHING_D14_NOTE_CLOSURE_REQUIRED');
   for(const claim of output.claim_provenance){
     if(!claim.claim_id||!claim.claim_text||!Array.isArray(claim.planned_learning_unit_refs)||!Array.isArray(claim.approved_source_refs)||!Array.isArray(claim.card_refs))fail('TEACHING_D14_NOTE_CLAIM_SCHEMA');
     if(claim.planned_learning_unit_refs.some((id)=>!planned.has(String(id)))||claim.approved_source_refs.some((id)=>!sources.has(String(id)))||claim.card_refs.some((id)=>!cards.has(String(id))))fail('TEACHING_D14_NOTE_UNGROUNDED_CLAIM');
