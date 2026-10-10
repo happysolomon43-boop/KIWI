@@ -574,6 +574,23 @@
           ],
           "browserRun": 38042927078,
           "browserJob": 114186613563
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "8c36b45f5bd02c816dad7d2e4f268210d8325657",
+          "evidenceKind": "OBSERVED_CHROMIUM_CONNECTED_API_NATIVE_POSTGRES_SYNTHETIC_FIXTURES",
+          "browserRun": 38056374359,
+          "browserJob": 114225631955,
+          "databaseRun": 38056374560,
+          "files": [
+            "tests/teaching/browser/classroom-protected-connected.js",
+            "tests/teaching/integration/classroom-protected-activity.test.js"
+          ],
+          "given": "Synthetic student/course/Class and locked owner package; native PostgreSQL, actual Course-registered Classroom and owner UI modules; production-integrity script replaced only in fixture shell",
+          "actions": "Use actual protected launch buttons, save owner responses, reload, interrupt formal owner, then use actual linked and personal Notebook sheet in an isolated instructional fixture",
+          "expectedPersistedOutcome": "Exact owner-bound response persists; deadline and attempt identity unchanged; one owner remains authoritative; linked and personal Notebook rows persist; focus restores",
+          "forbiddenOutcome": "Arbitrary owner selection, private criteria in browser, instruction exposed during protected interruption, changed owner version accepted, active attempt abandoned to instruction",
+          "description": "Connected Work and Assessment response shells, private-safe package, durable responses, original reload deadline, interruption privacy, immediate Notebook linked reference, mobile personal note and keyboard focus passed. Human screen-reader/software-keyboard, full deployed Course shell/authentication, providers, production and post-assessment academic continuation remain unqualified."
         }
       ],
       "liveProviderEvidence": [],
@@ -753,6 +770,23 @@
             "tests/teaching/integration/classroom-presentation.test.js",
             "tests/teaching/unit/classroom-session-client.test.js"
           ]
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "8c36b45f5bd02c816dad7d2e4f268210d8325657",
+          "evidenceKind": "OBSERVED_CHROMIUM_CONNECTED_API_NATIVE_POSTGRES_SYNTHETIC_FIXTURES",
+          "browserRun": 38056374359,
+          "browserJob": 114225631955,
+          "databaseRun": 38056374560,
+          "files": [
+            "tests/teaching/browser/classroom-protected-connected.js",
+            "tests/teaching/integration/classroom-protected-activity.test.js"
+          ],
+          "given": "Synthetic student/course/Class and locked owner package; native PostgreSQL, actual Course-registered Classroom and owner UI modules; production-integrity script replaced only in fixture shell",
+          "actions": "Use actual protected launch buttons, save owner responses, reload, interrupt formal owner, then use actual linked and personal Notebook sheet in an isolated instructional fixture",
+          "expectedPersistedOutcome": "Exact owner-bound response persists; deadline and attempt identity unchanged; one owner remains authoritative; linked and personal Notebook rows persist; focus restores",
+          "forbiddenOutcome": "Arbitrary owner selection, private criteria in browser, instruction exposed during protected interruption, changed owner version accepted, active attempt abandoned to instruction",
+          "description": "Connected Work and Assessment response shells, private-safe package, durable responses, original reload deadline, interruption privacy, immediate Notebook linked reference, mobile personal note and keyboard focus passed. Human screen-reader/software-keyboard, full deployed Course shell/authentication, providers, production and post-assessment academic continuation remain unqualified."
         }
       ],
       "liveProviderEvidence": [],
@@ -790,6 +824,23 @@
           ],
           "browserRun": 38042927078,
           "browserJob": 114186613563
+        },
+        {
+          "supportOnly": true,
+          "sourceCommit": "8c36b45f5bd02c816dad7d2e4f268210d8325657",
+          "evidenceKind": "OBSERVED_CHROMIUM_CONNECTED_API_NATIVE_POSTGRES_SYNTHETIC_FIXTURES",
+          "browserRun": 38056374359,
+          "browserJob": 114225631955,
+          "databaseRun": 38056374560,
+          "files": [
+            "tests/teaching/browser/classroom-protected-connected.js",
+            "tests/teaching/integration/classroom-protected-activity.test.js"
+          ],
+          "given": "Synthetic student/course/Class and locked owner package; native PostgreSQL, actual Course-registered Classroom and owner UI modules; production-integrity script replaced only in fixture shell",
+          "actions": "Use actual protected launch buttons, save owner responses, reload, interrupt formal owner, then use actual linked and personal Notebook sheet in an isolated instructional fixture",
+          "expectedPersistedOutcome": "Exact owner-bound response persists; deadline and attempt identity unchanged; one owner remains authoritative; linked and personal Notebook rows persist; focus restores",
+          "forbiddenOutcome": "Arbitrary owner selection, private criteria in browser, instruction exposed during protected interruption, changed owner version accepted, active attempt abandoned to instruction",
+          "description": "Connected Work and Assessment response shells, private-safe package, durable responses, original reload deadline, interruption privacy, immediate Notebook linked reference, mobile personal note and keyboard focus passed. Human screen-reader/software-keyboard, full deployed Course shell/authentication, providers, production and post-assessment academic continuation remain unqualified."
         }
       ],
       "liveProviderEvidence": [],
