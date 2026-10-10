@@ -88,7 +88,7 @@ export function mountClassroomView({
   skip.href = "#cr-conversation";
   header.prepend(skip);
   const composer = createComposerShell(reviewOnly,{send:input=>store.message(input),context:()=>{const s=store?.snapshot;return s?.chapter_ref&&s.position.resume_anchor?{...s.chapter_ref,kind:currentChapter?.units.some(u=>u.anchor===s.position.resume_anchor)?"chapter_unit":"source_element",anchor:s.position.resume_anchor}:null;}});
-  const taskComposer=createTaskComposer({reviewOnly,send:(path,input)=>store.taskMutation(path,input)});
+  const taskComposer=createTaskComposer({reviewOnly,send:(path,input,options)=>store.taskMutation(path,input,options)});
   conversation.append(feed, taskComposer, composer);
   main.append(conversation, chapter);
   root.append(header, main);

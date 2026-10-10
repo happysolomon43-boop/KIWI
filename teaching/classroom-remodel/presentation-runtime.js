@@ -25,7 +25,8 @@ function createClassroomPresentationRuntime({query,withTransaction,randomUUID,d1
  }
  let taskRuntime=null;
  if(options.tasks){
-  const cfg=options.tasks,qualified=cfg.qualified===true&&!!d12Repository&&typeof cfg.coordinator?.interpret==='function'&&typeof cfg.reviewer?.accept==='function'&&typeof cfg.turnProvider?.generate==='function'&&typeof cfg.turnReviewer?.accept==='function'&&typeof cfg.turnReviewer?.select==='function';
+  const supplied=options.tasks;const intelligence=options.orchestrator&&typeof supplied.requirementsReader==='function'?require('./task-intelligence').createClassroomTaskIntelligence({orchestrator:options.orchestrator,d11Repository,requirementsReader:supplied.requirementsReader,directiveReader:supplied.directiveReader}):null;
+  const cfg={...supplied,coordinator:supplied.coordinator||intelligence?.coordinator,turnProvider:supplied.turnProvider||intelligence?.turnProvider},qualified=cfg.qualified===true&&!!d12Repository&&typeof cfg.coordinator?.interpret==='function'&&typeof cfg.reviewer?.accept==='function'&&typeof cfg.turnProvider?.generate==='function'&&typeof cfg.turnReviewer?.accept==='function'&&typeof cfg.turnReviewer?.select==='function';
   if(!d12Repository)throw new TypeError('Task runtime requires the existing D12 repository');
   const taskRepository=require('../repositories/classroom-tasks').createClassroomTaskRepository({presentationRepository:repository,d12Repository,randomUUID,qualified});repository.connectTasks(taskRepository);
   const taskService=require('./task-service').createClassroomTaskService({...cfg,repository:taskRepository,presentationRepository:repository,presentationService:service});

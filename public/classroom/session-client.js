@@ -251,11 +251,11 @@ export function createSessionClient({
       await refresh().catch(error=>onError?.(error));
       return result;
     },
-    async taskMutation(path,input){
-      if(reviewOnly||closed||!snapshot?.capabilities?.tasks)throw Error("CLASSROOM_TASK_ROUTE_HELD");
+    async taskMutation(path,input,{replayOnly=false}={}){
+      if(reviewOnly||closed||!snapshot?.capabilities?.tasks&&!(replayOnly&&snapshot?.chapter_ref&&input.sessionId===snapshot.session_id))throw Error("CLASSROOM_TASK_ROUTE_HELD");
       if(!["task-responses","task-extensions","task-support"].includes(path))throw Error("CLASSROOM_TASK_COMMAND_INVALID");
       const result=await api(base+path,{method:"POST",body:input,signal:abort.signal});
-      if(!result.accepted)throw Error("CLASSROOM_TASK_ACCEPTANCE_NOT_CONFIRMED");
+      if(!result.accepted||path==='task-responses'&&(!result.response_id||!result.admission_id||result.task_id!==input.taskId||result.window_id!==input.windowId)||path==='task-support'&&(!result.request_id||result.task_id!==input.taskId)||path==='task-extensions'&&result.window?.id!==input.windowId)throw Error("CLASSROOM_TASK_ACCEPTANCE_NOT_CONFIRMED");
       await refresh().catch(error=>onError?.(error));return result;
     },
     lease: () => mutate("client-lease", "claim"),
