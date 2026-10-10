@@ -53,6 +53,7 @@ CREATE TABLE public.teaching_classroom_portions (
  ordinal bigint NOT NULL CHECK(ordinal>0),
  payload jsonb NOT NULL,
  public_payload jsonb NOT NULL,
+ representation_state text CHECK(representation_state IN ('TEXT','BOARD','TEXT_FALLBACK')),
  board_item_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
  asset_ids jsonb NOT NULL DEFAULT '[]' CHECK(jsonb_typeof(asset_ids)='array'),
  status text NOT NULL CHECK(status IN('PREPARED','PUBLISHED','CONFIRMED','SUPERSEDED')),
@@ -113,9 +114,9 @@ BEGIN
   IF NEW.state_version<OLD.state_version OR NEW.delivery_epoch<OLD.delivery_epoch OR NEW.control_epoch<OLD.control_epoch OR NEW.cursor<OLD.cursor OR NEW.last_published<OLD.last_published OR NEW.last_confirmed<OLD.last_confirmed THEN RAISE EXCEPTION 'CLASSROOM_DELIVERY_PROGRESS_REGRESSION'; END IF;RETURN NEW;
  END IF;
  IF TG_TABLE_NAME='teaching_classroom_sequences' AND (to_jsonb(NEW)-'status'-'reason') IS NOT DISTINCT FROM (to_jsonb(OLD)-'status'-'reason') THEN RETURN NEW; END IF;
- IF TG_TABLE_NAME='teaching_classroom_portions' AND (to_jsonb(NEW)-'status'-'published_at'-'confirmed_at'-'board_item_ids') IS NOT DISTINCT FROM (to_jsonb(OLD)-'status'-'published_at'-'confirmed_at'-'board_item_ids') THEN
+ IF TG_TABLE_NAME='teaching_classroom_portions' AND (to_jsonb(NEW)-'status'-'published_at'-'confirmed_at'-'board_item_ids'-'representation_state') IS NOT DISTINCT FROM (to_jsonb(OLD)-'status'-'published_at'-'confirmed_at'-'board_item_ids'-'representation_state') THEN
   IF (OLD.status,NEW.status) NOT IN (('PREPARED','PUBLISHED'),('PREPARED','SUPERSEDED'),('PUBLISHED','CONFIRMED')) THEN RAISE EXCEPTION 'CLASSROOM_PORTION_TRANSITION_INVALID'; END IF;
-  IF OLD.status<>'PREPARED' AND (NEW.published_at,NEW.board_item_ids) IS DISTINCT FROM (OLD.published_at,OLD.board_item_ids) THEN RAISE EXCEPTION 'CLASSROOM_PORTION_PUBLICATION_IMMUTABLE'; END IF;RETURN NEW;END IF;
+  IF OLD.status<>'PREPARED' AND (NEW.published_at,NEW.board_item_ids,NEW.representation_state) IS DISTINCT FROM (OLD.published_at,OLD.board_item_ids,OLD.representation_state) THEN RAISE EXCEPTION 'CLASSROOM_PORTION_PUBLICATION_IMMUTABLE'; END IF;RETURN NEW;END IF;
  RAISE EXCEPTION 'CLASSROOM_DELIVERY_CONTENT_IMMUTABLE';
 END $$;
 REVOKE ALL ON FUNCTION public.teaching_classroom_delivery_immutable() FROM PUBLIC,anon,authenticated;
