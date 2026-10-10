@@ -15,6 +15,7 @@ export function createSessionClient({
     events = new Map(),
     leaseToken = null,
     leaseEpoch = null,
+    minimumDeliveryVersion = 0,
     closed = false,
     renewTimer = null,
     reconnectTimer = null,
@@ -38,11 +39,12 @@ export function createSessionClient({
     if (snapshot && next.session_id !== snapshot.session_id) {
       events.clear();
       snapshot = null;
+      minimumDeliveryVersion = 0;
       cursor = 0;
       leaseToken = null;
       pending = null;
     }
-    if (snapshot && next.delivery_version < snapshot.delivery_version) return;
+    if (next.delivery_version < minimumDeliveryVersion || (snapshot && next.delivery_version < snapshot.delivery_version)) return;
     if (
       leaseToken &&
       (next.control_epoch !== leaseEpoch ||
@@ -130,11 +132,15 @@ export function createSessionClient({
         signal: abort.signal,
       });
       pending = null;
+      if (Number.isSafeInteger(result.deliveryVersion)) minimumDeliveryVersion = Math.max(minimumDeliveryVersion, result.deliveryVersion);
       if (result.leaseToken) {
         leaseToken = result.leaseToken;
         leaseEpoch = result.controlEpoch ?? snapshot.control_epoch;
       }
       await refresh();
+      // A read started before this command committed may still be in flight.
+      // It cannot clear the newly committed lease or restore an older state.
+      if (snapshot?.delivery_version < minimumDeliveryVersion) await refresh();
       return result;
     } catch (error) {
       if (error.status && error.status < 500) {
@@ -263,6 +269,7 @@ export function createSessionClient({
       clearTimeout(reconnectTimer);
       events.clear();
       snapshot = null;
+      minimumDeliveryVersion = 0;
       cursor = 0;
       leaseToken = null;
       pending = null;
