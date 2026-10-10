@@ -33,7 +33,7 @@ function createClassroomPresentationService({repository,policyReader,openingDire
   const abort=new AbortController();let timer;
   const expired=new Promise(resolve=>{timer=setTimeout(()=>{abort.abort();resolve({held:true,reason:'CLASSROOM_GENERATION_OUTCOME_UNKNOWN'});},value(config,'generationTimeoutMs'));});
   let output;
-  try{output=await Promise.race([presenter.generate({studentId,classId,operationKey,directive,chapter:prepared.chapter,guide:prepared.guide,authority:expected.authority,policy:config,signal:abort.signal,timeoutMs:value(config,'generationTimeoutMs'),retryLimit:value(config,'generationRetryLimit'),budget:value(config,'generationBudget')}),expired]);}
+  try{output=await Promise.race([presenter.generate({studentId,classId,operationKey,directive,chapter:prepared.chapter,guide:prepared.guide,authority:expected.authority,expected,types,assets,policy:config,signal:abort.signal,timeoutMs:value(config,'generationTimeoutMs'),retryLimit:value(config,'generationRetryLimit'),budget:value(config,'generationBudget')}),expired]);}
   finally{clearTimeout(timer);}
   if(output?.held)return {accepted:false,reason:output.reason};
   return repository.acceptSequence({studentId,classId,operationKey,directive,output,expected,types,assets});

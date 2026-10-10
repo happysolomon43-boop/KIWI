@@ -31,7 +31,7 @@ test('publication is durable and private until released; receipts, reload, dupli
  const {ids,repository,read,args,accept,query,dueEventStore}=h;const output=f.opening();output.interaction.portions.push({...f.clone(output.interaction.portions[0]),id:'portion2',sequence:2,teacher_message:'Now retain the stated conditions when applying this relationship.'});await accept(output);
  assert.equal((await read()).conversation.length,0);assert.equal((await read()).released_portions.length,0);
  const claim=await repository.command(ids.studentId,ids.classId,args(await read(),{intent:'claim'}));assert.ok(claim.leaseToken);
- const event=(await dueEventStore.claimDue({workerId:'fixture-worker',now:new Date(),leaseMs:60000})).find(e=>e.event_type==='teaching.classroom.portion_release_due');assert.ok(event);
+ const event=(await dueEventStore.claimDue({workerId:'fixture-worker',now:new Date(),leaseMs:60000})).find(e=>e.event_type==='teaching.classroom.portion_release_due'&&e.payload.class_id===h.ids.classId);assert.ok(event);
  const first=await repository.release(ids.studentId,ids.classId,{event});assert.equal(first.released,true);assert.equal((await repository.release(ids.studentId,ids.classId,{event})).released,false);
  let snapshot=await read();assert.equal(snapshot.conversation.length,1);assert.equal(snapshot.position.last_render_confirmed,0);assert.equal(snapshot.capabilities.messages,false);
  const receipt=args(snapshot,{portionId:first.portionId,leaseToken:claim.leaseToken,renderState:'accessible_ready',active:true,representationReady:true,readyAssetIds:[]});
@@ -83,4 +83,17 @@ test('missing essential diagram holds publication; explicit text replacement has
 test('private sequence, policy pin and committed Board identities reject mutation in PostgreSQL',{skip},async()=>harness(async h=>{
  await h.accept();await assert.rejects(()=>h.withTransaction(tx=>tx.query("update public.teaching_classroom_sequences set payload='{}' where session_id=$1",[h.sessionId])),/IMMUTABLE/);await assert.rejects(()=>h.withTransaction(tx=>tx.query("update public.teaching_classroom_delivery set policy_version='changed' where session_id=$1",[h.sessionId])),/PIN_IMMUTABLE/);
  await h.repository.command(h.ids.studentId,h.ids.classId,h.args(await h.read(),{intent:'claim'}));const first=await h.repository.release(h.ids.studentId,h.ids.classId);await assert.rejects(()=>h.withTransaction(tx=>tx.query("update public.teaching_classroom_portions set board_item_ids='[]',status='CONFIRMED' where portion_id=$1",[first.portionId])),/PUBLICATION_IMMUTABLE/);
+}));
+test('authenticated HTTP snapshot, lease, receipt and SSE exercise the real persisted release path',{skip},async()=>harness(async h=>{
+ const app=require('express')();app.use(require('express').json());app.use((req,res,next)=>{if(req.headers.authorization!=='Bearer fixture-owner')return res.status(401).json({code:'UNAUTHORIZED'});req.user={id:h.ids.studentId};next();});
+ const service=require('../../../teaching/classroom-remodel/presentation-service').createClassroomPresentationService({repository:h.repository});require('../../../teaching/classroom-remodel/presentation-routes').mountClassroomPresentationRoutes(app,{service,reauthenticate:async()=>true});
+ const server=app.listen(0,'127.0.0.1');await new Promise(resolve=>server.once('listening',resolve));const base='http://127.0.0.1:'+server.address().port+'/classes/'+h.ids.classId+'/classroom/',headers={Authorization:'Bearer fixture-owner','Content-Type':'application/json'};
+ try{
+  await h.accept();assert.equal((await fetch(base+'session')).status,401);const snapshot=await (await fetch(base+'session',{headers})).json();assert.equal(snapshot.released_portions.length,0);
+  const claim=await (await fetch(base+'client-lease',{method:'POST',headers,body:JSON.stringify(h.args(snapshot,{intent:'claim'}))})).json();assert.ok(claim.leaseToken);
+  const event=(await h.dueEventStore.claimDue({workerId:'connected-http-fixture',now:new Date(),leaseMs:60000})).find(e=>e.event_type==='teaching.classroom.portion_release_due'&&e.payload.class_id===h.ids.classId);const released=await h.repository.release(h.ids.studentId,h.ids.classId,{event});assert.equal(released.released,true);
+  const published=await (await fetch(base+'session',{headers})).json();assert.equal(published.conversation[0].text,f.opening().interaction.portions[0].teacher_message);assert.ok(published.released_portions[0].content.board_refs[0].id);
+  const receipt=h.args(published,{leaseToken:claim.leaseToken,portionId:released.portionId,renderState:'accessible_ready',active:true,representationReady:true,readyAssetIds:[]});const accepted=await (await fetch(base+'delivery-receipts',{method:'POST',headers,body:JSON.stringify(receipt)})).json();assert.equal(accepted.semantics,'APPLICATION_RENDER_ONLY');assert.equal((await h.read()).position.last_render_confirmed,1);
+  const stream=await fetch(base+'stream?after=0',{headers}),reader=stream.body.getReader(),decoder=new TextDecoder();let text='';while(!text.includes('classroom_delta'))text+=decoder.decode((await reader.read()).value);assert.ok(text.includes(f.opening().interaction.portions[0].teacher_message));assert.doesNotMatch(text,/presentation_span|assistance_ceiling|leaseToken/);await reader.cancel();
+ }finally{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}
 }));
