@@ -14,6 +14,7 @@ export function createSessionClient({
     cursor = 0,
     events = new Map(),
     leaseToken = null,
+    leaseEpoch = null,
     closed = false,
     renewTimer = null,
     reconnectTimer = null,
@@ -40,6 +41,13 @@ export function createSessionClient({
       pending = null;
     }
     if (snapshot && next.delivery_version < snapshot.delivery_version) return;
+    if (
+      leaseToken &&
+      (next.control_epoch !== leaseEpoch ||
+        (next.clocks?.lease_expires_at &&
+          new Date(next.clocks.lease_expires_at) <= new Date(next.server_time)))
+    )
+      leaseToken = null;
     snapshot = next;
     cursor = next.cursor;
     for (const e of next.conversation) events.set(e.sequence, e);
@@ -66,6 +74,7 @@ export function createSessionClient({
   function delta(data) {
     if (!snapshot || data.session_id !== snapshot.session_id)
       throw Error("CLASSROOM_SESSION_CHANGED");
+    if (data.from_cursor > cursor) throw Error("CLASSROOM_DELTA_GAP");
     let expected = data.from_cursor + 1;
     for (const e of data.events) {
       if (e.sequence !== expected++) throw Error("CLASSROOM_DELTA_GAP");
@@ -116,7 +125,10 @@ export function createSessionClient({
         signal: abort.signal,
       });
       pending = null;
-      if (result.leaseToken) leaseToken = result.leaseToken;
+      if (result.leaseToken) {
+        leaseToken = result.leaseToken;
+        leaseEpoch = result.controlEpoch ?? snapshot.control_epoch;
+      }
       await refresh();
       return result;
     } catch (error) {

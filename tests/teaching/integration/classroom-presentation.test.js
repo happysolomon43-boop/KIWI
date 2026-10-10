@@ -94,6 +94,9 @@ test('an unavailable optional visual publishes independent text and a real Board
 test('Notebook references resolve only owned published content; retries and protected mode remain durable',{skip},async()=>harness(async h=>{
  await h.accept();const chapter={kind:'chapter',id:'chapter1',version:'1',anchor:'U01.E01'};
  const base={studentId:h.ids.studentId,classId:h.ids.classId,content:'Note',sourceKind:'PERSONAL',idempotencyKey:randomUUID(),sourceRef:chapter};
+ const d11=require('../../../teaching/repositories/d11-lesson-controller').createD11LessonControllerRepository({query:h.query,withTransaction:h.withTransaction,randomUUID});
+ const notebookService=require('../../../teaching/d14/service').createD14Service({repository:h.d14Repository,d11Repository:d11,d11Service:{},d12Service:{},randomUUID});
+ await notebookService.notebook({id:h.ids.studentId},h.ids.classId,{content:base.content,idempotencyKey:base.idempotencyKey,sourceRef:base.sourceRef});
  const first=await h.d14Repository.addNotebook(base),again=await h.d14Repository.addNotebook({...base,sourceRef:{anchor:chapter.anchor,version:chapter.version,id:chapter.id,kind:chapter.kind}});assert.equal(first.notebook_item_id,again.notebook_item_id);assert.deepEqual((await h.d14Repository.notebook(h.ids.studentId,h.ids.classId))[0].source_ref,chapter);
  await assert.rejects(()=>h.d14Repository.addNotebook({...base,idempotencyKey:randomUUID(),sourceRef:{...chapter,anchor:'foreign'}}),{code:'TEACHING_D14_NOTEBOOK_REFERENCE_INVALID'});
  const privatePortion=(await h.query('select portion_id from public.teaching_classroom_portions where session_id=$1',[h.sessionId])).rows[0].portion_id;

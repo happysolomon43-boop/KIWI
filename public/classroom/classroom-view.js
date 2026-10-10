@@ -25,10 +25,41 @@ export function mountClassroomView({
     title,
     node("p", legacy.identity?.teacher_name || "KIWI Teacher"),
   );
+  const classClock = node("p", "Checking class timing…", "cr-clock");
+  header.append(classClock);
+  let lastClockTime = null,
+    clockReceived = performance.now();
+  const displayClock = () => {
+    const s = store?.snapshot;
+    if (!s?.clocks.class_end_at) return;
+    if (lastClockTime !== s.server_time) {
+      lastClockTime = s.server_time;
+      clockReceived = performance.now();
+    }
+    const remaining = Math.max(
+      0,
+      new Date(s.clocks.class_end_at) -
+        new Date(s.server_time) -
+        (performance.now() - clockReceived),
+    );
+    const seconds = Math.ceil(remaining / 1000);
+    classClock.textContent =
+      (legacy.mode || "Teaching") +
+      " · " +
+      Math.floor(seconds / 60) +
+      ":" +
+      String(seconds % 60).padStart(2, "0") +
+      " remaining in the teaching window";
+  };
+  const clockTimer = setInterval(displayClock, 1000);
   const status = node("p", "Connecting…", "cr-status");
   status.setAttribute("role", "status");
   status.setAttribute("aria-live", "polite");
   header.append(status);
+  const noteStatus = node("p", "", "cr-notebook-status");
+  noteStatus.setAttribute("role", "status");
+  noteStatus.setAttribute("aria-live", "polite");
+  header.append(noteStatus);
   const close = action("Return to course", onClose);
   header.append(close);
   const controls = node("nav", null, "cr-controls");
@@ -270,9 +301,9 @@ export function mountClassroomView({
         "/teaching/classes/" + encodeURIComponent(classId) + "/notebook",
         { method: "POST", body: operation, signal: viewAbort.signal },
       );
-      status.textContent = "Saved to Notebook.";
+      noteStatus.textContent = "Saved to Notebook.";
     } catch (e) {
-      status.textContent =
+      noteStatus.textContent =
         "Notebook save not confirmed. Retry the same passage to check safely.";
     }
   }
@@ -473,6 +504,7 @@ export function mountClassroomView({
       return;
     }
     updateControls(s);
+    displayClock();
     status.textContent =
       (reviewOnly
         ? "Past class · "
@@ -610,6 +642,7 @@ export function mountClassroomView({
       version++;
       expandedBoard?.close();
       viewAbort.abort();
+      clearInterval(clockTimer);
       store.close();
       mobile.removeEventListener("change", syncViews);
       document.removeEventListener("visibilitychange", visible);

@@ -571,7 +571,7 @@ function openSheet(kind){
   const headline=$('h2','',title);headline.id='tc-sheet-title';
   const headingText=add($('div','tc-sheet-heading-copy'),$('div','tc-eyebrow',label),headline);
   const mark=$('span','tc-sheet-emblem',kind==='notebook'?'✎':'✋');mark.setAttribute('aria-hidden','true');
-  top.append(mark,headingText,button('×',()=>closeSheet(),'tc-sheet-close'));
+  const sheetClose=button('×',()=>closeSheet(),'tc-sheet-close');sheetClose.setAttribute('aria-label','Close '+title);top.append(mark,headingText,sheetClose);
   dialog.append($('div','tc-sheet-handle'));
   dialog.append(top);
   dialog.append($('p','tc-sheet-description',kind==='notebook'
