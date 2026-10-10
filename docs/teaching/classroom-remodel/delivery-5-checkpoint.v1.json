@@ -1,0 +1,275 @@
+{
+  "version": "classroom-remodel-delivery-checkpoint.v1",
+  "recordedAt": "2026-10-10T15:43:14.027956+01:00",
+  "delivery": 5,
+  "branch": "feat/classroom-remodel-delivery-5",
+  "implementationCommit": "433c7612c7b395b3727c15df507a4a3e732ef39d",
+  "testedTree": "ac662f4db126bed753ac6cc59ebb6c9adec68d73",
+  "pr": "https://github.com/happysolomon43-boop/KIWI/pull/333",
+  "prState": "OPEN_DRAFT",
+  "baseBranch": "feat/classroom-remodel-delivery-4",
+  "verifiedStartingPoint": {
+    "main": "a77aec6fbd49b89a4538610e434151e2f5fb8cde",
+    "delivery4Head": "5f64a7e49c51491f58bd24763d4af504e6778839",
+    "delivery4CI": "32/32 successful; acceptance externally held",
+    "localChangesAtStart": "clean"
+  },
+  "acceptance": "IMPLEMENTED_CANDIDATE_ACCEPTANCE_HELD",
+  "implemented": [
+    "Atomic immutable accepted message, unique allowance charge, queue/conversation and durable outbox; receipt after commit",
+    "Authenticated owned session API, source anchors, backend size/rate/allowance lanes; exact retry after unknown acknowledgement",
+    "Candidate registered handle_message through actual D03/D05 validation and provisional sink without active-owner commit",
+    "Separate auditable coordinator proposal and engine acceptance; full owned message/queue/actual-teaching context with plain JSON dates",
+    "Five instructional question states independent of worker processing/attempt/lease state; bounded durable crash/provider recovery",
+    "Stored boundary/unit/closure commitments and truthful follow-up preservation before public acknowledgement",
+    "Eligible FIFO interruption, exact unfinished anchor and preserved prepared lesson; committed publication sequence supports interleaving",
+    "Compatible grouped concerns share a fenced reply lease; explicit trusted coverage required; every original ID and reply link retained",
+    "Communication answered/clarification opens only after entire reply render-confirmed; never mastery or difficulty resolution",
+    "Actual composer Sending/Accepted/pending/clarification/answered/unresolved, server balance and retained exact uncertain draft/body/key",
+    "Exhaustion preserves confirmed requested clarification and existing D14 technical controls; new Teacher tasks unavailable",
+    "Full accepted-question projection independent of conversation page size, keyboard scrollable bounded question area and mobile wrapping",
+    "Pre-command stale snapshot cannot clear newly committed client lease; fresh reconciliation preserves takeover fencing",
+    "Notebook/support writes use Class-before-session locks; concurrent cross-service native check preserves one effect",
+    "Remodeled legacy Help blocked from parallel queue; legacy sessions, old bindings and historical provenance retained",
+    "Closure persists unresolved accepted work and truthful notice; no silently scheduled answer or canceled question"
+  ],
+  "changedFiles": [
+    ".github/workflows/classroom-connected-browser.yml",
+    ".github/workflows/classroom-remodel-foundation.yml",
+    "docs/teaching/classroom-remodel/migration-inventory.v1.json",
+    "migrations/20261010140000_classroom_message_queue.sql",
+    "public/classroom/classroom-view.js",
+    "public/classroom/reading-tools.js",
+    "public/classroom/session-client.js",
+    "public/teaching-classroom.css",
+    "scripts/setup-teaching-integration-db.js",
+    "teaching-backend.js",
+    "teaching/classroom-remodel/canonical-registration.v1.json",
+    "teaching/classroom-remodel/message-contracts.js",
+    "teaching/classroom-remodel/message-intelligence.js",
+    "teaching/classroom-remodel/message-routes.js",
+    "teaching/classroom-remodel/message-service.js",
+    "teaching/classroom-remodel/migration-proposal.v1.json",
+    "teaching/classroom-remodel/presentation-intelligence.js",
+    "teaching/classroom-remodel/presentation-runtime.js",
+    "teaching/classroom-remodel/presentation-service.js",
+    "teaching/classroom-remodel/release-proposal.v1.json",
+    "teaching/classroom-remodel/state-policy.js",
+    "teaching/events/names.js",
+    "teaching/repositories/classroom-messages.js",
+    "teaching/repositories/classroom-presentation.js",
+    "teaching/repositories/d14-classroom.js",
+    "tests/teaching/browser/classroom-messages-connected.js",
+    "tests/teaching/fixtures/classroom-message-policy.js",
+    "tests/teaching/fixtures/classroom-messages.js",
+    "tests/teaching/fixtures/classroom-presentation-database.js",
+    "tests/teaching/integration/classroom-messages.test.js",
+    "tests/teaching/unit/classroom-messages.test.js",
+    "tests/teaching/unit/classroom-session-client.test.js",
+    "tests/teaching/unit/d14-cancellation-authority.test.js",
+    "docs/teaching/classroom-remodel/delivery-5-messages.md",
+    "docs/teaching/classroom-remodel/delivery-5-checkpoint.v1.json",
+    "docs/teaching/classroom-remodel/qualification-ledger.v1.json"
+  ],
+  "migrations": {
+    "authored": [
+      "migrations/20261010140000_classroom_message_queue.sql"
+    ],
+    "sha256": "883961971bcc6cfbed5c8a3383364d6d899ae71ee1def2be3208e8b7a5969dc4",
+    "productionApplied": [],
+    "connectedIntegrationApplied": [],
+    "disposableCI": "Existing PostgreSQL 17 bootstrap; service-only RLS and browser DML revocation"
+  },
+  "effectiveVersions": {
+    "engine": "CLASSROOM_V1 inactive by default",
+    "messages": "classroom-messages.v1",
+    "contracts": "classroom-contracts.v1",
+    "domain": "classroom-domain.v1",
+    "presentationWire": "classroom-presentation-wire.v1",
+    "registry": "1.3 active unchanged",
+    "promptManifest": "1.4 active unchanged",
+    "canonicalCoordinator": "TPF-21 candidate 1.0 working alias TPF-5/8; handle_message candidate task registration; not frozen or runtime-effective",
+    "candidatePrompts": {
+      "TPF-05": "2.0 qualification_pending runtimeEffective=false",
+      "TPF-21": "1.0 qualification_pending runtimeEffective=false",
+      "TPF-08": "2.0 qualification_pending runtimeEffective=false",
+      "TPF-20": "Existing authority unchanged; remodeling reconciliation Delivery 7"
+    },
+    "policy": "Owner-adopted versioned message/generation/retention/reliability fields required; fixture values are not production adoption"
+  },
+  "policyRequirements": [
+    "conversationalAllowance accepted_turns_per_session",
+    "messageMaxBytes",
+    "messageRateLimit accepted_messages_per_window",
+    "messageRateWindowMs",
+    "refundPolicy",
+    "messageWorkerLeaseMs",
+    "messageRetryBackoffMs",
+    "messageRoutingRetryLimit",
+    "messageReplyRetryLimit",
+    "messageDraftRetentionMs",
+    "Existing presentation/generation policies including output_tokens_per_attempt budget"
+  ],
+  "validation": {
+    "localUnitAndAI": {
+      "tests": 1696,
+      "pass": 1696,
+      "fail": 0,
+      "skip": 0
+    },
+    "webBuild": "PASS",
+    "foundationIntegrity": "PASS",
+    "sourceCI": {
+      "commit": "433c7612c7b395b3727c15df507a4a3e732ef39d",
+      "workflows": 32,
+      "passed": 32,
+      "failed": 0,
+      "status": "PASS"
+    },
+    "database": {
+      "commit": "433c7612c7b395b3727c15df507a4a3e732ef39d",
+      "run": 38060493369,
+      "job": 114237600069,
+      "tests": 126,
+      "pass": 126,
+      "fail": 0,
+      "skip": 0,
+      "rlsGaps": 0,
+      "browserMutationGrants": 0,
+      "status": "PASS",
+      "evidenceKind": "OBSERVED_NATIVE_POSTGRES_SYNTHETIC_FIXTURES"
+    },
+    "browser": {
+      "commit": "433c7612c7b395b3727c15df507a4a3e732ef39d",
+      "run": 38060493392,
+      "job": 114237600164,
+      "status": "PASS",
+      "artifact": "https://github.com/happysolomon43-boop/KIWI/actions/runs/38060493392/artifacts/11672394201",
+      "evidenceKind": "OBSERVED_CHROMIUM_CONNECTED_API_NATIVE_POSTGRES_SYNTHETIC_FIXTURES",
+      "checks": [
+        "Actual persistent composer and authenticated API/native database",
+        "Injected post-commit lost acknowledgement; exact restored retry produces one charge",
+        "Exhaustion and unsent draft reload",
+        "Actual Teacher clarification sequence/Board renderer/render receipt opens free parent-linked lane",
+        "Saved questions keyboard focus and mobile 375px reflow; automated WCAG no violations",
+        "Unresolved closure retains all accepted concerns",
+        "Prior D4 presentation/protected owner browser regressions pass"
+      ],
+      "liveProvider": false,
+      "liveAccount": false,
+      "manualScreenReader": false,
+      "realSoftwareKeyboard": false
+    },
+    "priorDatabase": {
+      "commit": "778645f489cc25c6f4c8e21658434082a70c02dc",
+      "run": 38059864172,
+      "job": 114235741740,
+      "tests": 124,
+      "pass": 124,
+      "fail": 0,
+      "skip": 0,
+      "evidenceKind": "OBSERVED_NATIVE_POSTGRES_SYNTHETIC_FIXTURES"
+    },
+    "priorBrowser": {
+      "commit": "0bb2b2c0add2e627393d8cfb73dd08079b49df99",
+      "run": 38060350263,
+      "job": 114237185408,
+      "status": "PASS",
+      "evidenceKind": "OBSERVED_CHROMIUM_CONNECTED_API_NATIVE_POSTGRES_SYNTHETIC_FIXTURES",
+      "liveProvider": false,
+      "liveAccount": false,
+      "manualScreenReader": false,
+      "realSoftwareKeyboard": false
+    },
+    "liveProvider": "NOT_OBSERVED",
+    "deployedBehavior": "NO_NEW_DEPLOYMENT",
+    "manualScreenReaderAndRealKeyboard": "NOT_OBSERVED",
+    "checkpointDocumentationCI": "Checkpoint documentation commit distinct from tested implementation; inspect its exact head checks separately."
+  },
+  "recoveryHistory": [
+    {
+      "commit": "9e1110ecd75762444f8680406f309d9869690807",
+      "databaseRun": 38058279205,
+      "status": "FAIL_SUPERSEDED",
+      "reason": "Prepared ordinal regressed after question reply interleaving. Use immutable committed conversation publication sequence; progress guard retained."
+    },
+    {
+      "commit": "008d4cf7353e64269b68791fc9bb66253044488f",
+      "browserRun": 38058483285,
+      "status": "FAIL_SUPERSEDED",
+      "reason": "Socket destruction transparently replayed by Chromium. Explicit post-commit 503 now models uncertain acknowledgement visibly and retries exact saved identity."
+    },
+    {
+      "commit": "7bf403b81d0e6b2f732c1d496c7d9bb08abba78e",
+      "browserRun": 38058856441,
+      "status": "FAIL_SUPERSEDED",
+      "reason": "Direct test mutation did not establish a real clarification render receipt. Replaced with actual authorized Teacher sequence/publication/render confirmation."
+    },
+    {
+      "commit": "47a0e814456ac1b4c72a61026c8034f8402ce53b",
+      "browserRun": 38059060768,
+      "status": "FAIL_SUPERSEDED",
+      "reason": "Fixture claim raced with its own preparation mutation. Acquire browser lease before setup mutations."
+    },
+    {
+      "commit": "fc2be4f4baa15d1f2c5be2fd9e119b5d3938d830",
+      "browserRun": 38059343283,
+      "status": "FAIL_SUPERSEDED",
+      "reason": "Fixture omitted actual Board reader/renderer, so render-ready receipt correctly held. Connected fixture now uses both."
+    },
+    {
+      "commit": "1d2a3ebd8a48c0480b1e94fc375e82d45ed448f9",
+      "browserRun": 38059672125,
+      "status": "FAIL_SUPERSEDED",
+      "reason": "Observed pre-command snapshot race could revoke new lease. Guard committed delivery version and refresh; unit regression and later connected suite pass."
+    },
+    {
+      "commit": "778645f489cc25c6f4c8e21658434082a70c02dc",
+      "browserRun": 38059864218,
+      "status": "FAIL_SUPERSEDED",
+      "reason": "Axe requires explicit browser context; fixture corrected."
+    },
+    {
+      "commit": "783c5cccf1dbe9cd80ec19552a1addb4445adb96",
+      "browserRun": 38060005379,
+      "status": "FAIL_SUPERSEDED",
+      "reason": "Real scrollable-question accessibility failure. Added keyboard focus and actual focus check. Logs also exposed Notebook/session/Class lock-order deadlock; parent-first order fixed with concurrent native check."
+    },
+    {
+      "commit": "0bb2b2c0add2e627393d8cfb73dd08079b49df99",
+      "databaseRun": 38060350198,
+      "tests": 125,
+      "pass": 124,
+      "fail": 1,
+      "skip": 0,
+      "status": "FAIL_SUPERSEDED",
+      "reason": "Real model boundary rejected native Date in newly added queue context. Explicit ISO serialization added; no plain-JSON guard bypass."
+    }
+  ],
+  "qualification": "All 44 scenarios remain NOT_QUALIFIED. Native/browser synthetic fixtures do not establish live-provider, reviewer, academic or production qualification.",
+  "remaining": [
+    "Deliveries 1\u20134 external provider/reviewer/C4, manual screen reader/real keyboard and deployed session/proxy gates remain held",
+    "Owner adoption of message allowance/rate/size/refund/generation/reliability/privacy-retention policy is not established for production",
+    "Substantive submitted work, Teacher tasks, interpretation, task clarification/windows/extensions, authorized correction decision and substantial replanning belong Delivery 6; current unsupported actions hold saved work",
+    "Correction report API holds upcoming teaching; automatic correction/replan control is not activated before Delivery 6 owner behavior",
+    "Follow-up currently preserves unscheduled work, not an appointment or automatic next-Class answer; continuity and TPF-20 reconcile in Delivery 7",
+    "Actual provider answer completeness/natural bridge and grouped-concern coverage require qualification beyond controlled fixture output",
+    "No production rollout, active-session rollback qualification or binding retirement performed"
+  ],
+  "compatibility": {
+    "legacy": "All 22 active old mapped capabilities/non-classroom callers retained; old readers and provenance retained; remodeled Help entry rejected, legacy Help unchanged",
+    "remodeled": "Explicit qualified optional message composition plus adopted policy/providers/Directive reader required; no production session admission",
+    "rollback": "Optional candidate stays disabled; additive accepted history retained. No downgrade of active remodeled sessions or destructive migration rollback claimed."
+  },
+  "infrastructure": {
+    "newInfrastructure": "NONE",
+    "connectedMigrations": "NONE",
+    "deployment": "NONE",
+    "bindingRetirement": "NONE",
+    "productionRenderBaseline": "a77aec6fbd49b89a4538610e434151e2f5fb8cde; no mutation",
+    "supabaseProduction": "nqdwifqskxkblgdgeutn; no candidate migration applied",
+    "supabaseIntegration": "kmymmwujhotqxtoamyur; no candidate migration applied",
+    "vercel": "No KIWI project topology established; no rollout"
+  },
+  "nextUnfinishedAction": "Satisfy Delivery 5 external owner-policy adoption, actual-provider/reviewer/C4 and prerequisite Delivery 1\u20134 acceptance evidence, including manual screen reader/real keyboard and deployed session/proxy qualification. Independent Delivery 6 implementation starts with registered teacher-question/task contracts and durable D11/D12-owned response windows; task controls stay disabled until backend gates pass."
+}

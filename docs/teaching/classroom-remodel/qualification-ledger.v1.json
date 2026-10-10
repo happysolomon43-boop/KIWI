@@ -88,28 +88,106 @@
       "number": 5,
       "sourceRequirement": "5. **Immediate blocker:** accepted message holds appropriate release, receives one disposition, changes only the relevant explanation and resumes at the anchor.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "supportOnly": true,
+          "delivery": 5,
+          "sourceCommit": "433c7612c7b395b3727c15df507a4a3e732ef39d",
+          "evidenceKind": "OBSERVED_NATIVE_POSTGRES_AND_CONNECTED_CHROMIUM_SYNTHETIC_FIXTURES",
+          "databaseRun": 38060493369,
+          "databaseJob": 114237600069,
+          "browserRun": 38060493392,
+          "browserJob": 114237600164,
+          "files": [
+            "tests/teaching/integration/classroom-messages.test.js",
+            "tests/teaching/unit/classroom-messages.test.js",
+            "tests/teaching/unit/classroom-session-client.test.js",
+            "tests/teaching/browser/classroom-messages-connected.js"
+          ],
+          "given": "Immediate instructional clarification or bounded correction report",
+          "actions": "Commit disposition or owner hold, prepare authorized reply, confirm actual render",
+          "expectedPersistedOutcome": "Instructional reply keeps original anchor; correction report holds upcoming release and stays pending owner decision",
+          "forbiddenEffectsAndLimits": "No automatic error correction/replan or mastery claim; complete scenario needs Delivery 6"
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
-      "testedVersions": null
+      "testedVersions": {
+        "messages": "classroom-messages.v1",
+        "coordinator": "TPF-21 candidate 1.0 handle_message inactive",
+        "policy": "FIXTURE_ONLY_NOT_PRODUCTION; no adoption implied",
+        "activation": "INACTIVE"
+      }
     },
     {
       "number": 6,
       "sourceRequirement": "6. **Boundary deferral:** acknowledgement matches a real stored example/boundary commitment; later delivery resolves the linked question.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "supportOnly": true,
+          "delivery": 5,
+          "sourceCommit": "433c7612c7b395b3727c15df507a4a3e732ef39d",
+          "evidenceKind": "OBSERVED_NATIVE_POSTGRES_AND_CONNECTED_CHROMIUM_SYNTHETIC_FIXTURES",
+          "databaseRun": 38060493369,
+          "databaseJob": 114237600069,
+          "browserRun": 38060493392,
+          "browserJob": 114237600164,
+          "files": [
+            "tests/teaching/integration/classroom-messages.test.js",
+            "tests/teaching/unit/classroom-messages.test.js",
+            "tests/teaching/unit/classroom-session-client.test.js",
+            "tests/teaching/browser/classroom-messages-connected.js"
+          ],
+          "given": "Question at unfinished prepared source span",
+          "actions": "Confirm a suitable pause, commit boundary disposition, interleave reply, confirm and resume",
+          "expectedPersistedOutcome": "Boundary obligation persists before acknowledgement; original prepared successor resumes",
+          "forbiddenEffectsAndLimits": "No unsupported time promise or prepared-position regression"
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
-      "testedVersions": null
+      "testedVersions": {
+        "messages": "classroom-messages.v1",
+        "coordinator": "TPF-21 candidate 1.0 handle_message inactive",
+        "policy": "FIXTURE_ONLY_NOT_PRODUCTION; no adoption implied",
+        "activation": "INACTIVE"
+      }
     },
     {
       "number": 7,
       "sourceRequirement": "7. **Related messages:** one response covers all linked concerns, originals remain traceable, unanswered parts persist.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "supportOnly": true,
+          "delivery": 5,
+          "sourceCommit": "433c7612c7b395b3727c15df507a4a3e732ef39d",
+          "evidenceKind": "OBSERVED_NATIVE_POSTGRES_AND_CONNECTED_CHROMIUM_SYNTHETIC_FIXTURES",
+          "databaseRun": 38060493369,
+          "databaseJob": 114237600069,
+          "browserRun": 38060493392,
+          "browserJob": 114237600164,
+          "files": [
+            "tests/teaching/integration/classroom-messages.test.js",
+            "tests/teaching/unit/classroom-messages.test.js",
+            "tests/teaching/unit/classroom-session-client.test.js",
+            "tests/teaching/browser/classroom-messages-connected.js"
+          ],
+          "given": "Two compatible linked original concerns",
+          "actions": "Freeze shared reply lease and require explicit trusted coverage; publish and confirm one reply",
+          "expectedPersistedOutcome": "Every original ID remains with the same confirmed reply link; missing coverage keeps both pending",
+          "forbiddenEffectsAndLimits": "No erased concern or communication-as-mastery inference; actual-provider completeness unqualified"
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
-      "testedVersions": null
+      "testedVersions": {
+        "messages": "classroom-messages.v1",
+        "coordinator": "TPF-21 candidate 1.0 handle_message inactive",
+        "policy": "FIXTURE_ONLY_NOT_PRODUCTION; no adoption implied",
+        "activation": "INACTIVE"
+      }
     },
     {
       "number": 8,
@@ -124,10 +202,36 @@
       "number": 9,
       "sourceRequirement": "9. **Allowance exhaustion:** new discretionary message fails admission truthfully; teacher reply/clarification/extension/technical controls remain available; retry charges once.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "supportOnly": true,
+          "delivery": 5,
+          "sourceCommit": "433c7612c7b395b3727c15df507a4a3e732ef39d",
+          "evidenceKind": "OBSERVED_NATIVE_POSTGRES_AND_CONNECTED_CHROMIUM_SYNTHETIC_FIXTURES",
+          "databaseRun": 38060493369,
+          "databaseJob": 114237600069,
+          "browserRun": 38060493392,
+          "browserJob": 114237600164,
+          "files": [
+            "tests/teaching/integration/classroom-messages.test.js",
+            "tests/teaching/unit/classroom-messages.test.js",
+            "tests/teaching/unit/classroom-session-client.test.js",
+            "tests/teaching/browser/classroom-messages-connected.js"
+          ],
+          "given": "Exhausted synthetic adopted allowance",
+          "actions": "Reject new conversation; confirm actual clarification request then submit linked reply; use existing technical signal",
+          "expectedPersistedOutcome": "Shared server balance unchanged for requested clarification/technical control and duplicate retry",
+          "forbiddenEffectsAndLimits": "No client-claimed free task lane; extensions and task responses await Delivery 6"
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
-      "testedVersions": null
+      "testedVersions": {
+        "messages": "classroom-messages.v1",
+        "coordinator": "TPF-21 candidate 1.0 handle_message inactive",
+        "policy": "FIXTURE_ONLY_NOT_PRODUCTION; no adoption implied",
+        "activation": "INACTIVE"
+      }
     },
     {
       "number": 10,
@@ -228,6 +332,26 @@
           ],
           "browserRun": 38042927078,
           "browserJob": 114186613563
+        },
+        {
+          "supportOnly": true,
+          "delivery": 5,
+          "sourceCommit": "433c7612c7b395b3727c15df507a4a3e732ef39d",
+          "evidenceKind": "OBSERVED_NATIVE_POSTGRES_AND_CONNECTED_CHROMIUM_SYNTHETIC_FIXTURES",
+          "databaseRun": 38060493369,
+          "databaseJob": 114237600069,
+          "browserRun": 38060493392,
+          "browserJob": 114237600164,
+          "files": [
+            "tests/teaching/integration/classroom-messages.test.js",
+            "tests/teaching/unit/classroom-messages.test.js",
+            "tests/teaching/unit/classroom-session-client.test.js",
+            "tests/teaching/browser/classroom-messages-connected.js"
+          ],
+          "given": "Unsent or unknown-outcome composer state before reload",
+          "actions": "Reload and restore exact draft/operation body while backend position remains authoritative",
+          "expectedPersistedOutcome": "Same pending message identity and readable lesson persist",
+          "forbiddenEffectsAndLimits": "No deadline reset, automatic duplicate send or replaced focused lane selector"
         }
       ],
       "liveProviderEvidence": [],
@@ -235,7 +359,10 @@
       "testedVersions": {
         "presentationWire": "classroom-presentation-wire.v1",
         "domain": "classroom-domain.v1",
-        "activation": "INACTIVE"
+        "activation": "INACTIVE",
+        "messages": "classroom-messages.v1",
+        "coordinator": "TPF-21 candidate 1.0 handle_message inactive",
+        "policy": "FIXTURE_ONLY_NOT_PRODUCTION; no adoption implied"
       }
     },
     {
@@ -272,6 +399,26 @@
           ],
           "browserRun": 38042927078,
           "browserJob": 114186613563
+        },
+        {
+          "supportOnly": true,
+          "delivery": 5,
+          "sourceCommit": "433c7612c7b395b3727c15df507a4a3e732ef39d",
+          "evidenceKind": "OBSERVED_NATIVE_POSTGRES_AND_CONNECTED_CHROMIUM_SYNTHETIC_FIXTURES",
+          "databaseRun": 38060493369,
+          "databaseJob": 114237600069,
+          "browserRun": 38060493392,
+          "browserJob": 114237600164,
+          "files": [
+            "tests/teaching/integration/classroom-messages.test.js",
+            "tests/teaching/unit/classroom-messages.test.js",
+            "tests/teaching/unit/classroom-session-client.test.js",
+            "tests/teaching/browser/classroom-messages-connected.js"
+          ],
+          "given": "Message commit followed by injected 503 acknowledgement failure",
+          "actions": "Reload and check acceptance with exact original body/key",
+          "expectedPersistedOutcome": "One message, queue, allowance charge and accepted conversation identity",
+          "forbiddenEffectsAndLimits": "No Accepted before commit, duplicate charge or changed-content retry"
         }
       ],
       "liveProviderEvidence": [],
@@ -279,7 +426,10 @@
       "testedVersions": {
         "presentationWire": "classroom-presentation-wire.v1",
         "domain": "classroom-domain.v1",
-        "activation": "INACTIVE"
+        "activation": "INACTIVE",
+        "messages": "classroom-messages.v1",
+        "coordinator": "TPF-21 candidate 1.0 handle_message inactive",
+        "policy": "FIXTURE_ONLY_NOT_PRODUCTION; no adoption implied"
       }
     },
     {
@@ -318,6 +468,26 @@
           ],
           "browserRun": 38042927078,
           "browserJob": 114186613563
+        },
+        {
+          "supportOnly": true,
+          "delivery": 5,
+          "sourceCommit": "433c7612c7b395b3727c15df507a4a3e732ef39d",
+          "evidenceKind": "OBSERVED_NATIVE_POSTGRES_AND_CONNECTED_CHROMIUM_SYNTHETIC_FIXTURES",
+          "databaseRun": 38060493369,
+          "databaseJob": 114237600069,
+          "browserRun": 38060493392,
+          "browserJob": 114237600164,
+          "files": [
+            "tests/teaching/integration/classroom-messages.test.js",
+            "tests/teaching/unit/classroom-messages.test.js",
+            "tests/teaching/unit/classroom-session-client.test.js",
+            "tests/teaching/browser/classroom-messages-connected.js"
+          ],
+          "given": "Independent database clients and in-flight pre-claim snapshot",
+          "actions": "Concurrent identical/different sends, Notebook capture and snapshot reads; receive old read after new lease",
+          "expectedPersistedOutcome": "Shared allowance and one-effect retry; new lease survives older read and remains epoch-fenced",
+          "forbiddenEffectsAndLimits": "No per-tab quota or competing advancement; deployment/device evidence remains pending"
         }
       ],
       "liveProviderEvidence": [],
@@ -325,7 +495,10 @@
       "testedVersions": {
         "presentationWire": "classroom-presentation-wire.v1",
         "domain": "classroom-domain.v1",
-        "activation": "INACTIVE"
+        "activation": "INACTIVE",
+        "messages": "classroom-messages.v1",
+        "coordinator": "TPF-21 candidate 1.0 handle_message inactive",
+        "policy": "FIXTURE_ONLY_NOT_PRODUCTION; no adoption implied"
       }
     },
     {
@@ -376,6 +549,26 @@
             "tests/teaching/integration/classroom-presentation.test.js"
           ],
           "scope": "Native persistence/release/receipt/lease/epoch/rollback and connected fixture HTTP transport. Provider stall is a controlled fixture. Browser/screen-reader, actual-account, deployed proxy and live-provider qualification remain pending."
+        },
+        {
+          "supportOnly": true,
+          "delivery": 5,
+          "sourceCommit": "433c7612c7b395b3727c15df507a4a3e732ef39d",
+          "evidenceKind": "OBSERVED_NATIVE_POSTGRES_AND_CONNECTED_CHROMIUM_SYNTHETIC_FIXTURES",
+          "databaseRun": 38060493369,
+          "databaseJob": 114237600069,
+          "browserRun": 38060493392,
+          "browserJob": 114237600164,
+          "files": [
+            "tests/teaching/integration/classroom-messages.test.js",
+            "tests/teaching/unit/classroom-messages.test.js",
+            "tests/teaching/unit/classroom-session-client.test.js",
+            "tests/teaching/browser/classroom-messages-connected.js"
+          ],
+          "given": "Routing claim with outbox fault or worker lease loss",
+          "actions": "Rollback admission failure; commit lease recovery before provider; fence stale accepted output",
+          "expectedPersistedOutcome": "No partial admission; accepted work and durable recovery survive",
+          "forbiddenEffectsAndLimits": "No cancel/loss or fresh charge after crashed/failed routing"
         }
       ],
       "liveProviderEvidence": [],
@@ -383,7 +576,10 @@
       "testedVersions": {
         "presentationWire": "classroom-presentation-wire.v1",
         "domain": "classroom-domain.v1",
-        "activation": "INACTIVE"
+        "activation": "INACTIVE",
+        "messages": "classroom-messages.v1",
+        "coordinator": "TPF-21 candidate 1.0 handle_message inactive",
+        "policy": "FIXTURE_ONLY_NOT_PRODUCTION; no adoption implied"
       }
     },
     {
@@ -410,6 +606,26 @@
             "tests/teaching/integration/classroom-presentation.test.js"
           ],
           "scope": "Native persistence/release/receipt/lease/epoch/rollback and connected fixture HTTP transport. Provider stall is a controlled fixture. Browser/screen-reader, actual-account, deployed proxy and live-provider qualification remain pending."
+        },
+        {
+          "supportOnly": true,
+          "delivery": 5,
+          "sourceCommit": "433c7612c7b395b3727c15df507a4a3e732ef39d",
+          "evidenceKind": "OBSERVED_NATIVE_POSTGRES_AND_CONNECTED_CHROMIUM_SYNTHETIC_FIXTURES",
+          "databaseRun": 38060493369,
+          "databaseJob": 114237600069,
+          "browserRun": 38060493392,
+          "browserJob": 114237600164,
+          "files": [
+            "tests/teaching/integration/classroom-messages.test.js",
+            "tests/teaching/unit/classroom-messages.test.js",
+            "tests/teaching/unit/classroom-session-client.test.js",
+            "tests/teaching/browser/classroom-messages-connected.js"
+          ],
+          "given": "Unavailable coordinator/Presenter in synthetic controlled execution",
+          "actions": "Enforce adopted attempt/timeout/lease bounds and retain failed proposal/work",
+          "expectedPersistedOutcome": "Visible pending/held question persists after retry budget",
+          "forbiddenEffectsAndLimits": "No fabricated answer or provider completion; actual-provider unknown-outcome qualification pending"
         }
       ],
       "liveProviderEvidence": [],
@@ -419,7 +635,10 @@
         "preparation": "classroom-preparation.v1",
         "activation": "INACTIVE",
         "presentationWire": "classroom-presentation-wire.v1",
-        "domain": "classroom-domain.v1"
+        "domain": "classroom-domain.v1",
+        "messages": "classroom-messages.v1",
+        "coordinator": "TPF-21 candidate 1.0 handle_message inactive",
+        "policy": "FIXTURE_ONLY_NOT_PRODUCTION; no adoption implied"
       }
     },
     {
@@ -483,6 +702,26 @@
             "tests/teaching/unit/classroom-remodel-runtime.test.js",
             "tests/teaching/integration/classroom-remodel-academic.test.js"
           ]
+        },
+        {
+          "supportOnly": true,
+          "delivery": 5,
+          "sourceCommit": "433c7612c7b395b3727c15df507a4a3e732ef39d",
+          "evidenceKind": "OBSERVED_NATIVE_POSTGRES_AND_CONNECTED_CHROMIUM_SYNTHETIC_FIXTURES",
+          "databaseRun": 38060493369,
+          "databaseJob": 114237600069,
+          "browserRun": 38060493392,
+          "browserJob": 114237600164,
+          "files": [
+            "tests/teaching/integration/classroom-messages.test.js",
+            "tests/teaching/unit/classroom-messages.test.js",
+            "tests/teaching/unit/classroom-session-client.test.js",
+            "tests/teaching/browser/classroom-messages-connected.js"
+          ],
+          "given": "Accepted bounded correction report",
+          "actions": "Persist report and owner-decision hold on upcoming release",
+          "expectedPersistedOutcome": "Question/concern remains durable without tutoring-route bypass",
+          "forbiddenEffectsAndLimits": "Correction publication/version invalidation/evidence recheck await Delivery 6; scenario not qualified"
         }
       ],
       "liveProviderEvidence": [],
@@ -490,7 +729,10 @@
       "testedVersions": {
         "contracts": "classroom-contracts.v1",
         "preparation": "classroom-preparation.v1",
-        "activation": "INACTIVE"
+        "activation": "INACTIVE",
+        "messages": "classroom-messages.v1",
+        "coordinator": "TPF-21 candidate 1.0 handle_message inactive",
+        "policy": "FIXTURE_ONLY_NOT_PRODUCTION; no adoption implied"
       }
     },
     {
@@ -614,10 +856,36 @@
       "number": 31,
       "sourceRequirement": "31. **Unresolved queue at closure:** visible unresolved records and next-Class linkage, no false scheduled appointment or silent cancellation loss.",
       "status": "NOT_QUALIFIED",
-      "fixtureEvidence": [],
+      "fixtureEvidence": [
+        {
+          "supportOnly": true,
+          "delivery": 5,
+          "sourceCommit": "433c7612c7b395b3727c15df507a4a3e732ef39d",
+          "evidenceKind": "OBSERVED_NATIVE_POSTGRES_AND_CONNECTED_CHROMIUM_SYNTHETIC_FIXTURES",
+          "databaseRun": 38060493369,
+          "databaseJob": 114237600069,
+          "browserRun": 38060493392,
+          "browserJob": 114237600164,
+          "files": [
+            "tests/teaching/integration/classroom-messages.test.js",
+            "tests/teaching/unit/classroom-messages.test.js",
+            "tests/teaching/unit/classroom-session-client.test.js",
+            "tests/teaching/browser/classroom-messages-connected.js"
+          ],
+          "given": "Pending concerns at D11 hard closure including more questions than conversation page size",
+          "actions": "Reconcile actual CLOSED session and inspect public/native queue",
+          "expectedPersistedOutcome": "Every accepted unresolved ID stays saved and visible as unresolved at closure",
+          "forbiddenEffectsAndLimits": "No cancellation loss or appointment promise; next-Class linkage awaits Delivery 7"
+        }
+      ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
-      "testedVersions": null
+      "testedVersions": {
+        "messages": "classroom-messages.v1",
+        "coordinator": "TPF-21 candidate 1.0 handle_message inactive",
+        "policy": "FIXTURE_ONLY_NOT_PRODUCTION; no adoption implied",
+        "activation": "INACTIVE"
+      }
     },
     {
       "number": 32,
@@ -734,6 +1002,26 @@
             "tests/teaching/unit/classroom-remodel-runtime.test.js",
             "tests/teaching/integration/classroom-remodel-academic.test.js"
           ]
+        },
+        {
+          "supportOnly": true,
+          "delivery": 5,
+          "sourceCommit": "433c7612c7b395b3727c15df507a4a3e732ef39d",
+          "evidenceKind": "OBSERVED_NATIVE_POSTGRES_AND_CONNECTED_CHROMIUM_SYNTHETIC_FIXTURES",
+          "databaseRun": 38060493369,
+          "databaseJob": 114237600069,
+          "browserRun": 38060493392,
+          "browserJob": 114237600164,
+          "files": [
+            "tests/teaching/integration/classroom-messages.test.js",
+            "tests/teaching/unit/classroom-messages.test.js",
+            "tests/teaching/unit/classroom-session-client.test.js",
+            "tests/teaching/browser/classroom-messages-connected.js"
+          ],
+          "given": "Unknown authority/lane, premature delivered verdict, unsupported task action or incompatible group target",
+          "actions": "Validate closed contracts, native same-session group references and model plain-JSON dates",
+          "expectedPersistedOutcome": "Reject/hold with separate proposal audit and preserved accepted message",
+          "forbiddenEffectsAndLimits": "No enum widening, authoritative browser fields or schema guard bypass"
         }
       ],
       "liveProviderEvidence": [],
@@ -741,7 +1029,10 @@
       "testedVersions": {
         "contracts": "classroom-contracts.v1",
         "preparation": "classroom-preparation.v1",
-        "activation": "INACTIVE"
+        "activation": "INACTIVE",
+        "messages": "classroom-messages.v1",
+        "coordinator": "TPF-21 candidate 1.0 handle_message inactive",
+        "policy": "FIXTURE_ONLY_NOT_PRODUCTION; no adoption implied"
       }
     },
     {
@@ -787,6 +1078,26 @@
           "expectedPersistedOutcome": "Exact owner-bound response persists; deadline and attempt identity unchanged; one owner remains authoritative; linked and personal Notebook rows persist; focus restores",
           "forbiddenOutcome": "Arbitrary owner selection, private criteria in browser, instruction exposed during protected interruption, changed owner version accepted, active attempt abandoned to instruction",
           "description": "Connected Work and Assessment response shells, private-safe package, durable responses, original reload deadline, interruption privacy, immediate Notebook linked reference, mobile personal note and keyboard focus passed. Human screen-reader/software-keyboard, full deployed Course shell/authentication, providers, production and post-assessment academic continuation remain unqualified."
+        },
+        {
+          "supportOnly": true,
+          "delivery": 5,
+          "sourceCommit": "433c7612c7b395b3727c15df507a4a3e732ef39d",
+          "evidenceKind": "OBSERVED_NATIVE_POSTGRES_AND_CONNECTED_CHROMIUM_SYNTHETIC_FIXTURES",
+          "databaseRun": 38060493369,
+          "databaseJob": 114237600069,
+          "browserRun": 38060493392,
+          "browserJob": 114237600164,
+          "files": [
+            "tests/teaching/integration/classroom-messages.test.js",
+            "tests/teaching/unit/classroom-messages.test.js",
+            "tests/teaching/unit/classroom-session-client.test.js",
+            "tests/teaching/browser/classroom-messages-connected.js"
+          ],
+          "given": "Cross-student ownership request and untrusted student message text",
+          "actions": "Owned admission/anchor/group validation and actual D03/D05 candidate execution",
+          "expectedPersistedOutcome": "Unauthorized IDs reject; student and peer concerns remain untrusted refs; no active-owner write",
+          "forbiddenEffectsAndLimits": "No protected package/private criterion projection; fixture identity is not production security qualification"
         }
       ],
       "liveProviderEvidence": [],
@@ -794,7 +1105,10 @@
       "testedVersions": {
         "contracts": "classroom-contracts.v1",
         "preparation": "classroom-preparation.v1",
-        "activation": "INACTIVE"
+        "activation": "INACTIVE",
+        "messages": "classroom-messages.v1",
+        "coordinator": "TPF-21 candidate 1.0 handle_message inactive",
+        "policy": "FIXTURE_ONLY_NOT_PRODUCTION; no adoption implied"
       }
     },
     {
@@ -841,11 +1155,36 @@
           "expectedPersistedOutcome": "Exact owner-bound response persists; deadline and attempt identity unchanged; one owner remains authoritative; linked and personal Notebook rows persist; focus restores",
           "forbiddenOutcome": "Arbitrary owner selection, private criteria in browser, instruction exposed during protected interruption, changed owner version accepted, active attempt abandoned to instruction",
           "description": "Connected Work and Assessment response shells, private-safe package, durable responses, original reload deadline, interruption privacy, immediate Notebook linked reference, mobile personal note and keyboard focus passed. Human screen-reader/software-keyboard, full deployed Course shell/authentication, providers, production and post-assessment academic continuation remain unqualified."
+        },
+        {
+          "supportOnly": true,
+          "delivery": 5,
+          "sourceCommit": "433c7612c7b395b3727c15df507a4a3e732ef39d",
+          "evidenceKind": "OBSERVED_NATIVE_POSTGRES_AND_CONNECTED_CHROMIUM_SYNTHETIC_FIXTURES",
+          "databaseRun": 38060493369,
+          "databaseJob": 114237600069,
+          "browserRun": 38060493392,
+          "browserJob": 114237600164,
+          "files": [
+            "tests/teaching/integration/classroom-messages.test.js",
+            "tests/teaching/unit/classroom-messages.test.js",
+            "tests/teaching/unit/classroom-session-client.test.js",
+            "tests/teaching/browser/classroom-messages-connected.js"
+          ],
+          "given": "Actual mobile composer and bounded scrollable saved-question list",
+          "actions": "Use keyboard focus, mobile reflow and automated WCAG check after actual free clarification",
+          "expectedPersistedOutcome": "Focus/reading controls remain usable and question region keyboard reachable; no automated violations",
+          "forbiddenEffectsAndLimits": "Manual screen reader/real software keyboard remain unobserved"
         }
       ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
-      "testedVersions": null
+      "testedVersions": {
+        "messages": "classroom-messages.v1",
+        "coordinator": "TPF-21 candidate 1.0 handle_message inactive",
+        "policy": "FIXTURE_ONLY_NOT_PRODUCTION; no adoption implied",
+        "activation": "INACTIVE"
+      }
     },
     {
       "number": 43,
@@ -863,11 +1202,36 @@
           ],
           "browserRun": 38042927078,
           "browserJob": 114186613563
+        },
+        {
+          "supportOnly": true,
+          "delivery": 5,
+          "sourceCommit": "433c7612c7b395b3727c15df507a4a3e732ef39d",
+          "evidenceKind": "OBSERVED_NATIVE_POSTGRES_AND_CONNECTED_CHROMIUM_SYNTHETIC_FIXTURES",
+          "databaseRun": 38060493369,
+          "databaseJob": 114237600069,
+          "browserRun": 38060493392,
+          "browserJob": 114237600164,
+          "files": [
+            "tests/teaching/integration/classroom-messages.test.js",
+            "tests/teaching/unit/classroom-messages.test.js",
+            "tests/teaching/unit/classroom-session-client.test.js",
+            "tests/teaching/browser/classroom-messages-connected.js"
+          ],
+          "given": "Existing disposable PostgreSQL 17 and mounted actual UI/API with synthetic identity/providers",
+          "actions": "Apply additive migration and run all native/browser workflows",
+          "expectedPersistedOutcome": "Zero RLS gaps/browser mutation grants; connected candidate works in fixture",
+          "forbiddenEffectsAndLimits": "No claim of production migration, provider, deployed session/proxy or rollout qualification"
         }
       ],
       "liveProviderEvidence": [],
       "deploymentEvidence": [],
-      "testedVersions": null
+      "testedVersions": {
+        "messages": "classroom-messages.v1",
+        "coordinator": "TPF-21 candidate 1.0 handle_message inactive",
+        "policy": "FIXTURE_ONLY_NOT_PRODUCTION; no adoption implied",
+        "activation": "INACTIVE"
+      }
     },
     {
       "number": 44,
