@@ -85,7 +85,37 @@ async function main(){await harness(async h=>{
   const before=(await h.query('select count(*)::int n from public.teaching_classroom_delivery_commands where session_id=$1',[h.sessionId])).rows[0].n;
   const review=await context.newPage();await review.goto(url+'/?review=1');await review.getByText('Past class: read-only review.',{exact:true}).waitFor();assert.equal((await h.read()).delivery_state,'COMPLETED');assert.equal((await h.query('select count(*)::int n from public.teaching_classroom_delivery_commands where session_id=$1',[h.sessionId])).rows[0].n,before);await review.close();
 
-  console.log('PASS: native publication/render receipt, pause/pace, source focus, durable Notebook retry, scroll/focus preservation, authenticated required-asset rendering, mixed actual Board renderers/history/dialog, disabled composer, axe WCAG, mobile/reflow, two-tab fencing, reload deadline preservation, D11-closed historical non-mutation, protected clearing. SYNTHETIC_FIXTURE_NOT_PROVIDER_OR_DEPLOYMENT');
+  // Delivery 7: exercise real next-Class history HTTP routes and the released
+  // student history renderer against this previous, now closed, PostgreSQL Class.
+  // An earlier rendered portion stays an exact public record, not mastery.
+  const nextClass=h.ids.classId+'-browser-next';
+  await h.query("insert into public.teaching_classes(class_id,student_id,course_id,scheduled_start_at,scheduled_end_at,timezone,source_timetable_version_id) values($1,$2,$3,clock_timestamp()+interval '1 day',clock_timestamp()+interval '1 day 1 hour','UTC',$4)",[nextClass,h.ids.studentId,h.ids.course,h.ids.timetable]);
+  const cross=await context.newPage();await cross.goto(url+'/?review=1');
+  await cross.evaluate(async id=>{
+    window.view?.close();
+    const {createHistoryView}=await import('/public/classroom/history-view.js');
+    const owned=async path=>{
+      const r=await fetch('/api/teaching/classes/'+encodeURIComponent(id)+'/classroom/'+path,{headers:{Authorization:'Bearer fixture-browser-owner'}});
+      if(!r.ok)throw Error('HISTORY_HTTP_'+r.status);
+      return r.json();
+    };
+    const history=createHistoryView({signal:new AbortController().signal,client:()=>({
+      recentHistory:()=>owned('history'),
+      historicalConversation:(sessionId,after)=>owned('history/'+encodeURIComponent(sessionId)+'/conversation?after='+after)
+    })});
+    document.body.replaceChildren(history.root);
+    await history.show();
+  },nextClass);
+  await cross.getByText('Latest reconciled record:',{exact:false}).waitFor();
+  await cross.getByText('1 teaching portions confirmed rendered. Rendering does not establish understanding.',{exact:true}).waitFor();
+  const beforeRead=(await h.query('select count(*)::int n from public.teaching_classroom_delivery_commands where session_id=$1',[h.sessionId])).rows[0].n;
+  await cross.getByRole('button',{name:'Read released conversation',exact:true}).click();
+  await cross.getByText('Connected reasoning with conditions',{exact:false}).first().waitFor();
+  assert.equal((await h.query('select count(*)::int n from public.teaching_classroom_delivery_commands where session_id=$1',[h.sessionId])).rows[0].n,beforeRead);
+  assert.equal((await h.read()).delivery_state,'COMPLETED');
+  await cross.close();
+
+  console.log('PASS: native publication/render receipt, pause/pace, source focus, durable Notebook retry, scroll/focus preservation, authenticated required-asset rendering, mixed actual Board renderers/history/dialog, disabled composer, axe WCAG, mobile/reflow, two-tab fencing, reload deadline preservation, D11-closed historical non-mutation, protected clearing, connected next-Class history with read-only original conversation. SYNTHETIC_FIXTURE_NOT_PROVIDER_OR_DEPLOYMENT');
  }finally{await browser?.close();await new Promise(resolve=>server.close(resolve));}
 },{concurrent:true});}
 main().catch(e=>{console.error(e);process.exitCode=1;});
