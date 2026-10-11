@@ -1,0 +1,43 @@
+name: Classroom Release Qualification
+on:
+  pull_request:
+    paths:
+      - 'teaching/**'
+      - 'public/classroom/**'
+      - 'tests/teaching/**'
+      - 'migrations/*classroom*'
+      - 'scripts/*classroom*'
+      - 'docs/teaching/classroom-remodel/**'
+      - '.github/workflows/classroom-release-qualification.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'teaching/**'
+      - 'public/classroom/**'
+      - 'scripts/*classroom*'
+      - 'docs/teaching/classroom-remodel/**'
+permissions:
+  contents: read
+jobs:
+  deterministic-release-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund
+      - run: node scripts/run-classroom-release-qualification.js --execute --out /tmp/classroom-release-report.json
+      - name: Confirm absent accepted owner evidence holds production admission
+        run: |
+          node - <<'NODE'
+          const assert=require('node:assert/strict');
+          const report=require('/tmp/classroom-release-report.json');
+          assert.equal(report.decision.status,'HELD');
+          assert.equal(report.scenarioCount,44);
+          assert.equal(report.productionActivated,false);
+          assert.equal(report.activeBindingsRetired,0);
+          NODE

@@ -21,7 +21,7 @@ function createD11LessonControllerRepository({
   if (typeof query !== 'function') throw new TypeError('D11 repository requires query().');
   if (typeof withTransaction !== 'function') throw new TypeError('D11 repository requires withTransaction().');
   if (typeof randomUUID !== 'function') throw new TypeError('D11 repository requires randomUUID().');
-  let classroomContinuity=null;
+  let classroomContinuity=null,classroomAdmission=null;
 
   const q = (runner, text, params = []) => runner && typeof runner.query === 'function'
     ? runner.query(text, params)
@@ -1100,6 +1100,7 @@ function createD11LessonControllerRepository({
     const routeHeld = !blueprint;
     const initialLifecycle = routeHeld ? 'INTERRUPTED' : 'ACTIVE';
     const initialSubstate = routeHeld ? 'INTERRUPTED' : 'OPENING';
+    const classroomPin=classroomAdmission&&!routeHeld?await classroomAdmission(tx,{studentId,classId,blueprintId:blueprint.lesson_blueprint_id}):{engine:'LEGACY'};
     const inserted = await tx.query(
       "insert into public.teaching_class_sessions(" +
       "class_session_id,student_id,class_id,lesson_blueprint_id,lifecycle_state,instructional_substate,state_version," +
@@ -1115,6 +1116,10 @@ function createD11LessonControllerRepository({
         classRow.scheduled_start_at,classRow.scheduled_end_at,classRow.timezone,
       ]
     );
+    if(classroomPin.engine==='CLASSROOM_V1'){
+      const pinned=await tx.query('update public.teaching_class_sessions set classroom_engine=$2,classroom_chapter_artifact_id=$3,classroom_binding_version=$4,classroom_release_manifest_hash=$5 where class_session_id=$1 returning *',[sessionId,classroomPin.engine,classroomPin.chapterId,classroomPin.bindingVersion,classroomPin.releaseManifestHash]);
+      inserted.rows[0]=pinned.rows[0];
+    }
     await appendHistoryUsing(tx, {
       studentId,classId,classSessionId:sessionId,controllerVersion:1,eventCursor:1,
       actionKind:routeHeld?'CONTROLLER_STARTED_ROUTE_HELD':'CONTROLLER_STARTED',fromState:null,toState:initialSubstate,
@@ -1682,6 +1687,7 @@ function createD11LessonControllerRepository({
   }
   return Object.freeze({
     connectClassroomContinuity:repository=>{classroomContinuity=repository;},
+    connectClassroomAdmission:reader=>{classroomAdmission=reader;},
     classroomReconciliation:(studentId,classId)=>classroomContinuity?classroomContinuity.latestRecord(studentId,classId):null,
     assertReady,
     protectedActivity,
