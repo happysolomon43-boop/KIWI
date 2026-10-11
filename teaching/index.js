@@ -74,6 +74,9 @@ function createTeachingFoundation({
   d14HelpIntelligence = null,
   d14LessonIntelligence = null,
   d14VisualAI = null,
+  d14StudyIntelligence = null,
+  d14CardSetReader = null,
+  d14SourceReader = null,
   d13PublishedEventRegistry = null,
   d16Intelligence = null,
   d17Intelligence = null,
@@ -350,6 +353,9 @@ function createTeachingFoundation({
         helpIntelligence:d14HelpIntelligence,
         lessonIntelligence:d14LessonIntelligence,
         visualService:d14VisualService,
+        studyIntelligence:d14StudyIntelligence,
+        cardSetReader:d14CardSetReader||(d27Repository?require('./d14/class-study-card-set').createD27ClassStudyCardSetReader({d27ServiceReader:()=>d27Service,subjectReader,d11Repository}):null),
+        sourceReader:d14SourceReader||(classroomPreparationOptions?.requirementsReader?require('./d14/approved-source-reader').createApprovedClassSourceReader({d11Repository,requirementsReader:classroomPreparationOptions.requirementsReader,query}):null),
         randomUUID,
       })
     : null;
@@ -384,7 +390,7 @@ function createTeachingFoundation({
     : null;
 
   const classroomPreparation=classroomPreparationOptions&&d11Service?require('./classroom-remodel/preparation-runtime').createClassroomPreparationRuntime({...classroomPreparationOptions,query,withTransaction,randomUUID,d11Repository,d11Service,preparationRepository:d11PreparationRepository}):null;
-  const classroomPresentation=classroomPresentationOptions&&d14Repository&&d10RuntimePlatform?require('./classroom-remodel/presentation-runtime').createClassroomPresentationRuntime({...classroomPresentationOptions,query,withTransaction,randomUUID,d14Repository,d11Repository,d12Repository,eventStore:d10RuntimePlatform.eventStore,outboxStore:d10RuntimePlatform.outboxStore,eventRuntime:d10RuntimePlatform.eventRuntime,publishedEvents:d11PublishedEventRegistry}):null;
+  const classroomPresentation=classroomPresentationOptions&&d14Repository&&d10RuntimePlatform?require('./classroom-remodel/presentation-runtime').createClassroomPresentationRuntime({...classroomPresentationOptions,query,withTransaction,randomUUID,d14Repository,d11Repository,d12Repository,d11Service,d14Service,d16Service,d17Service,eventStore:d10RuntimePlatform.eventStore,outboxStore:d10RuntimePlatform.outboxStore,eventRuntime:d10RuntimePlatform.eventRuntime,publishedEvents:d11PublishedEventRegistry}):null;
   return Object.freeze({
     classroomPreparation,
     classroomPresentation,

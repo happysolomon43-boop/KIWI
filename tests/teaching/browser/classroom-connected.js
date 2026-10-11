@@ -8,8 +8,8 @@ const {harness}=require('../fixtures/classroom-presentation-database');const f=r
 const {projectChapter}=require('../../../teaching/classroom-remodel/contracts');
 async function main(){await harness(async h=>{
  const express=require('express'),app=express();app.use(express.json());app.use('/public',express.static(path.resolve(__dirname,'../../../public')));
- const service=require('../../../teaching/classroom-remodel/presentation-service').createClassroomPresentationService({repository:h.repository});
- const d11=require('../../../teaching/repositories/d11-lesson-controller').createD11LessonControllerRepository({query:h.query,withTransaction:h.withTransaction,randomUUID});
+ const service=require('../../../teaching/classroom-remodel/presentation-service').createClassroomPresentationService({repository:h.repository,continuity:h.continuity});
+ const d11=h.d11Repository;
  const d14=require('../../../teaching/d14/service').createD14Service({repository:h.d14Repository,d11Repository:d11,d11Service:{},d12Service:{},randomUUID});
  const router=express.Router();router.use((req,res,next)=>{if(req.headers.authorization!=='Bearer fixture-browser-owner')return res.sendStatus(401);req.user={id:h.ids.studentId};next();});
  require('../../../teaching/classroom-remodel/presentation-routes').mountClassroomPresentationRoutes(router,{service,reauthenticate:async req=>req.headers.authorization==='Bearer fixture-browser-owner'});
@@ -33,8 +33,10 @@ async function main(){await harness(async h=>{
  try{browser=await chromium.launch({headless:true});const context=await browser.newContext({viewport:{width:1440,height:900},reducedMotion:'reduce'}),page=await context.newPage();const errors=[];page.on('response',async r=>{if(r.status()>=400)console.error('FIXTURE_HTTP_FAILURE',r.status(),new URL(r.url()).pathname,await r.text().catch(()=>''));});page.on('pageerror',e=>errors.push(e.message));const url='http://127.0.0.1:'+server.address().port;
   const visualJob=await h.d14Repository.claimVisual({studentId:h.ids.studentId,classId:h.ids.classId,sessionId:h.sessionId,key:'browser-fixture-illustration',binding:require('../../../teaching/d14/visual-service').binding(await d11.getClassContext(h.ids.studentId,h.ids.classId))});await h.d14Repository.finishVisual({job:visualJob,state:'READY',bytes:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGPQSHH8DwADUgHNi4lZ6wAAAABJRU5ErkJggg==','base64'),mimeType:'image/png',metadata:{capability:'IMAGE_GENERATION',authority:'ILLUSTRATIVE',altText:'Supplementary synthetic fixture illustration',provider:'fixture',modelId:'fixture'}});
   const opening=f.opening();opening.interaction.portions[0].teacher_message=('Connected reasoning with conditions and a worked example. <img src=x onerror=window.injected=true>\n').repeat(40);opening.board=[{id:'equation',type:'equations',content:{text:'ΣF = ma; conditions and vector directions. '.repeat(30)}},{id:'code',type:'code',content:{text:'print("inert classroom code")\n'.repeat(30)}},{id:'steps',type:'worked_steps',content:{steps:['Identify net force.','Use constant positive mass.','Calculate acceleration with direction.']}},{id:'graph',type:'graph',content:{points:[[0,0],[1,2],[2,4]],description:'Fixture graph: acceleration increases with net force'}}].map(b=>({...b,operation:'add',target_ref:null,depends_on:[]}));opening.board.push({id:'illustration',operation:'add',type:'diagram',content:{src:'/untrusted-model-path',assetId:visualJob.asset_id,alt:'Model label',visualAuthority:'STRUCTURED_EXACT'},target_ref:null,depends_on:[]});opening.interaction.portions[0].board_refs=opening.board.map(b=>b.id);await h.repository.acceptSequence({studentId:h.ids.studentId,classId:h.ids.classId,operationKey:randomUUID(),output:opening,directive:f.directive(),expected:await h.repository.capture(h.ids.studentId,h.ids.classId),types:['text','diagram'],assets:[visualJob.asset_id]});
-  await page.goto(url);await page.getByRole('button',{name:'Start teaching here',exact:true}).click();await page.getByRole('button',{name:'Pause',exact:true}).waitFor({state:'visible'});await page.waitForFunction(()=>!document.querySelector('.cr-controls button:nth-of-type(3)')?.disabled);
-  const due=(await h.dueEventStore.claimDue({workerId:'browser-fixture-worker',now:new Date(),leaseMs:60000})).find(e=>e.event_type==='teaching.classroom.portion_release_due'&&e.payload.class_id===h.ids.classId);assert.ok(due);assert.equal((await h.repository.release(h.ids.studentId,h.ids.classId,{event:due})).released,true);
+  await page.goto(url);await page.getByRole('button',{name:'Start teaching here',exact:true}).click();await page.getByRole('button',{name:'Pause',exact:true}).waitFor({state:'visible'});try{await page.waitForFunction(()=>!document.querySelector('.cr-controls button:nth-of-type(3)')?.disabled);}
+  catch(error){console.error('BROWSER_LEASE_READINESS_DIAGNOSTIC',JSON.stringify({pageErrors:errors,ui:await page.evaluate(()=>({status:document.querySelector('.cr-status')?.textContent,controls:[...document.querySelectorAll('.cr-controls button')].slice(0,5).map(b=>({text:b.textContent,disabled:b.disabled,hidden:b.hidden}))})),server:(()=>null)()}));throw error;}
+  const historyBefore=await h.read();await page.getByRole('button',{name:'Recent Class records',exact:true}).click();await page.getByText('This is your first Class. There are no earlier records to connect.',{exact:true}).waitFor();assert.equal((await h.read()).position.last_render_confirmed,historyBefore.position.last_render_confirmed);assert.equal((await h.read()).clocks.class_end_at,historyBefore.clocks.class_end_at);await page.getByRole('button',{name:'Recent Class records',exact:true}).click();assert.equal(await page.locator('#cr-recent-history').isVisible(),false);
+  const due=(await h.dueEventStore.claimDue({workerId:'browser-fixture-worker',now:new Date(),limit:100,leaseMs:60000})).find(e=>e.event_type==='teaching.classroom.portion_release_due'&&e.payload.class_id===h.ids.classId);assert.ok(due);assert.equal((await h.repository.release(h.ids.studentId,h.ids.classId,{event:due})).released,true);
   await page.waitForFunction(()=>document.querySelector('.cr-developed-text')?.textContent.includes('Connected reasoning'));
   await page.evaluate(()=>window.refreshBoard());await page.getByText('Graph data and description',{exact:true}).waitFor();await page.waitForFunction(()=>document.querySelector('.cr-status')?.textContent.includes('presenting'));
   // Wait for a committed application-render receipt, not just rendered DOM.
@@ -83,7 +85,39 @@ async function main(){await harness(async h=>{
   const before=(await h.query('select count(*)::int n from public.teaching_classroom_delivery_commands where session_id=$1',[h.sessionId])).rows[0].n;
   const review=await context.newPage();await review.goto(url+'/?review=1');await review.getByText('Past class: read-only review.',{exact:true}).waitFor();assert.equal((await h.read()).delivery_state,'COMPLETED');assert.equal((await h.query('select count(*)::int n from public.teaching_classroom_delivery_commands where session_id=$1',[h.sessionId])).rows[0].n,before);await review.close();
 
-  console.log('PASS: native publication/render receipt, pause/pace, source focus, durable Notebook retry, scroll/focus preservation, authenticated required-asset rendering, mixed actual Board renderers/history/dialog, disabled composer, axe WCAG, mobile/reflow, two-tab fencing, reload deadline preservation, D11-closed historical non-mutation, protected clearing. SYNTHETIC_FIXTURE_NOT_PROVIDER_OR_DEPLOYMENT');
+  // Delivery 7: exercise real next-Class history HTTP routes and the released
+  // student history renderer against this previous, now closed, PostgreSQL Class.
+  // An earlier rendered portion stays an exact public record, not mastery.
+  const reconciled=await h.continuity.latestRecord(h.ids.studentId,h.ids.classId);
+  assert.ok(reconciled.record_id,'The real D11 closure must have an immutable reconciled Class record before next-Class history is queried.');
+  const nextClass=h.ids.classId+'-browser-next';
+  await h.query("insert into public.teaching_classes(class_id,student_id,course_id,scheduled_start_at,scheduled_end_at,timezone,source_timetable_version_id) values($1,$2,$3,clock_timestamp()+interval '1 day',clock_timestamp()+interval '1 day 1 hour','UTC',$4)",[nextClass,h.ids.studentId,h.ids.course,h.ids.timetable]);
+  const cross=await context.newPage();await cross.goto(url+'/?review=1');
+  await cross.evaluate(async id=>{
+    window.view?.close();
+    const {createHistoryView}=await import('/public/classroom/history-view.js');
+    const owned=async path=>{
+      const r=await fetch('/api/teaching/classes/'+encodeURIComponent(id)+'/classroom/'+path,{headers:{Authorization:'Bearer fixture-browser-owner'}});
+      if(!r.ok)throw Error('HISTORY_HTTP_'+r.status);
+      return r.json();
+    };
+    const history=createHistoryView({signal:new AbortController().signal,client:()=>({
+      recentHistory:()=>owned('history'),
+      historicalConversation:(sessionId,after)=>owned('history/'+encodeURIComponent(sessionId)+'/conversation?after='+after)
+    })});
+    document.body.replaceChildren(history.root);
+    await history.show();
+  },nextClass);
+  await cross.getByText('Latest reconciled record:',{exact:false}).waitFor();
+  await cross.getByText('1 teaching portions confirmed rendered. Rendering does not establish understanding.',{exact:true}).waitFor();
+  const beforeRead=(await h.query('select count(*)::int n from public.teaching_classroom_delivery_commands where session_id=$1',[h.sessionId])).rows[0].n;
+  await cross.getByRole('button',{name:'Read released conversation',exact:true}).click();
+  await cross.getByText('Connected reasoning with conditions',{exact:false}).first().waitFor();
+  assert.equal((await h.query('select count(*)::int n from public.teaching_classroom_delivery_commands where session_id=$1',[h.sessionId])).rows[0].n,beforeRead);
+  assert.equal((await h.read()).delivery_state,'COMPLETED');
+  await cross.close();
+
+  console.log('PASS: native publication/render receipt, pause/pace, source focus, durable Notebook retry, scroll/focus preservation, authenticated required-asset rendering, mixed actual Board renderers/history/dialog, disabled composer, axe WCAG, mobile/reflow, two-tab fencing, reload deadline preservation, D11-closed historical non-mutation, protected clearing, connected next-Class history with read-only original conversation. SYNTHETIC_FIXTURE_NOT_PROVIDER_OR_DEPLOYMENT');
  }finally{await browser?.close();await new Promise(resolve=>server.close(resolve));}
 },{concurrent:true});}
 main().catch(e=>{console.error(e);process.exitCode=1;});

@@ -3,7 +3,7 @@
 const assert=require('node:assert/strict'),path=require('node:path'),fs=require('node:fs');
 const {randomUUID}=require('node:crypto');const {chromium}=require('playwright');const {harness}=require('../fixtures/classroom-presentation-database');
 async function main(){await harness(async h=>{
- const d11=require('../../../teaching/repositories/d11-lesson-controller').createD11LessonControllerRepository({...h,randomUUID});
+ const d11=h.d11Repository;
  const repository=require('../../../teaching/repositories/d16-assignments').createD16AssignmentRepository({...h,randomUUID});
  const service=require('../../../teaching/d16/service').createD16Service({repository,randomUUID});const user={id:h.ids.studentId};
  await h.query(`update public.teaching_class_sessions set source_course_state_version=(select state_version from public.teaching_courses where course_id=$2),source_class_schedule_version=1,source_timetable_version_id=$3,source_course_plan_version=1 where class_session_id=$1`,[h.sessionId,h.ids.course,h.ids.timetable]);

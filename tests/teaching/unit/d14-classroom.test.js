@@ -45,7 +45,7 @@ test('TPF-20 post-Class rejects untaught sections, stale bindings and missing re
   const source_binding={course_ref:'co@1',class_ref:'c@1',lesson_plan_ref:'l@1',course_source_snapshot_ref:'src@1',class_study_card_set_ref:'set@1',class_closure_ref:'f@2',class_summary_ref:'sum@1'};
   const checks=Object.fromEntries(['all_substantive_claims_traceable','actual_taught_scope_only_for_publication','source_and_card_versions_aligned','final_card_set_accounted_for','corrections_applied','protected_content_excluded','no_mastery_grade_or_schedule_decision','no_invented_teacher_memory','publishable_only_after_reconciliation'].map((k)=>[k,true]));
   const output={...base,source_binding,note:{sections:[{learning_unit_refs:['lu2']}]},claim_provenance:[],coverage:{removed_untaught_learning_unit_refs:['lu2']},reconciliation:{provisional_note_ref:'n1',actual_class_delta_applied:true},checks};
-  const args={output,stage:'POST_CLASS',binding,plannedLearningUnits:['lu1','lu2'],actualTaughtLearningUnits:['lu1'],sourceRefs:[],cardSet:{cards:[]},priorNote:{note_version_id:'n1'}};
+  const args={output,stage:'POST_CLASS',binding,plannedLearningUnits:['lu1','lu2'],actualTaughtLearningUnits:['lu1'],sourceRefs:[],cardSet:{cards:[]},priorNote:{note_version_id:'n1',state:'PREPARED_NOT_PUBLISHABLE'}};
   assert.throws(()=>validateStageOutput(args),/UNTAUGHT_SECTION/);
   output.note.sections=[];assert.equal(validateStageOutput(args).publishable,false);
   output.source_binding.class_closure_ref='f@1';assert.throws(()=>validateStageOutput(args),/STALE_BINDING/);

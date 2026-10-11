@@ -232,9 +232,33 @@ export function createSessionClient({
     }
     notify();
   }
+  async function historicalRead(path) {
+    if (closed || !snapshot?.chapter_ref) throw Error("CLASSROOM_HISTORY_RESTRICTED");
+    const session = snapshot.session_id, epoch = snapshot.delivery_epoch;
+    const data = await api(base + path, { signal: abort.signal });
+    // Ownership is enforced by the server. A late response must also be
+    // discarded after protected takeover or a replacement session.
+    if (closed || !snapshot?.chapter_ref || snapshot.session_id !== session || snapshot.delivery_epoch !== epoch)
+      throw Error("CLASSROOM_HISTORY_RESTRICTED");
+    return data;
+  }
   return {
     refresh,
     history,
+    async recentHistory() {
+      const data = await historicalRead("history");
+      if (data.schema_version !== "classroom-history.v1" || !Array.isArray(data.records) || data.records.length > 3)
+        throw Error("CLASSROOM_HISTORY_SCHEMA_INCOMPATIBLE");
+      return data;
+    },
+    async historicalConversation(sessionId, after = 0) {
+      if (typeof sessionId !== "string" || !sessionId || !Number.isSafeInteger(after) || after < 0)
+        throw Error("CLASSROOM_HISTORY_PAGE_INVALID");
+      const data = await historicalRead("history/" + encodeURIComponent(sessionId) + "/conversation?after=" + after);
+      if (data.session_id !== sessionId || data.semantics !== "RELEASED_PUBLIC_RECORDS_ONLY" || !Array.isArray(data.events) || !Number.isSafeInteger(data.cursor) || data.cursor < after || data.has_more && data.cursor <= after)
+        throw Error("CLASSROOM_HISTORY_SCHEMA_INCOMPATIBLE");
+      return data;
+    },
     delta,
     async start() {
       await refresh();

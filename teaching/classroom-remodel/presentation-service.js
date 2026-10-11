@@ -1,6 +1,6 @@
 'use strict';
 const {failure,value}=require('./presentation-policy');
-function createClassroomPresentationService({repository,policyReader,openingDirectiveReader,presenter=null}={}){
+function createClassroomPresentationService({repository,policyReader,openingDirectiveReader,presenter=null,continuity=null}={}){
  if(!repository)throw new TypeError('Presentation repository required');
  function owner(user,classId){if(!user?.id||typeof classId!=='string'||!classId.trim())throw failure('CLASSROOM_OWNER_REQUIRED',401);return [user.id,classId];}
  function input(body,{receipt=false,lease=false}={}){
@@ -43,6 +43,7 @@ function createClassroomPresentationService({repository,policyReader,openingDire
  function mutate(method,user,id,body,options){const checked=input(body,options);const owned=owner(user,id);return (async()=>{const result=await repository[method](...owned,checked);if(!result.serverTime)return result;
   const receipt=require('./domain-contracts').validateReceipt({operation_id:checked.operationKey,idempotency_key:checked.operationKey,session_id:result.sessionId,accepted:result.accepted,applied:result.applied,outcome:result.accepted?(result.replay?'already_applied':'applied'):'dependency_hold',controller_version:result.controllerVersion,delivery_version:result.deliveryVersion,delivery_epoch:result.deliveryEpoch,control_epoch:result.controlEpoch,server_time:result.serverTime,reconciliation_required:!result.accepted});return {...result,wire_schema_version:'classroom-presentation-wire.v1',receipt};})();}
  return Object.freeze({prepare,prepareSpan,
+  ...(continuity?{history:(user,id)=>continuity.history(...owner(user,id)),historicalConversation:(user,id,sessionId,after)=>continuity.exactRecord(...owner(user,id),{sessionId,after})}:{}),
   snapshot:(user,id)=>repository.read(...owner(user,id),{snapshot:true}),
   conversation:(user,id,after)=>repository.read(...owner(user,id),{after}),
   lease:(user,id,body)=>mutate('command',user,id,body,{lease:true}),

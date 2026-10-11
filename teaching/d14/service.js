@@ -224,13 +224,25 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
     return d12Service.captureResponse(user,classId,input);
   }
   async function runStudyStage({studentId,classId,stage}){
+    if(!['PRE_CLASS','POST_CLASS'].includes(stage))fail('TEACHING_D14_NOTE_STAGE_INVALID',422);
     const ctx=await context(studentId,classId);
+    if(stage==='PRE_CLASS'&&ctx.session?.lifecycle_state==='CLOSED')return {state:'ROUTE_HELD',reason:'PRE_CLASS_NOTE_AFTER_CLOSURE_FORBIDDEN',published:false};
+    if(stage==='POST_CLASS'&&ctx.session?.lifecycle_state!=='CLOSED')return {state:'RECONCILIATION_HELD',reason:'AUTHORITATIVE_CLOSED_CLASS_REQUIRED',published:false};
     if(!ctx.blueprint||ctx.blueprint.blueprint_state!=='VALIDATED')return {state:'ROUTE_HELD',reason:'APPROVED_LESSON_PLAN_REQUIRED'};
-    const previous=await repository.latestNote(studentId,classId);
-    const closure=stage==='POST_CLASS'?await d11Repository.getClosureFact(studentId,classId):null;
+    const previous=await repository.latestNote(studentId,classId,stage==='POST_CLASS'?'PRE_CLASS':null);
+    async function closureForNote(){
+      const fact=stage==='POST_CLASS'?await d11Repository.getClosureFact(studentId,classId):null;
+      if(!fact?.fact_pack?.classroom||!d11Repository.classroomReconciliation)return fact;
+      const reconciled=await d11Repository.classroomReconciliation(studentId,classId);
+      return {...fact,fact_pack:{...fact.fact_pack,classroom:reconciled.record},classroom_record_ref:reconciled.record_id,classroom_record_hash:reconciled.content_hash};
+    }
+    const closure=await closureForNote();
     if(stage==='POST_CLASS'&&!closure)fail('TEACHING_D14_CLOSURE_REQUIRED');
+    if(stage==='POST_CLASS'&&previous?.state!=='PREPARED_NOT_PUBLISHABLE')return {state:'RECONCILIATION_HELD',reason:'VALIDATED_PRE_CLASS_NOTE_REQUIRED',published:false};
     const summary=stage==='POST_CLASS'?await d11Repository.latestSummary(studentId,classId):null;
-    if(stage==='POST_CLASS'&&!summary)return {state:'RECONCILIATION_HELD',reason:'FINAL_CLASS_SUMMARY_REQUIRED'};
+    if(closure?.classroom_record_hash&&summary?.translation_provenance?.classroom_record_hash!==closure.classroom_record_hash)return {state:'RECONCILIATION_HELD',reason:'CURRENT_CLASSROOM_SUMMARY_REQUIRED'};
+    if(stage==='POST_CLASS'&&!summary)return {state:'RECONCILIATION_HELD',reason:'FINAL_CLASS_SUMMARY_REQUIRED',published:false};
+    if(stage==='POST_CLASS'&&(summary.summary_state!=='TRANSLATED'||summary.translation_provenance?.translation_only!==true))return {state:'RECONCILIATION_HELD',reason:'QUALIFIED_TRANSLATED_CLASS_SUMMARY_REQUIRED',published:false};
     if(!cardSetReader||!sourceReader){
       const reason='D27_CARD_SET_OR_APPROVED_SOURCE_UNAVAILABLE';
       const binding={classRef:`${classId}@${ctx.classRow.schedule_version}`,lessonPlanRef:`${ctx.blueprint.lesson_blueprint_id}@${ctx.blueprint.version_no}`,closureRef:closure?.closure_fact_id||null,cardSetRef:null};
@@ -238,12 +250,24 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
       await repository.saveNote({studentId,classId,state,stage,binding,validation:{blocked:reason},closureFactId:closure?.closure_fact_id||null,idempotencyKey:`d14-note-held:${stage}:${binding.lessonPlanRef}:${binding.closureRef||'pre'}`});
       return {state,reason,published:false};
     }
-    const [cardSet,sourceSnapshot]=await Promise.all([cardSetReader({studentId,classId,stage}),sourceReader({studentId,classId})]);
+    let cardSet,sourceSnapshot;
+    try{[cardSet,sourceSnapshot]=await Promise.all([cardSetReader({studentId,classId,stage}),sourceReader({studentId,classId})]);}
+    catch(error){
+      if(/^TEACHING_D27_CLASS_CARD_(SET_NOT_ADOPTED|SET_STALE|SOURCE_CHANGED|OWNER_UNAVAILABLE)$/.test(error?.code||'')||
+        error?.code==='TEACHING_D14_CARD_SET_CLASS_NOT_OWNED'||error?.code==='TEACHING_D27_PROTECTED_CONTENT_FORBIDDEN'||error?.code==='TEACHING_D27_CLASS_CARD_PROTECTED'||/^TEACHING_D14_NOTE_(APPROVED_SCOPE_UNAVAILABLE|SOURCE_)/.test(error?.code||''))
+        return {state:stage==='PRE_CLASS'?'ROUTE_HELD':'RECONCILIATION_HELD',reason:error.code,published:false};
+      throw error;
+    }
+    if(!cardSet?.ref||!Array.isArray(cardSet.cards)||!sourceSnapshot?.ref||!Array.isArray(sourceSnapshot.spans))
+      return {state:stage==='PRE_CLASS'?'ROUTE_HELD':'RECONCILIATION_HELD',reason:'VALIDATED_CARD_SET_OR_SOURCE_SNAPSHOT_REQUIRED',published:false};
     const planned=ctx.blueprint.planned_learning_unit_refs||[];
     const completed=new Set(closure?.fact_pack?.completed_objective_refs||[]);
-    const actual=[...new Set((ctx.blueprint.blueprint_payload?.objectives||[]).filter((o)=>completed.has(o.id)).map((o)=>o.learning_unit_ref))];
+    const actual=closure?.fact_pack?.classroom?closure.fact_pack.classroom.confirmed_taught_learning_unit_refs:[...new Set((ctx.blueprint.blueprint_payload?.objectives||[]).filter((o)=>completed.has(o.id)).map((o)=>o.learning_unit_ref))];
     const request=noteRequest({stage,context:ctx,cardSet,sourceSnapshot,closure,summary,priorNote:previous,plannedLearningUnits:planned,actualTaughtLearningUnits:actual});
-    const key=`d14-note:${classId}:${stage}:${request.binding.lessonPlanRef}:${request.binding.cardSetRef}:${request.binding.closureRef||'pre'}`;
+    const key=`d14-note:${classId}:${stage}:${request.binding.lessonPlanRef}:${request.binding.cardSetRef}:${request.binding.closureRef||'pre'}${request.binding.classroomRecordHash?':'+request.binding.classroomRecordHash:''}`;
+    const existing=stage==='POST_CLASS'?await repository.latestNote(studentId,classId,'POST_CLASS'):null;
+    if(existing?.state==='VALIDATED_PRIVATE'&&existing.binding&&JSON.stringify(existing.binding)===JSON.stringify(request.binding))
+      return {state:existing.state,published:false,noteVersionId:existing.note_version_id,replay:true};
     if(!studyIntelligence){
       const row=await repository.saveNote({studentId,classId,state:stage==='PRE_CLASS'?'ROUTE_HELD':'RECONCILIATION_HELD',stage,binding:request.binding,idempotencyKey:key});
       return {state:row.state,routeQualification:'UNQUALIFIED_UNTIL_D30',published:false};
@@ -251,12 +275,12 @@ function createD14Service({repository,d11Repository,d11Service,d12Service,attend
     // No database transaction spans the central Teaching Orchestrator call.
     const result=await studyIntelligence.execute(request);
     const current=await context(studentId,classId);
-    const fresh=noteRequest({stage,context:current,cardSet:await cardSetReader({studentId,classId,stage}),sourceSnapshot:await sourceReader({studentId,classId}),closure:stage==='POST_CLASS'?await d11Repository.getClosureFact(studentId,classId):null,summary:stage==='POST_CLASS'?await d11Repository.latestSummary(studentId,classId):null,priorNote:previous,plannedLearningUnits:planned,actualTaughtLearningUnits:actual});
+    const fresh=noteRequest({stage,context:current,cardSet:await cardSetReader({studentId,classId,stage}),sourceSnapshot:await sourceReader({studentId,classId}),closure:await closureForNote(),summary:stage==='POST_CLASS'?await d11Repository.latestSummary(studentId,classId):null,priorNote:previous,plannedLearningUnits:planned,actualTaughtLearningUnits:actual});
     if(JSON.stringify(fresh.binding)!==JSON.stringify(request.binding))fail('TEACHING_D14_STALE_NOTE_RESULT');
     const output=result?.validatedResult?.output;
     if(!result?.accepted||!output)return {state:'ROUTE_HELD',reason:'MODEL_RESULT_NOT_ACCEPTED'};
     const validation=validateStageOutput({output,stage,binding:request.binding,plannedLearningUnits:planned,actualTaughtLearningUnits:actual,sourceRefs:sourceSnapshot.spans,cardSet,priorNote:previous});
-    const row=await repository.saveNote({studentId,classId,state:stage==='PRE_CLASS'?'PREPARED_NOT_PUBLISHABLE':'VALIDATED_PRIVATE',stage,binding:request.binding,payload:output,validation,closureFactId:closure?.closure_fact_id||null,idempotencyKey:key});
+    const row=await repository.saveNote({studentId,classId,state:stage==='PRE_CLASS'?'PREPARED_NOT_PUBLISHABLE':'VALIDATED_PRIVATE',stage,binding:request.binding,payload:output,validation,closureFactId:closure?.closure_fact_id||null,idempotencyKey:key+':validated:'+require('node:crypto').createHash('sha256').update(JSON.stringify(request.binding)).digest('hex')});
     return {state:row.state,published:false,noteVersionId:row.note_version_id};
   }
   return Object.freeze({listClasses,snapshot,notebook,signal,retireOutstandingHelp,processHelp,processLessonTurn,visualAsset,enter,respond,runStudyStage,publishTeacherTurn:repository.publishTeacherTurn});

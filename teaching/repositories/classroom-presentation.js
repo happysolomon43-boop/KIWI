@@ -60,7 +60,14 @@ function createClassroomPresentationRepository({query,withTransaction,randomUUID
    const opening=(await tx.query('select payload from public.teaching_classroom_academic_private where artifact_version_id=$1',[a.binding.opening_artifact_id])).rows[0].payload;
    const anchor=opening.interaction.portions[0]?.resume_at;if(!anchor)throw failure('CLASSROOM_OPENING_UNAVAILABLE');
    const d=(await tx.query(`insert into public.teaching_classroom_delivery(session_id,student_id,class_id,binding_version,policy_version,policy,authority,pace,resume_anchor) values($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9) returning *`,[a.class_session_id,studentId,classId,a.classroom_binding_version,policy.version,JSON.stringify(policy),JSON.stringify(stamp(a)),pace,anchor])).rows[0];
-   await emit(tx,a,d,TEACHING_EVENTS.CLASSROOM_DELIVERY_END_DUE,{}, {dueAt:a.end,key:'classroom-end:'+d.session_id+':'+a.end});return {initialized:true,sessionId:a.class_session_id,replay:false};
+   await emit(tx,a,d,TEACHING_EVENTS.CLASSROOM_DELIVERY_END_DUE,{}, {dueAt:a.end,key:'classroom-end:'+d.session_id+':'+a.end});
+   const closingLead=value(policy,'closureLeadMs');
+   if(closingLead>0){
+    const due=Math.max(new Date(a.now).getTime(),new Date(a.end).getTime()-closingLead);
+    if(due<new Date(a.end).getTime())await emit(tx,a,d,TEACHING_EVENTS.CLASSROOM_PRE_CLOSURE_DUE,{lead_ms:closingLead},
+      {dueAt:new Date(due).toISOString(),key:'classroom-pre-close:'+d.session_id+':'+a.end+':'+closingLead});
+   }
+   return {initialized:true,sessionId:a.class_session_id,replay:false};
   });
  }
  async function capture(studentId,classId){return locked(studentId,classId,async(tx,a,d,reason)=>{if(reason)return {held:true,reason};return {authority:stamp(a),deliveryEpoch:Number(d.delivery_epoch),policy:d.policy,sessionId:d.session_id,binding:a.binding,pace:d.pace};});}
@@ -158,6 +165,13 @@ function createClassroomPresentationRepository({query,withTransaction,randomUUID
  async function preparationInputs(studentId,classId){return locked(studentId,classId,async(tx,a,d,reason)=>reason?{held:true,reason}:preparationInputsUsing(tx,a));}
  async function reconcile(studentId,classId){return locked(studentId,classId,async(tx,a,d,reason)=>{if(tasks)await tasks.reconcileUsing(tx,a,d,reason);if(messages&&['CONTROLLER_CLOSED','AUTHORITATIVE_END'].includes(reason))await messages.closeUsing(tx,a,d);if(!reason){if(d.stop_reason==='ESSENTIAL_ASSET_NOT_READY'){const p=(await tx.query("select asset_ids from public.teaching_classroom_portions where session_id=$1 and status='PREPARED' order by ordinal limit 1",[d.session_id])).rows[0];let ready=!!p;if(p)for(const id of p.asset_ids)if(!await authorizedVisual(tx,a,d,id)){ready=false;break;}if(ready){d.stop_reason=null;d.delivery_state='READY';d.state_version=Number(d.state_version)+1;await save(tx,d);}}await emit(tx,a,d,TEACHING_EVENTS.CLASSROOM_DELIVERY_END_DUE,{}, {dueAt:a.end,key:'classroom-end:'+d.session_id+':'+a.end});await schedule(tx,a,d);}return {held:!!reason,reason:reason||null};});}
  async function invalidate(studentId,classId,reason){return locked(studentId,classId,async(tx,a,d)=>{await stop(tx,a,d,reason);return {invalidated:true,deliveryEpoch:Number(d.delivery_epoch)};});}
- return {withAuthority:locked,authorityUsing:authority,connectRevisions:repository=>{revisions=repository;},saveUsing:save,emitUsing:emit,stamp,preparationInputsUsing,connectMessages:repository=>{messages=repository;},connectTasks:repository=>{tasks=repository;},initialize,capture,loadSequence,preparationInputs,reconcile,acceptSequence,command,release,receipt,read,invalidate};
+ async function closeUsing(tx,a,d){
+  await stop(tx,{...a,lifecycle_state:'CLOSED'},d,'CONTROLLER_CLOSED');
+  // Closure safety is independent of provider and policy enablement.
+  await tx.query("update public.teaching_classroom_task_windows set state=case when state='PENDING_DELIVERY' then 'CANCELLED_SYSTEM' else 'CLOSED_BY_CLASS' end,system_reason=case when state='PENDING_DELIVERY' then 'QUESTION_NOT_DELIVERED_BEFORE_CLOSURE' else 'CONTROLLER_CLOSED' end,handling_complete=true,version_no=version_no+1 where session_id=$1 and state in ('PENDING_DELIVERY','OPEN')",[d.session_id]);
+  if(messages)await messages.closeUsing(tx,a,d);
+  else await tx.query("update public.teaching_classroom_message_queue set state='unresolved at closure',clarification_open=false,release_hold=false,lease_token=null,lease_expires_at=null,processing_state='HELD',updated_at=$2 where session_id=$1 and state not in ('answered','unresolved at closure')",[d.session_id,a.now]);
+ }
+ return {withAuthority:locked,authorityUsing:authority,closeUsing,connectRevisions:repository=>{revisions=repository;},saveUsing:save,emitUsing:emit,stamp,preparationInputsUsing,connectMessages:repository=>{messages=repository;},connectTasks:repository=>{tasks=repository;},initialize,capture,loadSequence,preparationInputs,reconcile,acceptSequence,command,release,receipt,read,invalidate};
 }
 module.exports={createClassroomPresentationRepository};

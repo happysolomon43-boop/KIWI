@@ -98,6 +98,10 @@ export function renderEvent(event, { onSource, onNote }) {
     root.append(node("p", "Correction", "cr-muted"));
   root.append(node("div", event.text, "cr-developed-text"));
   for (const ref of event.source_refs || []) {
+    if (!onSource) {
+      root.append(node('small', 'Source: ' + ref.kind + ':' + ref.id + '@' + ref.version + (ref.anchor ? ' · ' + ref.anchor : '')));
+      continue;
+    }
     const b = action("Read linked passage", () => onSource(ref));
     b.dataset.sourceAnchor = ref.anchor || "";
     root.append(b);

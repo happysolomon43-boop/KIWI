@@ -21,6 +21,7 @@ function createD11LessonControllerRepository({
   if (typeof query !== 'function') throw new TypeError('D11 repository requires query().');
   if (typeof withTransaction !== 'function') throw new TypeError('D11 repository requires withTransaction().');
   if (typeof randomUUID !== 'function') throw new TypeError('D11 repository requires randomUUID().');
+  let classroomContinuity=null;
 
   const q = (runner, text, params = []) => runner && typeof runner.query === 'function'
     ? runner.query(text, params)
@@ -1315,6 +1316,9 @@ function createD11LessonControllerRepository({
   async function commitClosureUsing(tx, {
     studentId,classId,expectedVersion,reason='CONTROLLER_CLOSURE',sourceEventRef=null,idempotencyKey=null,
   } = {}) {
+    // Match the Class-before-session order of response/publication transactions.
+    await loadClassBase(studentId,classId,tx,true);
+    if(classroomContinuity)await classroomContinuity.lockUsing(tx,studentId,classId);
     const session = await getSession(studentId,classId,tx,true);
     if (!session) {
       const error = new Error('Controller has not started.');
@@ -1340,10 +1344,16 @@ function createD11LessonControllerRepository({
       [studentId,session.class_session_id]
     );
     const endedAt = clock();
-    const factPack = buildClosureFactPack({
+    const academicFactPack = buildClosureFactPack({
       session,classRow,blueprint,progressState:session.progress_state || {},
       evidenceEvents:evidence.rows || [],history:history.rows || [],serverNow:endedAt,reason,
     });
+    let classroom=null;
+    if(session.classroom_engine==='CLASSROOM_V1'){
+      if(!classroomContinuity)throw Object.assign(new Error('Classroom closure reconciliation is unavailable.'),{code:'CLASSROOM_CLOSURE_RECONCILIATION_REQUIRED',status:503});
+      classroom=await classroomContinuity.closeUsing(tx,{studentId,classId,session,progress:session.progress_state||{},endedAt});
+    }
+    const factPack=classroom?Object.freeze({...academicFactPack,classroom}):academicFactPack;
     const transitioned = await transitionUsing(tx, {
       studentId,classId,expectedVersion,toState:'CLOSURE',lifecycleState:'CLOSED',reason,
       actionKind:'CLASS_CLOSED',sourceEventRef,idempotencyKey,
@@ -1382,10 +1392,17 @@ function createD11LessonControllerRepository({
     return rows?.[0] || null;
   }
 
+  async function assertClassroomReconciliationUsing(tx,studentId,classId,expectedHash){
+    if(!classroomContinuity)throw Object.assign(new Error('Classroom reconciliation is unavailable.'),{code:'CLASSROOM_CLOSURE_RECONCILIATION_REQUIRED',status:503});
+    const current=await classroomContinuity.latestRecordUsing(tx,studentId,classId);
+    if(current.content_hash!==expectedHash)throw Object.assign(new Error('Classroom reconciliation changed.'),{code:'CLASSROOM_CLOSURE_RESULT_STALE',status:409});
+  }
+
   async function persistSummary({
     studentId,classId,classSessionId,closureFactId,state,payload={},provenance={},idempotencyKey=null,
   } = {}) {
     return withTransaction(async (tx) => {
+      if(provenance.classroom_record_hash)await assertClassroomReconciliationUsing(tx,studentId,classId,provenance.classroom_record_hash);
       if (idempotencyKey) {
         const prior=await tx.query(
           "select * from public.teaching_class_summaries where student_id=$1 and idempotency_key=$2 limit 1",
@@ -1414,6 +1431,7 @@ function createD11LessonControllerRepository({
     studentId,courseId,classId,classSessionId,closureFactId,state,payload={},provenanceRefs=[],generationProvenance={},idempotencyKey=null,
   } = {}) {
     return withTransaction(async (tx) => {
+      if(generationProvenance.classroom_record_hash)await assertClassroomReconciliationUsing(tx,studentId,classId,generationProvenance.classroom_record_hash);
       if (idempotencyKey) {
         const prior=await tx.query(
           "select * from public.teaching_post_class_teacher_notes where student_id=$1 and idempotency_key=$2 limit 1",
@@ -1663,6 +1681,8 @@ function createD11LessonControllerRepository({
     return resolveProtectedActivity({query,studentId,classId,courseId:context.classRow.course_id,sessionId:session.class_session_id,mode:session.instructional_substate,reference:session.progress_state?.active_protected_activity});
   }
   return Object.freeze({
+    connectClassroomContinuity:repository=>{classroomContinuity=repository;},
+    classroomReconciliation:(studentId,classId)=>classroomContinuity?classroomContinuity.latestRecord(studentId,classId):null,
     assertReady,
     protectedActivity,
     getClassContext,
@@ -1689,6 +1709,7 @@ function createD11LessonControllerRepository({
     commitClosure,
     commitClosureUsing,
     getClosureFact,
+    assertClassroomReconciliationUsing,
     persistSummary,
     persistTeacherNote,
     getGovernedRequest,

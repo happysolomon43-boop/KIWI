@@ -7,6 +7,8 @@ function mountClassroomPresentationRoutes(router,{service,reauthenticate}={}){
  const cursor=req=>{if(req.query.after==null)return 0;if(!/^\d+$/.test(String(req.query.after)))throw failure('CLASSROOM_CURSOR_RESET_REQUIRED');const n=Number(req.query.after);if(!Number.isSafeInteger(n))throw failure('CLASSROOM_CURSOR_RESET_REQUIRED');return n;};
  route('get','session',req=>service.snapshot(req.user,req.params.id));
  route('get','conversation',req=>service.conversation(req.user,req.params.id,cursor(req)));
+ if(service.history)route('get','history',req=>service.history(req.user,req.params.id));
+ if(service.historicalConversation)route('get','history/:sessionId/conversation',req=>service.historicalConversation(req.user,req.params.id,req.params.sessionId,cursor(req)));
  route('post','client-lease',req=>service.lease(req.user,req.params.id,req.body));
  route('post','presentation-controls',req=>service.control(req.user,req.params.id,req.body));
  route('post','delivery-receipts',req=>service.receipt(req.user,req.params.id,req.body));
