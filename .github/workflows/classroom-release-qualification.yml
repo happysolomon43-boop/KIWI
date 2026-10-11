@@ -41,3 +41,11 @@ jobs:
           assert.equal(report.productionActivated,false);
           assert.equal(report.activeBindingsRetired,0);
           NODE
+      - name: Retain candidate manifest, scenario traceability and held release decision
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: classroom-release-qualification-${{ github.sha }}
+          path: /tmp/classroom-release-report.json
+          if-no-files-found: error
+          retention-days: 30
