@@ -21,7 +21,7 @@ function createD11LessonControllerRepository({
   if (typeof query !== 'function') throw new TypeError('D11 repository requires query().');
   if (typeof withTransaction !== 'function') throw new TypeError('D11 repository requires withTransaction().');
   if (typeof randomUUID !== 'function') throw new TypeError('D11 repository requires randomUUID().');
-  let classroomContinuity=null;
+  let classroomContinuity=null,classroomAdmission=null;
 
   const q = (runner, text, params = []) => runner && typeof runner.query === 'function'
     ? runner.query(text, params)
@@ -1100,19 +1100,21 @@ function createD11LessonControllerRepository({
     const routeHeld = !blueprint;
     const initialLifecycle = routeHeld ? 'INTERRUPTED' : 'ACTIVE';
     const initialSubstate = routeHeld ? 'INTERRUPTED' : 'OPENING';
+    const classroomPin=classroomAdmission&&!routeHeld?await classroomAdmission(tx,{studentId,classId,blueprintId:blueprint.lesson_blueprint_id}):{engine:'LEGACY'};
     const inserted = await tx.query(
       "insert into public.teaching_class_sessions(" +
       "class_session_id,student_id,class_id,lesson_blueprint_id,lifecycle_state,instructional_substate,state_version," +
       "started_at,course_id,course_plan_id,source_course_state_version,source_course_plan_version," +
       "source_class_schedule_version,source_timetable_version_id,scheduled_start_at_snapshot,scheduled_end_at_snapshot," +
-      "timezone_snapshot,event_cursor,progress_state,controller_contract_version" +
+      "timezone_snapshot,event_cursor,progress_state,controller_contract_version,classroom_engine,classroom_chapter_artifact_id,classroom_binding_version,classroom_release_manifest_hash" +
       ") values($1,$2,$3,$4,$5,$6,1,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,1," +
-      "'{\"completed_segment_refs\":[],\"completed_objective_refs\":[],\"evidence_event_refs\":[],\"independent_evidence_objective_refs\":[]}'::jsonb,'d11.controller.v1') returning *",
+      "'{\"completed_segment_refs\":[],\"completed_objective_refs\":[],\"evidence_event_refs\":[],\"independent_evidence_objective_refs\":[]}'::jsonb,'d11.controller.v1',$17,$18,$19,$20) returning *",
       [
         sessionId,studentId,classId,blueprint?.lesson_blueprint_id || null,initialLifecycle,initialSubstate,
         now,classRow.course_id,plan.course_plan_id,classRow.course_state_version,plan.version_no,
         classRow.schedule_version,classRow.source_timetable_version_id || null,
         classRow.scheduled_start_at,classRow.scheduled_end_at,classRow.timezone,
+        classroomPin.engine,classroomPin.chapterId||null,classroomPin.bindingVersion||null,classroomPin.releaseManifestHash||null,
       ]
     );
     await appendHistoryUsing(tx, {
@@ -1682,6 +1684,7 @@ function createD11LessonControllerRepository({
   }
   return Object.freeze({
     connectClassroomContinuity:repository=>{classroomContinuity=repository;},
+    connectClassroomAdmission:reader=>{classroomAdmission=reader;},
     classroomReconciliation:(studentId,classId)=>classroomContinuity?classroomContinuity.latestRecord(studentId,classId):null,
     assertReady,
     protectedActivity,

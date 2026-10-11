@@ -1,0 +1,854 @@
+{
+  "version": "classroom-delivery-8-scenarios.v1",
+  "scenarios": [
+    {
+      "number": 1,
+      "sourceRequirement": "1. **Simple concept:** concise complete chapter and proportionate explanation, no padding or mandatory check.",
+      "testFiles": [
+        "tests/teaching/unit/classroom-remodel-academic.test.js",
+        "tests/teaching/integration/classroom-remodel-academic.test.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 2,
+      "sourceRequirement": "2. **Dense equation:** symbols/conditions/steps remain connected; pace/Board dependency works; pause resumes unfinished reasoning correctly.",
+      "testFiles": [
+        "tests/teaching/unit/classroom-remodel-academic.test.js",
+        "tests/teaching/integration/classroom-remodel-academic.test.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 3,
+      "sourceRequirement": "3. **Long chapter continuation:** partial generation preserves complete units/anchors; continuation finishes without restart, duplicate or summary compression; Class cannot falsely claim readiness.",
+      "testFiles": [
+        "tests/teaching/unit/classroom-remodel-academic.test.js",
+        "tests/teaching/integration/classroom-remodel-academic.test.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 4,
+      "sourceRequirement": "4. **Ordinary flow:** automatic release within approved span, no Next requirement, no coordinator call per sentence.",
+      "testFiles": [
+        "tests/teaching/integration/classroom-presentation.test.js",
+        "tests/teaching/unit/classroom-session-client.test.js",
+        "tests/teaching/unit/classroom-presentation-service.test.js",
+        "tests/teaching/browser/classroom-connected.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 5,
+      "sourceRequirement": "5. **Immediate blocker:** accepted message holds appropriate release, receives one disposition, changes only the relevant explanation and resumes at the anchor.",
+      "testFiles": [
+        "tests/teaching/unit/classroom-messages.test.js",
+        "tests/teaching/integration/classroom-messages.test.js",
+        "tests/teaching/browser/classroom-messages-connected.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 6,
+      "sourceRequirement": "6. **Boundary deferral:** acknowledgement matches a real stored example/boundary commitment; later delivery resolves the linked question.",
+      "testFiles": [
+        "tests/teaching/unit/classroom-messages.test.js",
+        "tests/teaching/integration/classroom-messages.test.js",
+        "tests/teaching/browser/classroom-messages-connected.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 7,
+      "sourceRequirement": "7. **Related messages:** one response covers all linked concerns, originals remain traceable, unanswered parts persist.",
+      "testFiles": [
+        "tests/teaching/unit/classroom-messages.test.js",
+        "tests/teaching/integration/classroom-messages.test.js",
+        "tests/teaching/browser/classroom-messages-connected.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 8,
+      "sourceRequirement": "8. **Unrelated/protected request:** respectful redirection without prohibited answers, loss or false promise.",
+      "testFiles": [
+        "tests/teaching/unit/classroom-messages.test.js",
+        "tests/teaching/integration/classroom-messages.test.js",
+        "tests/teaching/browser/classroom-messages-connected.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 9,
+      "sourceRequirement": "9. **Allowance exhaustion:** new discretionary message fails admission truthfully; teacher reply/clarification/extension/technical controls remain available; retry charges once.",
+      "testFiles": [
+        "tests/teaching/unit/classroom-messages.test.js",
+        "tests/teaching/integration/classroom-messages.test.js",
+        "tests/teaching/browser/classroom-messages-connected.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 10,
+      "sourceRequirement": "10. **Wrong answer:** item validity checked first; local slip versus conceptual hypothesis distinguished; correct components preserved; strategy change is proportionate.",
+      "testFiles": [
+        "tests/teaching/unit/classroom-tasks.test.js",
+        "tests/teaching/integration/classroom-tasks.test.js",
+        "tests/teaching/browser/classroom-tasks-connected.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 11,
+      "sourceRequirement": "11. **Assisted answer:** released hint/solution exposure limits independence; fresh verification is legitimate variation; reduced later help does not restore old evidence.",
+      "testFiles": [
+        "tests/teaching/unit/classroom-tasks.test.js",
+        "tests/teaching/integration/classroom-tasks.test.js",
+        "tests/teaching/browser/classroom-tasks-connected.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 12,
+      "sourceRequirement": "12. **Chapter copyability:** accessible worked solution cannot be treated as clean independent verification.",
+      "testFiles": [
+        "tests/teaching/unit/classroom-tasks.test.js",
+        "tests/teaching/integration/classroom-tasks.test.js",
+        "tests/teaching/browser/classroom-tasks-connected.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 13,
+      "sourceRequirement": "13. **Question asset delay:** timer does not open before complete accessible question/fallback readiness.",
+      "testFiles": [
+        "tests/teaching/unit/classroom-tasks.test.js",
+        "tests/teaching/integration/classroom-tasks.test.js",
+        "tests/teaching/browser/classroom-tasks-connected.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 14,
+      "sourceRequirement": "14. **More time:** authorized extension persists once and respects end time; typing does not invent a new deadline.",
+      "testFiles": [
+        "tests/teaching/unit/classroom-tasks.test.js",
+        "tests/teaching/integration/classroom-tasks.test.js",
+        "tests/teaching/browser/classroom-tasks-connected.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 15,
+      "sourceRequirement": "15. **No response:** records no response, no invented failure/emotion; Class closure/task disposition remains coherent.",
+      "testFiles": [
+        "tests/teaching/unit/classroom-tasks.test.js",
+        "tests/teaching/integration/classroom-tasks.test.js",
+        "tests/teaching/browser/classroom-tasks-connected.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 16,
+      "sourceRequirement": "16. **Open window clarification:** related permitted help preserves task/window and records assistance; unrelated instruction remains held.",
+      "testFiles": [
+        "tests/teaching/unit/classroom-tasks.test.js",
+        "tests/teaching/integration/classroom-tasks.test.js",
+        "tests/teaching/browser/classroom-tasks-connected.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 17,
+      "sourceRequirement": "17. **Reload during presentation:** exact current position and public history restore without duplicating teaching.",
+      "testFiles": [
+        "tests/teaching/integration/classroom-presentation.test.js",
+        "tests/teaching/unit/classroom-session-client.test.js",
+        "tests/teaching/unit/classroom-presentation-service.test.js",
+        "tests/teaching/browser/classroom-connected.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 18,
+      "sourceRequirement": "18. **Reload during timed task:** original deadline remains, drafts are separate, quota unchanged.",
+      "testFiles": [
+        "tests/teaching/unit/classroom-tasks.test.js",
+        "tests/teaching/integration/classroom-tasks.test.js",
+        "tests/teaching/browser/classroom-tasks-connected.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 19,
+      "sourceRequirement": "19. **Lost send/receipt acknowledgement:** same idempotency key reconciles outcome, no duplicate quota/message/delivery event.",
+      "testFiles": [
+        "tests/teaching/integration/classroom-presentation.test.js",
+        "tests/teaching/unit/classroom-session-client.test.js",
+        "tests/teaching/unit/classroom-presentation-service.test.js",
+        "tests/teaching/browser/classroom-connected.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 20,
+      "sourceRequirement": "20. **Two devices:** takeover changes control epoch, stale control actions fail, no competing timers or advancement.",
+      "testFiles": [
+        "tests/teaching/integration/classroom-presentation.test.js",
+        "tests/teaching/unit/classroom-session-client.test.js",
+        "tests/teaching/unit/classroom-presentation-service.test.js",
+        "tests/teaching/browser/classroom-connected.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 21,
+      "sourceRequirement": "21. **Background/offline client:** no unsupported render/attendance inference; reconnect reconciles and no automatic late answer backdating.",
+      "testFiles": [
+        "tests/teaching/integration/classroom-presentation.test.js",
+        "tests/teaching/unit/classroom-session-client.test.js",
+        "tests/teaching/unit/classroom-presentation-service.test.js",
+        "tests/teaching/browser/classroom-connected.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 22,
+      "sourceRequirement": "22. **Worker crash:** before/after commit, outbox and leases recover one business effect.",
+      "testFiles": [
+        "tests/teaching/integration/classroom-presentation.test.js",
+        "tests/teaching/unit/classroom-session-client.test.js",
+        "tests/teaching/unit/classroom-presentation-service.test.js",
+        "tests/teaching/browser/classroom-connected.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 23,
+      "sourceRequirement": "23. **Provider stall/unknown outcome:** bounded retry/reconciliation, readable preserved lesson, no fabricated completion.",
+      "testFiles": [
+        "tests/teaching/integration/classroom-presentation.test.js",
+        "tests/teaching/unit/classroom-session-client.test.js",
+        "tests/teaching/unit/classroom-presentation-service.test.js",
+        "tests/teaching/browser/classroom-connected.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 24,
+      "sourceRequirement": "24. **Optional/essential visual failure:** accurate text fallback or explicit hold; no phantom asset, unsafe SVG or unowned retrieval.",
+      "testFiles": [
+        "tests/teaching/integration/classroom-presentation.test.js",
+        "tests/teaching/unit/classroom-session-client.test.js",
+        "tests/teaching/unit/classroom-presentation-service.test.js",
+        "tests/teaching/browser/classroom-connected.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 25,
+      "sourceRequirement": "25. **Correction:** public corrected statement, chapter/Board version links, invalidated buffer and evidence recheck; no silent rewrite or student blame.",
+      "testFiles": [
+        "tests/teaching/unit/classroom-tasks.test.js",
+        "tests/teaching/integration/classroom-tasks.test.js",
+        "tests/teaching/browser/classroom-tasks-connected.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 26,
+      "sourceRequirement": "26. **Substantial replan:** TPF-05 revises only remaining work; D11 accepts current version/time; completed activity preserved.",
+      "testFiles": [
+        "tests/teaching/unit/classroom-tasks.test.js",
+        "tests/teaching/integration/classroom-tasks.test.js",
+        "tests/teaching/browser/classroom-tasks-connected.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 27,
+      "sourceRequirement": "27. **Late/very-late Class:** legitimate remaining activity, no automatic overtime, truthful carry-forward.",
+      "testFiles": [
+        "tests/teaching/unit/d11-late-start-recovery.test.js",
+        "tests/teaching/unit/d11-lesson-controller.test.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 28,
+      "sourceRequirement": "28. **Break/early dismissal:** request is not grant; actual authority and resumption preserved.",
+      "testFiles": [
+        "tests/teaching/unit/d11-late-start-recovery.test.js",
+        "tests/teaching/unit/d11-lesson-controller.test.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 29,
+      "sourceRequirement": "29. **Protected takeover:** chapter/Board/Notebook/help suppressed server-side, no private stream leakage, proper work shell receives response.",
+      "testFiles": [
+        "tests/teaching/unit/classroom-protected-activity.test.js",
+        "tests/teaching/integration/classroom-protected-activity.test.js",
+        "tests/teaching/browser/classroom-protected-connected.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 30,
+      "sourceRequirement": "30. **Closure race:** server-accepted response persists; expired/late submission policy explicit; post-closure evaluation never reopens Class.",
+      "testFiles": [
+        "tests/teaching/unit/classroom-tasks.test.js",
+        "tests/teaching/integration/classroom-tasks.test.js",
+        "tests/teaching/browser/classroom-tasks-connected.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 31,
+      "sourceRequirement": "31. **Unresolved queue at closure:** visible unresolved records and next-Class linkage, no false scheduled appointment or silent cancellation loss.",
+      "testFiles": [
+        "tests/teaching/unit/classroom-messages.test.js",
+        "tests/teaching/integration/classroom-messages.test.js",
+        "tests/teaching/browser/classroom-messages-connected.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 32,
+      "sourceRequirement": "32. **First class/short history:** no invented previous lessons; present teaching remains usable.",
+      "testFiles": [
+        "tests/teaching/unit/classroom-history-artifacts.test.js",
+        "tests/teaching/unit/classroom-reviewed-continuity.test.js",
+        "tests/teaching/unit/classroom-delivery7-owner-handoffs.test.js",
+        "tests/teaching/unit/classroom-study-reconciliation.test.js",
+        "tests/teaching/integration/classroom-closure-continuity.test.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 33,
+      "sourceRequirement": "33. **Real historical connection:** source-linked discussed-versus-demonstrated claims; no forced connection.",
+      "testFiles": [
+        "tests/teaching/unit/classroom-history-artifacts.test.js",
+        "tests/teaching/unit/classroom-reviewed-continuity.test.js",
+        "tests/teaching/unit/classroom-delivery7-owner-handoffs.test.js",
+        "tests/teaching/unit/classroom-study-reconciliation.test.js",
+        "tests/teaching/integration/classroom-closure-continuity.test.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 34,
+      "sourceRequirement": "34. **Older summary conflict:** retrieve exact source where needed; preserve unresolved uncertainty.",
+      "testFiles": [
+        "tests/teaching/unit/classroom-history-artifacts.test.js",
+        "tests/teaching/unit/classroom-reviewed-continuity.test.js",
+        "tests/teaching/unit/classroom-delivery7-owner-handoffs.test.js",
+        "tests/teaching/unit/classroom-study-reconciliation.test.js",
+        "tests/teaching/integration/classroom-closure-continuity.test.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 35,
+      "sourceRequirement": "35. **Homework:** actual purpose, workload/assistance, checked tasks/private keys; no punitive unsupported inference or model-assigned deadline.",
+      "testFiles": [
+        "tests/teaching/unit/classroom-history-artifacts.test.js",
+        "tests/teaching/unit/classroom-reviewed-continuity.test.js",
+        "tests/teaching/unit/classroom-delivery7-owner-handoffs.test.js",
+        "tests/teaching/unit/classroom-study-reconciliation.test.js",
+        "tests/teaching/integration/classroom-closure-continuity.test.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 36,
+      "sourceRequirement": "36. **Formal guidance:** taught/exposed/independent distinctions preserved; protected future packages absent from Teacher context.",
+      "testFiles": [
+        "tests/teaching/unit/classroom-history-artifacts.test.js",
+        "tests/teaching/unit/classroom-reviewed-continuity.test.js",
+        "tests/teaching/unit/classroom-delivery7-owner-handoffs.test.js",
+        "tests/teaching/unit/classroom-study-reconciliation.test.js",
+        "tests/teaching/integration/classroom-closure-continuity.test.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 37,
+      "sourceRequirement": "37. **TPF-20:** notes reflect actual delivered/corrected/unfinished content and bind to closure; held/publication states truthful.",
+      "testFiles": [
+        "tests/teaching/unit/classroom-history-artifacts.test.js",
+        "tests/teaching/unit/classroom-reviewed-continuity.test.js",
+        "tests/teaching/unit/classroom-delivery7-owner-handoffs.test.js",
+        "tests/teaching/unit/classroom-study-reconciliation.test.js",
+        "tests/teaching/integration/classroom-closure-continuity.test.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 38,
+      "sourceRequirement": "38. **Historical UI:** no JOIN/write/quota/timer; old records retain original provenance.",
+      "testFiles": [
+        "tests/teaching/browser/classroom-connected.js",
+        "tests/teaching/browser/classroom-protected-connected.js",
+        "tests/teaching/unit/classroom-session-client.test.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 39,
+      "sourceRequirement": "39. **Migration:** all 22 old capabilities plus retained 05/08/20 modes and non-classroom callers have functioning qualified routes.",
+      "testFiles": [
+        "tests/teaching/unit/classroom-remodel-invocation.test.js",
+        "tests/teaching/unit/classroom-remodel-foundation.test.js",
+        "tests/teaching/unit/classroom-remodel-delivery8.test.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 40,
+      "sourceRequirement": "40. **Schema/enum drift:** reject invalid mode, unknown action/assistance, missing private separation, incompatible anchors or dropped fields.",
+      "testFiles": [
+        "tests/teaching/unit/classroom-remodel-invocation.test.js",
+        "tests/teaching/unit/classroom-remodel-foundation.test.js",
+        "tests/teaching/unit/classroom-remodel-delivery8.test.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 41,
+      "sourceRequirement": "41. **Ownership/security:** cross-student IDs, asset references, cursors, receipts and task submissions fail; injected source commands remain data.",
+      "testFiles": [
+        "tests/teaching/integration/classroom-presentation.test.js",
+        "tests/teaching/integration/classroom-tasks.test.js",
+        "tests/teaching/unit/d28-security.test.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 42,
+      "sourceRequirement": "42. **Accessibility/mobile:** keyboard/screen reader/reduced motion/zoom/software keyboard/long math, stable scroll/focus and accessible timer readiness.",
+      "testFiles": [
+        "tests/teaching/browser/classroom-connected.js",
+        "tests/teaching/browser/classroom-protected-connected.js",
+        "tests/teaching/unit/classroom-session-client.test.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 43,
+      "sourceRequirement": "43. **Deployment:** stream reconnect/poll fallback, auth refresh, worker restart, migration/grant readiness and compatible frontend/backend version.",
+      "testFiles": [
+        "tests/teaching/integration/classroom-release-rollback.test.js",
+        "tests/teaching/unit/classroom-remodel-delivery8.test.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    },
+    {
+      "number": 44,
+      "sourceRequirement": "44. **Rollback:** active response/queue/session survive rollback policy with no unsafe old-client rendering or timer reset.",
+      "testFiles": [
+        "tests/teaching/integration/classroom-release-rollback.test.js",
+        "tests/teaching/unit/classroom-remodel-delivery8.test.js"
+      ],
+      "evidenceScope": "SUPPORTING_FIXTURES_ONLY; full scenario acceptance requires exact-manifest signed owner evidence",
+      "requiredRecordFields": [
+        "given",
+        "actionOrFailure",
+        "expectedPublicBehavior",
+        "expectedPersistedFacts",
+        "forbiddenEffects",
+        "testedVersions",
+        "evidenceRefs"
+      ]
+    }
+  ]
+}

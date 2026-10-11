@@ -5,7 +5,9 @@ const {RECONCILIATION_DISPOSITIONS:R}=require('../runtime/constants');
 const {createClassroomPresentationRepository}=require('../repositories/classroom-presentation');
 const {createClassroomPresentationService}=require('./presentation-service');
 function createClassroomPresentationRuntime({query,withTransaction,randomUUID,d14Repository,eventStore,outboxStore,eventRuntime,publishedEvents,d11Repository,d12Repository,d11Service,d14Service,d16Service,d17Service,...options}={}){
- const repository=createClassroomPresentationRepository({query,withTransaction,randomUUID,d14Repository,dueEventStore:eventStore,outboxStore});
+ const releaseControl=require('./release-control').createClassroomReleaseControl({withTransaction,trustRoots:options.releaseTrustRoots||{}});
+ if(d11Repository?.connectClassroomAdmission)d11Repository.connectClassroomAdmission(releaseControl.admissionUsing);
+ const repository=createClassroomPresentationRepository({query,withTransaction,randomUUID,d14Repository,dueEventStore:eventStore,outboxStore,releaseControl});
  const presenter=options.presenter||(options.orchestrator&&options.requirementsReader?require('./presentation-intelligence').createClassroomPresentationIntelligence({orchestrator:options.orchestrator,repository,d11Repository,requirementsReader:options.requirementsReader}):null);
  const continuity=d11Repository?require('../repositories/classroom-continuity').createClassroomContinuityRepository({query,withTransaction,randomUUID,presentationRepository:repository}):null;
  if(continuity)d11Repository.connectClassroomContinuity(continuity);
@@ -68,6 +70,6 @@ function createClassroomPresentationRuntime({query,withTransaction,randomUUID,d1
   const studentId=event.actorId||event.payload?.student_id,classId=event.payload?.class_id;if(!studentId||!classId)return {noop:true};
   try{return await repository.reconcile(studentId,classId);}catch(error){if(error.code==='CLASSROOM_DELIVERY_NOT_PREPARED'&&type===TEACHING_EVENTS.CLASSROOM_INSTRUCTION_READY){if(typeof options.initialPace!=='string')return {held:true,reason:'CLASSROOM_INITIAL_PACE_NOT_ADOPTED'};return service.prepare({studentId,classId,pace:options.initialPace});}if(['CLASSROOM_SESSION_NOT_REMODELED','CLASSROOM_DELIVERY_NOT_PREPARED','CLASSROOM_SESSION_NOT_FOUND'].includes(error.code))return {noop:true};throw error;}
  }}));
- return Object.freeze({repository,service,continuity,planning,messages:messageRuntime,tasks:taskRuntime,revisions:revisionRepository,registrations,activation:'INACTIVE',productionQualified:false});
+ return Object.freeze({repository,service,releaseControl,continuity,planning,messages:messageRuntime,tasks:taskRuntime,revisions:revisionRepository,registrations,activation:'INACTIVE',productionQualified:false});
 }
 module.exports={createClassroomPresentationRuntime};

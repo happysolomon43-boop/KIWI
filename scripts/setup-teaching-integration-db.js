@@ -50,6 +50,7 @@ const MIGRATIONS = Object.freeze([
   'migrations/20261010153217_classroom_task_handling.sql',
   'migrations/20261010154053_classroom_revision_handling.sql',
   'migrations/20261010192519_classroom_closure_continuity.sql',
+  'migrations/20261011010841_classroom_release_controls.sql',
 ]);
 
 function requireNonProduction({ connectionString, projectRef }) {
