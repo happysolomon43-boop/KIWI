@@ -1106,20 +1106,17 @@ function createD11LessonControllerRepository({
       "class_session_id,student_id,class_id,lesson_blueprint_id,lifecycle_state,instructional_substate,state_version," +
       "started_at,course_id,course_plan_id,source_course_state_version,source_course_plan_version," +
       "source_class_schedule_version,source_timetable_version_id,scheduled_start_at_snapshot,scheduled_end_at_snapshot," +
-      "timezone_snapshot,event_cursor,progress_state,controller_contract_version" +
+      "timezone_snapshot,event_cursor,progress_state,controller_contract_version,classroom_engine,classroom_chapter_artifact_id,classroom_binding_version,classroom_release_manifest_hash" +
       ") values($1,$2,$3,$4,$5,$6,1,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,1," +
-      "'{\"completed_segment_refs\":[],\"completed_objective_refs\":[],\"evidence_event_refs\":[],\"independent_evidence_objective_refs\":[]}'::jsonb,'d11.controller.v1') returning *",
+      "'{\"completed_segment_refs\":[],\"completed_objective_refs\":[],\"evidence_event_refs\":[],\"independent_evidence_objective_refs\":[]}'::jsonb,'d11.controller.v1',$17,$18,$19,$20) returning *",
       [
         sessionId,studentId,classId,blueprint?.lesson_blueprint_id || null,initialLifecycle,initialSubstate,
         now,classRow.course_id,plan.course_plan_id,classRow.course_state_version,plan.version_no,
         classRow.schedule_version,classRow.source_timetable_version_id || null,
         classRow.scheduled_start_at,classRow.scheduled_end_at,classRow.timezone,
+        classroomPin.engine,classroomPin.chapterId||null,classroomPin.bindingVersion||null,classroomPin.releaseManifestHash||null,
       ]
     );
-    if(classroomPin.engine==='CLASSROOM_V1'){
-      const pinned=await tx.query('update public.teaching_class_sessions set classroom_engine=$2,classroom_chapter_artifact_id=$3,classroom_binding_version=$4,classroom_release_manifest_hash=$5 where class_session_id=$1 returning *',[sessionId,classroomPin.engine,classroomPin.chapterId,classroomPin.bindingVersion,classroomPin.releaseManifestHash]);
-      inserted.rows[0]=pinned.rows[0];
-    }
     await appendHistoryUsing(tx, {
       studentId,classId,classSessionId:sessionId,controllerVersion:1,eventCursor:1,
       actionKind:routeHeld?'CONTROLLER_STARTED_ROUTE_HELD':'CONTROLLER_STARTED',fromState:null,toState:initialSubstate,

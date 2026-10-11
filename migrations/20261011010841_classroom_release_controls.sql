@@ -27,3 +27,16 @@ REVOKE ALL ON public.teaching_classroom_release_control,public.teaching_classroo
 GRANT SELECT,INSERT,UPDATE ON public.teaching_classroom_release_control,public.teaching_classroom_release_operations TO service_role;
 CREATE POLICY classroom_release_service ON public.teaching_classroom_release_control TO service_role USING(true) WITH CHECK(true);
 CREATE POLICY classroom_release_service ON public.teaching_classroom_release_operations TO service_role USING(true) WITH CHECK(true);
+-- A session's release authority is pinned at insertion, including live replans.
+CREATE FUNCTION public.teaching_classroom_release_pin_immutable() RETURNS trigger
+ LANGUAGE plpgsql SET search_path=pg_catalog AS $$
+BEGIN
+ IF NEW.classroom_release_manifest_hash IS DISTINCT FROM OLD.classroom_release_manifest_hash THEN
+  RAISE EXCEPTION 'CLASSROOM_RELEASE_PIN_IMMUTABLE';
+ END IF;
+ RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION public.teaching_classroom_release_pin_immutable() FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.teaching_classroom_release_pin_immutable() TO service_role;
+CREATE TRIGGER classroom_release_pin_immutable BEFORE UPDATE ON public.teaching_class_sessions
+ FOR EACH ROW EXECUTE FUNCTION public.teaching_classroom_release_pin_immutable();
