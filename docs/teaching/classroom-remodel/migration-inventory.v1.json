@@ -7179,6 +7179,13 @@
           ]
         },
         {
+          "file": "tests/teaching/unit/classroom-study-reconciliation.test.js",
+          "line": 21,
+          "identities": [
+            "teaching.study.class_grounded_note_generation"
+          ]
+        },
+        {
           "file": "tests/teaching/unit/d03-control-plane.test.js",
           "line": 213,
           "identities": [
@@ -7219,5 +7226,5 @@
     }
   ],
   "searchMethod": "Tracked UTF-8 source exact canonical and legacy alias references; compiled registry decoded through its verified reader. Absence of literal references is not proof of no dynamic/external caller.",
-  "searchFilesSha256": "dda56a930ed3dfa3b51fb17a79854008805489551f615477a890943a7fcc0d51"
+  "searchFilesSha256": "d95d2ded5df2e732a1c4ddeeb99df8dd42d263fdc6f0ef6f8ebeb1a81bae6a26"
 }

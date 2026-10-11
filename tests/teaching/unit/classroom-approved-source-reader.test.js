@@ -25,7 +25,7 @@ test('TPF-20 source reader rejects missing, protected, duplicate and drifted own
  for(const [material,rows,code] of [
   [[one],[],'TEACHING_D14_NOTE_SOURCE_VERSION_STALE'],
   [[{...one,protected:true}],[{...one,source_ref:one.sourceRef,source_version_ref:one.version,content_hash:one.contentHash}],'TEACHING_D14_NOTE_SOURCE_NOT_APPROVED'],
-  [[one,one],[], 'TEACHING_D14_NOTE_SOURCE_DUPLICATE'],
+  [[one,one],[{source_ref:one.sourceRef,source_version_ref:one.version,content_hash:one.contentHash}], 'TEACHING_D14_NOTE_SOURCE_DUPLICATE'],
   [[{...one,contentHash:'b'.repeat(64)}],[{source_ref:one.sourceRef,source_version_ref:one.version,content_hash:one.contentHash}],'TEACHING_D14_NOTE_SOURCE_VERSION_STALE'],
   [[{...one,text:''}],[{source_ref:one.sourceRef,source_version_ref:one.version,content_hash:one.contentHash}],'TEACHING_D14_NOTE_SOURCE_TEXT_UNAVAILABLE']
  ])await assert.rejects(fixture(material,rows).reader(args),{code});
